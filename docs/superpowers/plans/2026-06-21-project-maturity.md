@@ -18,9 +18,9 @@
 - Modify: `src/mcp_server/server.py`
 - Modify: `pyproject.toml`
 
-- [ ] Write failing tests for config validation, save, and load.
-- [ ] Implement YAML config load/save/validation.
-- [ ] Add `load_debug_config`, `save_debug_config`, and `validate_debug_config` MCP tools.
+- [x] Write failing tests for config validation, save, and load.
+- [x] Implement YAML config load/save/validation.
+- [x] Add `load_debug_config`, `save_debug_config`, and `validate_debug_config` MCP tools.
 
 ### Task 2: Structured Response Helpers
 
@@ -28,8 +28,8 @@
 - Create: `src/mcp_server/tool_response.py`
 - Test: `tests/test_tool_response.py`
 
-- [ ] Write failing tests for success/error response envelopes.
-- [ ] Implement small JSON-safe response helpers for gradual adoption.
+- [x] Write failing tests for success/error response envelopes.
+- [x] Implement small JSON-safe response helpers for gradual adoption.
 
 ### Task 3: Project Hygiene and CI
 
@@ -40,9 +40,9 @@
 - Create: `.github/workflows/ci.yml`
 - Modify: `README.md`
 
-- [ ] Add project metadata and contribution-ready defaults.
-- [ ] Add CI running pytest, compileall, and package build.
-- [ ] Remove generated `__pycache__` directories from the workspace.
+- [x] Add project metadata and contribution-ready defaults.
+- [x] Add CI running pytest, compileall, and package build.
+- [x] Remove generated `__pycache__` directories from the workspace.
 
 ### Task 4: Examples
 
@@ -51,11 +51,11 @@
 - Create: `examples/prompts/debug_hardfault.md`
 - Create: `examples/prompts/freertos_hang.md`
 
-- [ ] Add a ready-to-edit J-Link STM32F4 config.
-- [ ] Add prompt templates for hardfault and FreeRTOS hang workflows.
+- [x] Add a ready-to-edit J-Link STM32F4 config.
+- [x] Add prompt templates for hardfault and FreeRTOS hang workflows.
 
 ### Task 5: Verification
 
-- [ ] Run `python -m pytest -q`.
-- [ ] Run `python -m compileall src tests`.
-- [ ] Run package build check.
+- [x] Run `python -m pytest -q`.
+- [x] Run `python -m compileall src tests`.
+- [x] Run package build check.
