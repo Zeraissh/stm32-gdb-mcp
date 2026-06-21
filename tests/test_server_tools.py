@@ -87,6 +87,41 @@ def test_server_exposes_run_and_wait_tools():
     assert "wait_for_stop" in tool_names
 
 
+def test_server_exposes_configure_debug_freeze_tool():
+    tools = asyncio.run(handle_list_tools())
+    tool_names = {tool.name for tool in tools}
+
+    assert "configure_debug_freeze" in tool_names
+
+
+def test_configure_debug_freeze_plans_and_applies_writes(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def __init__(self):
+            self.writes = []
+
+        def read_word(self, address):
+            return 0x00000001  # some unrelated bit already set
+
+        def write_memory(self, address, value):
+            self.writes.append((address, value))
+
+    fake = FakeClient()
+    monkeypatch.setattr(server_module, "gdb_client", fake)
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "configure_debug_freeze", {"family": "stm32l4", "peripherals": ["iwdg", "wwdg"]}
+    )))
+
+    assert payload["ok"] is True
+    assert payload["data"]["applied"] is True
+    plan = payload["data"]["plans"][0]
+    # IWDG (bit12) + WWDG (bit11) OR-ed onto the existing bit0.
+    assert plan["new_value"] == (0x1 | (1 << 12) | (1 << 11))
+    assert fake.writes == [(hex(0xE0042008), hex(0x1 | (1 << 12) | (1 << 11)))]
+
+
 def test_server_exposes_write_guard_tools():
     tools = asyncio.run(handle_list_tools())
     tool_names = {tool.name for tool in tools}

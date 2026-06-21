@@ -22,6 +22,7 @@ from .debug_experiments import (
 from .debug_experiments import (
     compare_expressions_after_action,
 )
+from .debug_freeze import plan_freeze_writes, resolve_freeze_targets, supported_families
 from .debug_profile import DebugProfileStore
 from .debug_snapshot import collect_debug_snapshot
 from .exception_frame import build_fault_context
@@ -321,6 +322,25 @@ async def handle_list_tools() -> list[Tool]:
             name="diagnose_fault",
             description="Reads and decodes Cortex-M fault registers into likely fault causes.",
             inputSchema={"type": "object", "properties": {}}
+        ),
+        Tool(
+            name="configure_debug_freeze",
+            description="Freezes peripherals (IWDG, WWDG, RTC, timers) while the core is halted via "
+                        "the DBGMCU freeze registers, so the watchdog cannot reset the target out "
+                        "from under the debugger. Family is taken from the debug profile MCU if omitted.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "peripherals": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Peripherals to freeze, e.g. ['iwdg', 'wwdg', 'rtc', 'tim2']."
+                    },
+                    "family": {"type": "string", "description": f"STM32 family or part number. Known: {supported_families()}."},
+                    "apply": {"type": "boolean", "description": "If false, only return the planned register writes (default true)."}
+                },
+                "required": ["peripherals"]
+            }
         ),
         Tool(
             name="reconstruct_fault_context",
@@ -922,6 +942,27 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
             resp = gdb_client.read_fault_registers()
             diagnosis = diagnose_fault_registers(resp)
             return [content_success(diagnosis, raw_response=resp)]
+
+        elif name == "configure_debug_freeze":
+            family = arguments.get("family") or debug_profile.get().get("mcu")
+            if not family:
+                return [content_error(
+                    "No STM32 family given and no MCU in the debug profile.",
+                    code="missing_family",
+                    suggested_next_actions=["set_debug_profile"],
+                )]
+            targets = resolve_freeze_targets(family, arguments["peripherals"])
+            plans = plan_freeze_writes(targets, gdb_client.read_word)
+            applied = arguments.get("apply", True)
+            if applied:
+                for plan in plans:
+                    gdb_client.write_memory(hex(plan["address"]), hex(plan["new_value"]))
+            return [content_success({
+                "message": "Debug freeze applied" if applied else "Debug freeze planned (not applied)",
+                "family": family,
+                "applied": applied,
+                "plans": plans,
+            })]
 
         elif name == "reconstruct_fault_context":
             context = build_fault_context(gdb_client)
