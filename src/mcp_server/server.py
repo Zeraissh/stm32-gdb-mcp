@@ -43,6 +43,7 @@ variable_tracker = VariableTracker(gdb_client)
 debug_profile = DebugProfileStore()
 freertos_inspector = FreeRTOSInspector(gdb_client)
 rtt_log_reader = ProcessLogReader("rtt")
+swo_log_reader = ProcessLogReader("swo")
 uart_log_reader = SerialLogReader()
 
 @server.list_tools()
@@ -318,6 +319,40 @@ async def handle_list_tools() -> list[Tool]:
         Tool(
             name="clear_rtt_logs",
             description="Clears buffered RTT log lines without stopping capture.",
+            inputSchema={"type": "object", "properties": {}}
+        ),
+        Tool(
+            name="start_swo_logging",
+            description="Starts background SWO/ITM log capture using a caller-provided decoder command.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "Executable to launch for SWO/ITM decoding."},
+                    "args": {"type": "array", "items": {"type": "string"}, "description": "Command arguments."}
+                },
+                "required": ["command"]
+            }
+        ),
+        Tool(
+            name="stop_swo_logging",
+            description="Stops the background SWO/ITM log capture process.",
+            inputSchema={"type": "object", "properties": {}}
+        ),
+        Tool(
+            name="get_swo_logs",
+            description="Returns captured SWO/ITM log lines.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Maximum number of recent log entries to return."},
+                    "since_index": {"type": "integer", "description": "Only return entries with an index greater than this value."},
+                    "clear": {"type": "boolean", "description": "Clear returned log entries after reading."}
+                }
+            }
+        ),
+        Tool(
+            name="clear_swo_logs",
+            description="Clears buffered SWO/ITM log lines without stopping capture.",
             inputSchema={"type": "object", "properties": {}}
         ),
         Tool(
@@ -685,6 +720,10 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
                         "status": uart_log_reader.status(),
                         "entries": uart_log_reader.get_logs(limit=arguments.get("log_limit", 200)),
                     },
+                    "swo": {
+                        "status": swo_log_reader.status(),
+                        "entries": swo_log_reader.get_logs(limit=arguments.get("log_limit", 200)),
+                    },
                 }
             snapshot = collect_debug_snapshot(
                 gdb_client,
@@ -762,6 +801,31 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
         elif name == "clear_rtt_logs":
             rtt_log_reader.clear()
             return [content_success({"message": "RTT log buffer cleared"})]
+
+        elif name == "start_swo_logging":
+            command = [arguments["command"]]
+            command.extend(arguments.get("args", []))
+            swo_log_reader.start(command)
+            return [content_success(swo_log_reader.status())]
+
+        elif name == "stop_swo_logging":
+            swo_log_reader.stop()
+            return [content_success(swo_log_reader.status())]
+
+        elif name == "get_swo_logs":
+            result = {
+                "status": swo_log_reader.status(),
+                "entries": swo_log_reader.get_logs(
+                    limit=arguments.get("limit"),
+                    since_index=arguments.get("since_index"),
+                    clear=arguments.get("clear", False),
+                ),
+            }
+            return [content_success(result)]
+
+        elif name == "clear_swo_logs":
+            swo_log_reader.clear()
+            return [content_success({"message": "SWO log buffer cleared"})]
 
         elif name == "start_uart_logging":
             uart_log_reader.start(

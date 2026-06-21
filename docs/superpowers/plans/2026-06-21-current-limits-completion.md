@@ -461,7 +461,7 @@ git commit -m "Migrate MCP tools to stable JSON envelopes"
 - Test: `tests/test_server_tools.py`
 - Test: `tests/test_debug_snapshot.py`
 
-- [ ] **Step 1: Write failing SWO tool exposure test**
+- [x] **Step 1: Write failing SWO tool exposure test**
 
 Extend `tests/test_server_tools.py`:
 
@@ -476,7 +476,7 @@ def test_server_exposes_swo_log_tools():
     assert "clear_swo_logs" in tool_names
 ```
 
-- [ ] **Step 2: Run server tool tests and verify RED**
+- [x] **Step 2: Run server tool tests and verify RED**
 
 Run:
 
@@ -486,7 +486,7 @@ python -m pytest tests/test_server_tools.py::test_server_exposes_swo_log_tools -
 
 Expected: FAIL because SWO tools are not exposed.
 
-- [ ] **Step 3: Add SWO tool schemas and handlers**
+- [x] **Step 3: Add SWO tool schemas and handlers**
 
 Modify `src/mcp_server/server.py`:
 
@@ -504,7 +504,7 @@ elif name == "start_swo_logging":
 
 For `get_swo_logs`, return `{"status": swo_log_reader.status(), "entries": ...}`.
 
-- [ ] **Step 4: Run SWO exposure tests and verify GREEN**
+- [x] **Step 4: Run SWO exposure tests and verify GREEN**
 
 Run:
 
@@ -514,7 +514,7 @@ python -m pytest tests/test_server_tools.py -q
 
 Expected: PASS.
 
-- [ ] **Step 5: Write failing debug snapshot SWO context test**
+- [x] **Step 5: Write failing debug snapshot SWO context test**
 
 Extend `tests/test_debug_snapshot.py`:
 
@@ -533,7 +533,7 @@ def test_collect_debug_snapshot_can_include_swo_log_context():
 
 This may already pass because `log_context` is generic. If it passes immediately, keep it as a regression test and proceed to server snapshot assembly.
 
-- [ ] **Step 6: Include SWO logs in `capture_debug_snapshot`**
+- [x] **Step 6: Include SWO logs in `capture_debug_snapshot`**
 
 Modify `src/mcp_server/server.py` so `include_logs=true` builds:
 
@@ -545,7 +545,7 @@ log_context = {
 }
 ```
 
-- [ ] **Step 7: Run targeted tests**
+- [x] **Step 7: Run targeted tests**
 
 Run:
 
@@ -555,7 +555,7 @@ python -m pytest tests/test_server_tools.py tests/test_debug_snapshot.py -q
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit Task 3**
+- [x] **Step 8: Commit Task 3**
 
 ```bash
 git add src/mcp_server/server.py tests/test_server_tools.py tests/test_debug_snapshot.py

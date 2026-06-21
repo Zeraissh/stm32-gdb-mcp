@@ -63,3 +63,15 @@ def test_collect_debug_snapshot_can_include_log_context():
     )
 
     assert snapshot["logs"] == logs
+
+
+def test_collect_debug_snapshot_can_include_swo_log_context():
+    logs = {
+        "rtt": {"entries": []},
+        "uart": {"entries": []},
+        "swo": {"entries": [{"source": "swo", "line": "ITM: boot"}]},
+    }
+
+    snapshot = collect_debug_snapshot(FakeGdbClient(), FakeGdbServerManager(), log_context=logs)
+
+    assert snapshot["logs"]["swo"]["entries"][0]["line"] == "ITM: boot"

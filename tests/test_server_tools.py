@@ -49,6 +49,16 @@ def test_reset_target_exposes_strategy_and_custom_command_options():
     assert "command" in properties
 
 
+def test_server_exposes_swo_log_tools():
+    tools = asyncio.run(handle_list_tools())
+    tool_names = {tool.name for tool in tools}
+
+    assert "start_swo_logging" in tool_names
+    assert "stop_swo_logging" in tool_names
+    assert "get_swo_logs" in tool_names
+    assert "clear_swo_logs" in tool_names
+
+
 def _payload(result):
     return json.loads(result[0].text)
 
