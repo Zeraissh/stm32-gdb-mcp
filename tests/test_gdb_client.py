@@ -40,3 +40,21 @@ def test_read_typed_memory_reads_byte_count_for_width_and_count():
     assert client.gdb.commands == [
         ("-data-read-memory-bytes 0x20000000 8", 1.0)
     ]
+
+
+def test_extract_first_memory_word_decodes_little_endian_contents():
+    client = GdbClientManager()
+
+    # GDB/MI -data-read-memory-bytes returns target bytes in memory (little-endian)
+    # order; 0x10016435 is stored as bytes 35 64 01 10.
+    response = [{"payload": {"memory": [{"contents": "35640110"}]}}]
+
+    assert client._extract_first_memory_word(response) == 0x10016435
+
+
+def test_extract_first_memory_word_only_uses_first_word_of_a_block():
+    client = GdbClientManager()
+
+    response = [{"payload": {"memory": [{"contents": "3564011000000000"}]}}]
+
+    assert client._extract_first_memory_word(response) == 0x10016435

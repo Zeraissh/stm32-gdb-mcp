@@ -288,6 +288,17 @@ class GdbClientManager:
         if width_bits not in (8, 16, 32, 64):
             raise ValueError("width_bits must be one of 8, 16, 32, or 64")
 
+    @staticmethod
+    def _le_hex_word_to_int(contents: str) -> int:
+        """Decode the first 32-bit word of a GDB/MI byte string.
+
+        `-data-read-memory-bytes` returns bytes in target memory order, which is
+        little-endian on Cortex-M. The first word is the first 8 hex chars, read
+        low byte first (e.g. "35640110" -> 0x10016435).
+        """
+        word = contents.strip()[:8]
+        return int.from_bytes(bytes.fromhex(word), "little")
+
     def _extract_first_memory_word(self, response):
         for record in response:
             payload = record.get("payload")
@@ -296,10 +307,10 @@ class GdbClientManager:
                 if memory and isinstance(memory, list):
                     contents = memory[0].get("contents")
                     if contents:
-                        return int(contents[:8], 16)
+                        return self._le_hex_word_to_int(contents)
                 contents = payload.get("contents")
                 if contents:
-                    return int(contents[:8], 16)
+                    return self._le_hex_word_to_int(contents)
             if isinstance(payload, str) and "0x" in payload:
                 token = payload.split("0x", 1)[1].split()[0].rstrip(":,")
                 return int(token, 16)
