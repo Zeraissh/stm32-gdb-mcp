@@ -147,6 +147,13 @@ RTT log capture / RTT 日志采集：
 - `get_rtt_logs`
 - `clear_rtt_logs`
 
+SWO/ITM log capture / SWO/ITM 日志采集：
+
+- `start_swo_logging`
+- `stop_swo_logging`
+- `get_swo_logs`
+- `clear_swo_logs`
+
 UART log capture / UART 日志采集：
 
 - `start_uart_logging`
@@ -245,9 +252,10 @@ settings without touching the current session.
 
 ## Response Shape / 响应结构
 
-English: New helper modules use a stable JSON envelope for gradual adoption.
+English: MCP tool results use a stable JSON envelope inside the MCP `TextContent`
+transport.
 
-中文：新的辅助模块逐步采用稳定的 JSON 响应包络。
+中文：MCP 工具结果在 MCP `TextContent` 传输外壳内使用稳定 JSON 响应包络。
 
 ```json
 {
@@ -259,16 +267,17 @@ English: New helper modules use a stable JSON envelope for gradual adoption.
 }
 ```
 
-English: Existing MCP handlers still return human-readable text or JSON for
-backward compatibility. New tools should prefer the stable shape where it helps
-the AI client make decisions.
+English: Human-readable messages live inside `data.message` or `error.message`.
+Raw GDB or tool output is preserved in `raw_response` where it helps diagnosis.
 
-中文：为了保持向后兼容，已有 MCP handler 仍可能返回人类可读文本或 JSON。新工具在有助于
-AI 客户端决策时，应优先采用稳定响应结构。
+中文：人类可读消息位于 `data.message` 或 `error.message`。有助于诊断时，原始 GDB 或工具输出会保留在
+`raw_response` 中。
 
 ## Examples / 示例
 
 - `examples/configs/stm32f4_jlink.yaml`: editable J-Link STM32F4 config / 可编辑的 J-Link STM32F4 配置
+- `examples/configs/stm32l431_openocd.yaml`: STM32L431 OpenOCD/ST-Link HIL config / STM32L431 OpenOCD/ST-Link HIL 配置
+- `examples/firmware/stm32l431_blinky`: minimal STM32L431 firmware example / 最小 STM32L431 固件示例
 - `examples/prompts/debug_hardfault.md`: HardFault diagnosis prompt / HardFault 诊断提示词
 - `examples/prompts/freertos_hang.md`: FreeRTOS hang diagnosis prompt / FreeRTOS 卡死诊断提示词
 
@@ -288,19 +297,26 @@ evidence to keep from each board run.
 
 参见 `docs/hil-validation.md`，了解 runner 要求、烟测覆盖范围以及每次板卡验证需要保留的证据。
 
-## Current Limits / 当前限制
+## Completed Capabilities / 已完成能力
 
-English: This MCP now covers a strong first debugging loop, but it is still GDB-centric.
+English: The earlier `Current Limits` items are now implemented as project
+capabilities with tests, docs, or gated hardware validation paths.
 
-中文：当前 MCP 已经覆盖较完整的第一阶段调试闭环，但仍然以 GDB 为中心。
+中文：之前 `Current Limits` 中列出的项目已实现为项目能力，并配套测试、文档或受控的硬件验证路径。
 
-Future high-value additions / 后续高价值方向：
+Implemented / 已实现：
 
-- probe-specific reset strategy profiles / 面向不同调试器的复位策略 profile
-- board-specific regression experiments for hardware-in-the-loop tests / 面向具体板卡的硬件在环回归实验
-- SWO/ITM capture / SWO/ITM 采集
-- real hardware integration tests with example firmware / 带示例固件的真实硬件集成测试
-- full migration of older tool responses to the stable JSON envelope / 将旧工具响应完整迁移到稳定 JSON 包络
+- probe-specific reset strategy profiles through `reset_target.strategy`, custom reset commands, and YAML `reset` config / 通过 `reset_target.strategy`、自定义复位命令和 YAML `reset` 配置实现面向不同调试器的复位策略 profile
+- board-specific HIL smoke tests gated by `STM32_GDB_MCP_HIL=1` / 通过 `STM32_GDB_MCP_HIL=1` 显式启用的板卡级 HIL 烟测
+- SWO/ITM process-output capture via `start_swo_logging`, `get_swo_logs`, and snapshot log context / 通过 `start_swo_logging`、`get_swo_logs` 和快照日志上下文实现 SWO/ITM 进程输出采集
+- STM32L431 OpenOCD config and minimal example firmware under `examples/firmware/stm32l431_blinky` / `examples/firmware/stm32l431_blinky` 下的 STM32L431 OpenOCD 配置和最小示例固件
+- stable JSON response envelope for MCP tool results while preserving the MCP `TextContent` transport / MCP 工具结果使用稳定 JSON 响应包络，同时保留 MCP `TextContent` 传输外壳
+
+Roadmap / 路线图：
+
+- richer vendor-specific SWO/TPIU auto-configuration / 更完整的厂商特定 SWO/TPIU 自动配置
+- more board-specific firmware examples and HIL fixtures / 更多板卡专用示例固件和 HIL fixture
+- deeper RTOS-aware deadlock and timing analysis / 更深入的 RTOS 死锁和时序分析
 
 ## Project Discovery / 项目发现
 
@@ -409,11 +425,11 @@ Example / 示例：
 English: `get_rtt_logs` returns indexed log entries and supports `limit`,
 `since_index`, and `clear`. `clear_rtt_logs` clears the buffer without stopping
 the process. `capture_debug_snapshot` accepts `include_logs=true` and optional
-`log_limit` to attach recent RTT and UART logs to the normal debug evidence bundle.
+`log_limit` to attach recent RTT, SWO, and UART logs to the normal debug evidence bundle.
 
 中文：`get_rtt_logs` 返回带索引的日志条目，并支持 `limit`、`since_index` 和 `clear`。
 `clear_rtt_logs` 可以在不停止进程的情况下清空缓冲区。`capture_debug_snapshot` 支持
-`include_logs=true` 和可选 `log_limit`，用于把近期 RTT/UART 日志附加到调试证据包。
+`include_logs=true` 和可选 `log_limit`，用于把近期 RTT/SWO/UART 日志附加到调试证据包。
 
 English: This layer intentionally captures process output only. It does not
 configure RTT control blocks inside firmware; your firmware must already emit
@@ -421,6 +437,31 @@ RTT data, and the SEGGER command must be able to connect to the target.
 
 中文：这一层只捕获进程输出，不配置固件内部的 RTT control block。你的固件必须已经输出 RTT 数据，
 且 SEGGER 命令本身必须能连接目标。
+
+## SWO/ITM Logs / SWO/ITM 日志
+
+English: SWO/ITM capture is process-based. Start it with a decoder command that
+prints decoded SWO/ITM text to stdout; the MCP stores the output in the same
+indexed ring-buffer shape used by RTT and UART.
+
+中文：SWO/ITM 采集基于进程输出。启动时传入一个会把解码后的 SWO/ITM 文本打印到 stdout 的解码命令；
+MCP 会用与 RTT 和 UART 相同的带索引环形缓冲结构保存输出。
+
+Example / 示例：
+
+```json
+{
+  "command": "your-swo-decoder",
+  "args": ["--device", "STM32L431CCT6", "--frequency", "80000000"]
+}
+```
+
+English: `get_swo_logs` supports `limit`, `since_index`, and `clear`.
+`capture_debug_snapshot` includes SWO logs under `logs.swo` when
+`include_logs=true`.
+
+中文：`get_swo_logs` 支持 `limit`、`since_index` 和 `clear`。当
+`include_logs=true` 时，`capture_debug_snapshot` 会在 `logs.swo` 下包含 SWO 日志。
 
 ## UART Logs / UART 日志
 
@@ -446,10 +487,10 @@ closing the port, and `stop_uart_logging` closes the serial port.
 `clear_uart_logs` 不关闭串口，只清空缓冲条目；`stop_uart_logging` 会关闭串口。
 
 English: When `capture_debug_snapshot` is called with `include_logs=true`, the
-`logs` section contains both `rtt` and `uart` sub-sections with status and recent
+`logs` section contains `rtt`, `swo`, and `uart` sub-sections with status and recent
 entries. This makes it possible to correlate target halt state, FreeRTOS state,
 and firmware text logs in one evidence bundle.
 
 中文：当调用 `capture_debug_snapshot` 并设置 `include_logs=true` 时，`logs` 字段会包含
-`rtt` 和 `uart` 两个子段，分别给出状态和近期日志。这样可以在同一个证据包中关联目标暂停状态、
+`rtt`、`swo` 和 `uart` 三个子段，分别给出状态和近期日志。这样可以在同一个证据包中关联目标暂停状态、
 FreeRTOS 状态和固件文本日志。

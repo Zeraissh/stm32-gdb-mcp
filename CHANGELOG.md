@@ -1,5 +1,13 @@
 # Changelog / 更新日志
 
+## Unreleased / 未发布
+
+- Added probe-specific reset strategy profiles and YAML reset config. / 新增面向不同调试器的复位策略 profile 和 YAML reset 配置。
+- Migrated MCP tool responses to the stable JSON envelope. / 将 MCP 工具响应迁移到稳定 JSON 包络。
+- Added SWO/ITM process-output log capture tools. / 新增 SWO/ITM 进程输出日志采集工具。
+- Added skipped-by-default HIL smoke regression tests and STM32L431 OpenOCD config. / 新增默认跳过的 HIL 烟测回归测试和 STM32L431 OpenOCD 配置。
+- Added a minimal STM32L431 example firmware project. / 新增最小 STM32L431 示例固件工程。
+
 ## 0.2.0 - 2026-06-21
 
 - Added Cortex-M fault diagnosis and structured debug snapshots. / 新增 Cortex-M 故障诊断和结构化调试快照。

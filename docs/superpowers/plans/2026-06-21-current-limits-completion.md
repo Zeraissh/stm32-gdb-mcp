@@ -877,7 +877,7 @@ git commit -m "Add STM32L431 example firmware"
 - Modify: `.github/workflows/hil.yml`
 - Test: all tests
 
-- [ ] **Step 1: Replace README Current Limits**
+- [x] **Step 1: Replace README Current Limits**
 
 Replace `## Current Limits / 当前限制` with `## Completed Capabilities / 已完成能力` and document:
 
@@ -889,7 +889,7 @@ Replace `## Current Limits / 当前限制` with `## Completed Capabilities / 已
 
 Keep any remaining future work in a smaller `Roadmap / 路线图` section.
 
-- [ ] **Step 2: Update bilingual docs**
+- [x] **Step 2: Update bilingual docs**
 
 Update:
 
@@ -897,7 +897,7 @@ Update:
 - `docs/release.md`: include HIL marker command and optional firmware build.
 - `CHANGELOG.md`: add an Unreleased section for the new capabilities.
 
-- [ ] **Step 3: Run YAML parse checks**
+- [x] **Step 3: Run YAML parse checks**
 
 Run:
 
@@ -920,7 +920,7 @@ for path in [
 
 Expected: all files print `OK`.
 
-- [ ] **Step 4: Run full quality gate**
+- [x] **Step 4: Run full quality gate**
 
 Run:
 
@@ -933,7 +933,7 @@ python -m build
 
 Expected: all commands exit 0. HIL tests are skipped unless `STM32_GDB_MCP_HIL=1`.
 
-- [ ] **Step 5: Optional real STM32L431 HIL smoke**
+- [x] **Step 5: Optional real STM32L431 HIL smoke**
 
 Only with connected hardware and explicit env:
 
@@ -945,7 +945,7 @@ python -m pytest -q tests/hil -m hil
 
 Expected: Connects to STM32L431, reads CPUID and DBGMCU IDCODE, resumes target, and stops the debug session.
 
-- [ ] **Step 6: Clean generated artifacts**
+- [x] **Step 6: Clean generated artifacts**
 
 Remove generated local artifacts after verification:
 
@@ -964,14 +964,14 @@ foreach ($rel in $targets) {
 }
 ```
 
-- [ ] **Step 7: Commit Task 6**
+- [x] **Step 7: Commit Task 6**
 
 ```bash
 git add README.md docs/hil-validation.md docs/release.md CHANGELOG.md .github/workflows/hil.yml
 git commit -m "Document completed current limit capabilities"
 ```
 
-- [ ] **Step 8: Push and verify repository state**
+- [x] **Step 8: Push and verify repository state**
 
 ```bash
 git push
