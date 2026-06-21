@@ -2,6 +2,7 @@ import time
 
 from pygdbmi.gdbcontroller import GdbController
 
+from . import dwt
 from .fault_analysis import FAULT_REGISTER_ADDRESSES
 from .stop_event import parse_stop_event
 
@@ -94,6 +95,16 @@ class GdbClientManager:
     def step_into(self):
         return self.execute_command("-exec-step", timeout_sec=1.0)
 
+    def step_out(self):
+        return self.execute_command("-exec-finish", timeout_sec=2.0)
+
+    def step_instruction(self, over: bool = False):
+        cmd = "-exec-next-instruction" if over else "-exec-step-instruction"
+        return self.execute_command(cmd, timeout_sec=1.0)
+
+    def run_to_line(self, location: str):
+        return self.execute_command(f"-exec-until {location}", timeout_sec=10.0)
+
     def read_variable(self, name: str):
         return self.execute_command(f"-data-evaluate-expression {name}")
 
@@ -132,6 +143,48 @@ class GdbClientManager:
 
     def disassemble_around_pc(self, instructions: int = 8):
         return self.execute_cli_command(f"x/{instructions}i $pc", timeout_sec=2.0)
+
+    def disassemble(self, location: str = "$pc", instructions: int = 8):
+        return self.execute_cli_command(f"x/{int(instructions)}i {location}", timeout_sec=2.0)
+
+    def list_functions(self, regex: str | None = None):
+        cmd = f"info functions {regex}" if regex else "info functions"
+        return self.execute_cli_command(cmd, timeout_sec=3.0)
+
+    def list_variables(self, regex: str | None = None):
+        cmd = f"info variables {regex}" if regex else "info variables"
+        return self.execute_cli_command(cmd, timeout_sec=3.0)
+
+    def lookup_type(self, expr: str):
+        return self.execute_cli_command(f"ptype {expr}", timeout_sec=2.0)
+
+    def sizeof(self, expr: str):
+        return self.execute_command(f"-data-evaluate-expression sizeof({expr})", timeout_sec=2.0)
+
+    def address_of(self, symbol: str):
+        return self.execute_command(f"-data-evaluate-expression &{symbol}", timeout_sec=2.0)
+
+    def capture_coredump(self, path: str):
+        return self.execute_cli_command(f"generate-core-file {path}", timeout_sec=30.0)
+
+    def load_coredump(self, path: str):
+        return self.execute_cli_command(f"core-file {path}", timeout_sec=10.0)
+
+    def verify_flash(self, file_path: str):
+        responses = []
+        responses.extend(self.execute_command(f"-file-exec-and-symbols {file_path}", timeout_sec=2.0))
+        responses.extend(self.execute_cli_command("compare-sections", timeout_sec=30.0))
+        return responses
+
+    def enable_cycle_counter(self):
+        for address, value in dwt.enable_cycle_counter_writes():
+            self.write_typed_memory(hex(address), hex(value), width_bits=32)
+
+    def read_cycle_counter(self) -> int:
+        return dwt.read_cycle_count(self.read_word)
+
+    def sample_pc(self, count: int = 64):
+        return dwt.sample_pc(self.read_word, count)
 
     def read_register_value(self, expr: str) -> int:
         """Evaluate a register/convenience expression (e.g. '$lr', '$msp') to an int."""

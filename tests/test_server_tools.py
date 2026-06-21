@@ -87,6 +87,42 @@ def test_server_exposes_run_and_wait_tools():
     assert "wait_for_stop" in tool_names
 
 
+def test_server_exposes_tier3_depth_tools():
+    tools = asyncio.run(handle_list_tools())
+    tool_names = {tool.name for tool in tools}
+
+    for expected in (
+        "step_out", "step_instruction", "run_to_line", "disassemble",
+        "list_functions", "list_variables", "lookup_type", "sizeof", "address_of",
+        "capture_coredump", "load_coredump", "verify_flash",
+        "read_cycle_counter", "sample_pc",
+    ):
+        assert expected in tool_names
+
+
+def test_read_cycle_counter_enables_then_reads(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def __init__(self):
+            self.enabled = False
+
+        def enable_cycle_counter(self):
+            self.enabled = True
+
+        def read_cycle_counter(self):
+            return 4242
+
+    fake = FakeClient()
+    monkeypatch.setattr(server_module, "gdb_client", fake)
+
+    payload = _payload(asyncio.run(handle_call_tool("read_cycle_counter", {"enable": True})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["cycles"] == 4242
+    assert fake.enabled is True
+
+
 def test_server_exposes_check_session_health_tool():
     tools = asyncio.run(handle_list_tools())
     tool_names = {tool.name for tool in tools}

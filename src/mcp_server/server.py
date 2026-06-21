@@ -750,6 +750,154 @@ async def handle_list_tools() -> list[Tool]:
             name="get_tracked_data",
             description="Retrieves the tracked variable data for plotting or analysis.",
             inputSchema={"type": "object", "properties": {}}
+        ),
+        # --- Tier 3: Execution control, symbol discovery, postmortem, timing ---
+        Tool(
+            name="step_out",
+            description="Runs until the current function returns (GDB finish).",
+            inputSchema={"type": "object", "properties": {}}
+        ),
+        Tool(
+            name="step_instruction",
+            description="Steps a single machine instruction. Set over=true to step over calls.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "over": {"type": "boolean", "description": "If true, step over a called function instead of into it."}
+                }
+            }
+        ),
+        Tool(
+            name="run_to_line",
+            description="Runs until a given location is reached (function, 'file.c:42', or '*0xADDR').",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string", "description": "Where to run to."}
+                },
+                "required": ["location"]
+            }
+        ),
+        Tool(
+            name="disassemble",
+            description="Disassembles N instructions at a location (default $pc).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string", "description": "Where to disassemble from (default '$pc')."},
+                    "instructions": {"type": "integer", "description": "Number of instructions (default 8)."}
+                }
+            }
+        ),
+        Tool(
+            name="list_functions",
+            description="Lists functions in the loaded symbols, optionally filtered by a regex.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "regex": {"type": "string", "description": "Optional regex to filter function names."}
+                }
+            }
+        ),
+        Tool(
+            name="list_variables",
+            description="Lists global/static variables in the loaded symbols, optionally filtered by a regex.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "regex": {"type": "string", "description": "Optional regex to filter variable names."}
+                }
+            }
+        ),
+        Tool(
+            name="lookup_type",
+            description="Shows the type/layout of an expression or type name (GDB ptype).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "expr": {"type": "string", "description": "Expression or type name, e.g. 'my_struct' or 'g_state'."}
+                },
+                "required": ["expr"]
+            }
+        ),
+        Tool(
+            name="sizeof",
+            description="Evaluates sizeof(expr) against the loaded symbols.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "expr": {"type": "string", "description": "Type or expression to size, e.g. 'struct foo'."}
+                },
+                "required": ["expr"]
+            }
+        ),
+        Tool(
+            name="address_of",
+            description="Resolves the address of a symbol (&symbol).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "Symbol name, e.g. 'g_state'."}
+                },
+                "required": ["symbol"]
+            }
+        ),
+        Tool(
+            name="capture_coredump",
+            description="Writes a core dump (RAM + registers) of the halted target to a file for "
+                        "offline postmortem analysis.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Output path for the core file."}
+                },
+                "required": ["path"]
+            }
+        ),
+        Tool(
+            name="load_coredump",
+            description="Loads a previously captured core file for offline analysis.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path to the core file."}
+                },
+                "required": ["path"]
+            }
+        ),
+        Tool(
+            name="verify_flash",
+            description="Verifies that target flash matches an ELF by comparing loaded sections "
+                        "(GDB compare-sections).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string", "description": "Path to the ELF to verify against."}
+                },
+                "required": ["file_path"]
+            }
+        ),
+        Tool(
+            name="read_cycle_counter",
+            description="Enables (if needed) and reads the DWT cycle counter (DWT_CYCCNT) for "
+                        "on-chip timing measurements.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "enable": {"type": "boolean", "description": "If true, enable and zero the counter before reading."}
+                }
+            }
+        ),
+        Tool(
+            name="sample_pc",
+            description="Statistically samples the program counter via DWT_PCSR to locate hangs or "
+                        "hot spots. Returns the raw PC samples.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "count": {"type": "integer", "description": "Number of samples (default 64)."}
+                }
+            }
         )
     ]
 
@@ -1279,6 +1427,78 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
         elif name == "get_tracked_data":
             data = variable_tracker.get_data()
             return [content_success(data)]
+
+        elif name == "step_out":
+            resp = gdb_client.step_out()
+            return [content_success({"message": "Stepped out"}, raw_response=resp)]
+
+        elif name == "step_instruction":
+            resp = gdb_client.step_instruction(over=arguments.get("over", False))
+            return [content_success({"message": "Stepped one instruction"}, raw_response=resp)]
+
+        elif name == "run_to_line":
+            resp = gdb_client.run_to_line(arguments["location"])
+            return [content_success(
+                {"message": "Ran to location", "location": arguments["location"]},
+                raw_response=resp,
+            )]
+
+        elif name == "disassemble":
+            resp = gdb_client.disassemble(arguments.get("location", "$pc"), arguments.get("instructions", 8))
+            return [content_success({"message": "Disassembled"}, raw_response=resp)]
+
+        elif name == "list_functions":
+            resp = gdb_client.list_functions(arguments.get("regex"))
+            return [content_success({"message": "Functions listed"}, raw_response=resp)]
+
+        elif name == "list_variables":
+            resp = gdb_client.list_variables(arguments.get("regex"))
+            return [content_success({"message": "Variables listed"}, raw_response=resp)]
+
+        elif name == "lookup_type":
+            resp = gdb_client.lookup_type(arguments["expr"])
+            return [content_success({"message": "Type looked up", "expr": arguments["expr"]}, raw_response=resp)]
+
+        elif name == "sizeof":
+            resp = gdb_client.sizeof(arguments["expr"])
+            return [content_success({"message": "Size evaluated", "expr": arguments["expr"]}, raw_response=resp)]
+
+        elif name == "address_of":
+            resp = gdb_client.address_of(arguments["symbol"])
+            return [content_success({"message": "Address resolved", "symbol": arguments["symbol"]}, raw_response=resp)]
+
+        elif name == "capture_coredump":
+            resp = gdb_client.capture_coredump(arguments["path"])
+            return [content_success(
+                {"message": "Core dump captured", "path": arguments["path"]},
+                raw_response=resp,
+                suggested_next_actions=["load_coredump"],
+            )]
+
+        elif name == "load_coredump":
+            resp = gdb_client.load_coredump(arguments["path"])
+            return [content_success({"message": "Core dump loaded", "path": arguments["path"]}, raw_response=resp)]
+
+        elif name == "verify_flash":
+            resp = gdb_client.verify_flash(arguments["file_path"])
+            return [content_success(
+                {"message": "Flash verified", "file_path": arguments["file_path"]},
+                raw_response=resp,
+            )]
+
+        elif name == "read_cycle_counter":
+            if arguments.get("enable"):
+                gdb_client.enable_cycle_counter()
+            cycles = gdb_client.read_cycle_counter()
+            return [content_success({"message": "Cycle counter read", "cycles": cycles})]
+
+        elif name == "sample_pc":
+            samples = gdb_client.sample_pc(arguments.get("count", 64))
+            return [content_success({
+                "message": "PC sampled",
+                "count": len(samples),
+                "samples": [f"0x{s & 0xFFFFFFFF:08x}" for s in samples],
+            })]
 
         else:
             raise ValueError(f"Unknown tool: {name}")
