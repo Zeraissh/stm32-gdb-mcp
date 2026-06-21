@@ -1,0 +1,23 @@
+mcu: STM32L431CCT6
+board: Custom STM32L431 board
+probe: stlink
+server_type: openocd
+server_args:
+  - -f
+  - interface/stlink.cfg
+  - -f
+  - target/stm32l4x.cfg
+project_root: .
+reset:
+  strategy: under_reset
+  halt: true
+hil:
+  halt: true
+  read_cpuid: true
+  read_dbgmcu_idcode: true
+  flash: false
+uart:
+  port: COM3
+  baudrate: 115200
+  timeout: 0.1
+notes: "STM32L431CCT6 OpenOCD/ST-Link smoke config. / STM32L431CCT6 OpenOCD/ST-Link 烟测配置。"

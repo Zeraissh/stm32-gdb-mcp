@@ -32,6 +32,9 @@ stm32-gdb-mcp = "mcp_server.server:main"
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = [
+    "hil: hardware-in-the-loop tests that require a connected STM32 target",
+]
 
 [tool.ruff]
 line-length = 120

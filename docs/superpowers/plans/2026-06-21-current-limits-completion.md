@@ -22,7 +22,7 @@
 - Modify `src/mcp_server/log_reader.py`: reuse existing process reader for SWO through server-level instance.
 - Create `tests/test_reset_strategy.py`: unit tests for reset command resolution.
 - Create `tests/test_hil_smoke.py`: unit tests for HIL orchestration using fakes.
-- Create `tests/hil/test_hil_smoke.py`: skipped-by-default real hardware smoke test.
+- Create `tests/hil/test_real_hil_smoke.py`: skipped-by-default real hardware smoke test.
 - Modify `tests/test_tool_response.py`: tests for `TextContent` JSON envelope helpers.
 - Modify `tests/test_server_tools.py`: tool exposure and selected response-envelope tests.
 - Modify `tests/test_debug_config.py`: reset/HIL config validation tests.
@@ -569,12 +569,12 @@ git commit -m "Add SWO ITM log capture tools"
 **Files:**
 - Create: `src/mcp_server/hil_smoke.py`
 - Create: `tests/test_hil_smoke.py`
-- Create: `tests/hil/test_hil_smoke.py`
+- Create: `tests/hil/test_real_hil_smoke.py`
 - Modify: `pyproject.toml`
 - Modify: `.github/workflows/hil.yml`
 - Modify: `docs/hil-validation.md`
 
-- [ ] **Step 1: Write failing HIL orchestration unit tests**
+- [x] **Step 1: Write failing HIL orchestration unit tests**
 
 Create `tests/test_hil_smoke.py`:
 
@@ -643,7 +643,7 @@ def test_run_hil_smoke_connects_reads_ids_resumes_and_stops():
     assert server.stopped is True
 ```
 
-- [ ] **Step 2: Run HIL unit test and verify RED**
+- [x] **Step 2: Run HIL unit test and verify RED**
 
 Run:
 
@@ -653,7 +653,7 @@ python -m pytest tests/test_hil_smoke.py -q
 
 Expected: FAIL because `mcp_server.hil_smoke` does not exist.
 
-- [ ] **Step 3: Implement HIL smoke orchestrator**
+- [x] **Step 3: Implement HIL smoke orchestrator**
 
 Create `src/mcp_server/hil_smoke.py`:
 
@@ -694,7 +694,7 @@ def _read_word(gdb_client, address: str) -> dict:
     }
 ```
 
-- [ ] **Step 4: Run HIL unit test and verify GREEN**
+- [x] **Step 4: Run HIL unit test and verify GREEN**
 
 Run:
 
@@ -704,9 +704,9 @@ python -m pytest tests/test_hil_smoke.py -q
 
 Expected: PASS.
 
-- [ ] **Step 5: Add skipped-by-default real HIL test**
+- [x] **Step 5: Add skipped-by-default real HIL test**
 
-Create `tests/hil/test_hil_smoke.py`:
+Create `tests/hil/test_real_hil_smoke.py`:
 
 ```python
 import os
@@ -733,7 +733,7 @@ def test_real_hardware_hil_smoke():
     assert result["ok"] is True
 ```
 
-- [ ] **Step 6: Register pytest marker**
+- [x] **Step 6: Register pytest marker**
 
 Modify `pyproject.toml`:
 
@@ -746,7 +746,7 @@ markers = [
 ]
 ```
 
-- [ ] **Step 7: Add STM32L431 OpenOCD config example**
+- [x] **Step 7: Add STM32L431 OpenOCD config example**
 
 Create `examples/configs/stm32l431_openocd.yaml`:
 
@@ -776,7 +776,7 @@ uart:
 notes: "STM32L431CCT6 OpenOCD/ST-Link smoke config. / STM32L431CCT6 OpenOCD/ST-Link 烟测配置。"
 ```
 
-- [ ] **Step 8: Update HIL workflow**
+- [x] **Step 8: Update HIL workflow**
 
 Modify `.github/workflows/hil.yml`:
 
@@ -796,7 +796,7 @@ env:
   run: python -m pytest -q tests/hil -m hil
 ```
 
-- [ ] **Step 9: Run tests**
+- [x] **Step 9: Run tests**
 
 Run:
 
@@ -807,7 +807,7 @@ python -m pytest -q
 
 Expected: Unit test passes; real HIL test is skipped during normal run unless env is set.
 
-- [ ] **Step 10: Commit Task 4**
+- [x] **Step 10: Commit Task 4**
 
 ```bash
 git add src/mcp_server/hil_smoke.py tests/test_hil_smoke.py tests/hil/test_hil_smoke.py pyproject.toml .github/workflows/hil.yml examples/configs/stm32l431_openocd.yaml docs/hil-validation.md

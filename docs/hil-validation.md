@@ -25,7 +25,7 @@ Run the GitHub Actions workflow named `Hardware-in-the-loop`.
 
 Inputs / 输入参数：
 
-- `config_path`: YAML config to validate before touching hardware / 接触硬件前要校验的 YAML 配置
+- `config_path`: YAML config to validate before touching hardware. The default is `examples/configs/stm32l431_openocd.yaml`. / 接触硬件前要校验的 YAML 配置。默认值是 `examples/configs/stm32l431_openocd.yaml`。
 - `smoke_command`: optional command executed after setup and config validation / 安装和配置校验后执行的可选烟测命令
 
 Example smoke command / 烟测命令示例：
@@ -33,6 +33,22 @@ Example smoke command / 烟测命令示例：
 ```bash
 python -m pytest -q tests -m hil
 ```
+
+Local STM32L431 smoke run / 本地 STM32L431 烟测运行：
+
+```powershell
+$env:STM32_GDB_MCP_HIL = "1"
+$env:STM32_GDB_MCP_HIL_CONFIG = "examples/configs/stm32l431_openocd.yaml"
+python -m pytest -q tests/hil -m hil
+```
+
+English: The default HIL smoke is non-destructive: it starts the configured GDB
+server, connects GDB, optionally halts the target, reads CPUID and DBGMCU IDCODE,
+resumes, and closes the session. Flashing remains opt-in through board-specific
+commands.
+
+中文：默认 HIL 烟测是非破坏性的：它启动配置中的 GDB Server、连接 GDB、可选暂停目标、读取
+CPUID 和 DBGMCU IDCODE、恢复运行并关闭会话。烧录仍然需要通过板卡专用命令显式启用。
 
 English: The repository does not ship board-specific HIL tests yet because those
 require firmware, target wiring, and probe-specific reset behavior. Keep board

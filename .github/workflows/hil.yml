@@ -6,7 +6,7 @@ on:
       config_path:
         description: "Debug config to validate before running board smoke checks / 运行板卡烟测前要校验的调试配置"
         required: false
-        default: "examples/configs/stm32f4_jlink.yaml"
+        default: "examples/configs/stm32l431_openocd.yaml"
       smoke_command:
         description: "Optional command to run on the self-hosted STM32 runner / 在自托管 STM32 runner 上运行的可选命令"
         required: false
@@ -17,6 +17,9 @@ jobs:
     name: HIL smoke check
     runs-on: [self-hosted, stm32]
     timeout-minutes: 30
+    env:
+      STM32_GDB_MCP_HIL: "1"
+      STM32_GDB_MCP_HIL_CONFIG: ${{ inputs.config_path }}
 
     steps:
       - uses: actions/checkout@v4
@@ -40,6 +43,9 @@ jobs:
           result = load_debug_config(r'${{ inputs.config_path }}');
           print(json.dumps(result['validation'], indent=2));
           sys.exit(0 if result['validation']['valid'] else 1)"
+
+      - name: Run HIL smoke tests
+        run: python -m pytest -q tests/hil -m hil
 
       - name: Run optional board smoke command
         if: ${{ inputs.smoke_command != '' }}
