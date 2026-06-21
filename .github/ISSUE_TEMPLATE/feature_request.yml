@@ -1,40 +1,40 @@
-name: Feature request
-description: Suggest a capability for STM32 debugging, observability, or automation.
+name: "Feature request / 功能请求"
+description: "Suggest a capability for STM32 debugging, observability, or automation. / 建议一个用于 STM32 调试、可观测性或自动化的能力。"
 title: "[Feature]: "
 labels: ["enhancement", "needs-triage"]
 body:
   - type: textarea
     id: use-case
     attributes:
-      label: Use case
-      description: Describe the debugging workflow this would improve.
+      label: "Use case / 使用场景"
+      description: "Describe the debugging workflow this would improve. / 描述它会改善哪一类调试流程。"
     validations:
       required: true
   - type: dropdown
     id: area
     attributes:
-      label: Area
+      label: "Area / 领域"
       options:
-        - GDB/session control
-        - Fault diagnosis
-        - FreeRTOS inspection
-        - Logs and tracing
-        - SVD/peripheral decoding
-        - Hardware-in-the-loop
-        - MCP response shape
-        - Documentation
-        - Other
+        - GDB/session control / GDB 与会话控制
+        - Fault diagnosis / 故障诊断
+        - FreeRTOS inspection / FreeRTOS 检查
+        - Logs and tracing / 日志与追踪
+        - SVD/peripheral decoding / SVD 与外设解码
+        - Hardware-in-the-loop / 硬件在环
+        - MCP response shape / MCP 响应结构
+        - Documentation / 文档
+        - Other / 其他
     validations:
       required: true
   - type: textarea
     id: proposal
     attributes:
-      label: Proposed behavior
-      description: What should the MCP tool return or automate?
+      label: "Proposed behavior / 建议行为"
+      description: "What should the MCP tool return or automate? / MCP 工具应该返回什么，或自动化什么？"
     validations:
       required: true
   - type: textarea
     id: constraints
     attributes:
-      label: Hardware or toolchain constraints
-      description: Note probe, MCU family, RTOS, IDE/toolchain, or host OS constraints.
+      label: "Hardware or toolchain constraints / 硬件或工具链约束"
+      description: "Note probe, MCU family, RTOS, IDE/toolchain, or host OS constraints. / 说明调试器、MCU 系列、RTOS、IDE/工具链或主机 OS 限制。"

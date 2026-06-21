@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       config_path:
-        description: "Debug config to validate before running board smoke checks"
+        description: "Debug config to validate before running board smoke checks / 运行板卡烟测前要校验的调试配置"
         required: false
         default: "examples/configs/stm32f4_jlink.yaml"
       smoke_command:
-        description: "Optional command to run on the self-hosted STM32 runner"
+        description: "Optional command to run on the self-hosted STM32 runner / 在自托管 STM32 runner 上运行的可选命令"
         required: false
         default: ""
 

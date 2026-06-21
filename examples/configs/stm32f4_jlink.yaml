@@ -23,4 +23,4 @@ uart:
   port: COM7
   baudrate: 115200
   timeout: 0.1
-notes: Edit paths, device, and probe speed for your board.
+notes: "Edit paths, device, and probe speed for your board. / 请按你的板卡修改路径、器件型号和调试器速度。"
