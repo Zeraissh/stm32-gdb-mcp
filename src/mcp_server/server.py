@@ -31,6 +31,7 @@ from .gdb_client import GdbClientManager
 from .gdb_manager import GdbServerManager
 from .log_reader import ProcessLogReader, SerialLogReader
 from .project_inspector import inspect_project
+from .reset_strategy import resolve_reset_command
 from .svd_parser import SVDParser
 from .tracker import VariableTracker
 
@@ -82,7 +83,9 @@ async def handle_list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "halt": {"type": "boolean", "description": "If true, halts the CPU immediately after reset."}
+                    "halt": {"type": "boolean", "description": "If true, halts the CPU immediately after reset."},
+                    "strategy": {"type": "string", "description": "Optional reset strategy, e.g. default, under_reset, or software."},
+                    "command": {"type": "string", "description": "Optional custom GDB monitor reset command."}
                 },
                 "required": ["halt"]
             }
@@ -579,9 +582,16 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
 
         elif name == "reset_target":
             halt = arguments["halt"]
-            cmd = "monitor reset halt" if halt else "monitor reset run"
-            resp = gdb_client.reset_halt(command=cmd)
-            return [TextContent(type="text", text=f"Target reset (halt={halt}).\nResponses: {resp}")]
+            profile = debug_profile.get()
+            reset_config = profile.get("reset", {})
+            resolved = resolve_reset_command(
+                gdb_manager.server_type or profile.get("server_type"),
+                halt=halt,
+                strategy=arguments.get("strategy") or reset_config.get("strategy"),
+                command=arguments.get("command") or reset_config.get("command"),
+            )
+            resp = gdb_client.reset_halt(command=resolved["command"])
+            return [TextContent(type="text", text=f"Target reset ({resolved}).\nResponses: {resp}")]
 
         # Step 5
         elif name == "set_breakpoint":

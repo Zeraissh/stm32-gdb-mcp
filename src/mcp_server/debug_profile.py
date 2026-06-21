@@ -8,6 +8,8 @@ class DebugProfileStore:
         "elf_path",
         "svd_path",
         "project_root",
+        "reset",
+        "hil",
         "notes",
     }
 

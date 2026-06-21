@@ -37,3 +37,12 @@ def test_server_exposes_debug_closure_tools():
     assert "load_debug_config" in tool_names
     assert "save_debug_config" in tool_names
     assert "validate_debug_config" in tool_names
+
+
+def test_reset_target_exposes_strategy_and_custom_command_options():
+    tools = asyncio.run(handle_list_tools())
+    reset_tool = next(tool for tool in tools if tool.name == "reset_target")
+    properties = reset_tool.inputSchema["properties"]
+
+    assert "strategy" in properties
+    assert "command" in properties

@@ -14,6 +14,8 @@ TOP_LEVEL_FIELDS = {
     "project_root",
     "rtt",
     "uart",
+    "reset",
+    "hil",
     "notes",
 }
 
@@ -70,6 +72,8 @@ def validate_debug_config(config: dict) -> dict:
 
     _validate_rtt(config.get("rtt"), errors)
     _validate_uart(config.get("uart"), errors)
+    _validate_reset(config.get("reset"), errors)
+    _validate_hil(config.get("hil"), errors)
 
     return {
         "valid": not errors,
@@ -113,6 +117,35 @@ def _validate_uart(uart, errors: list[str]):
     timeout = uart.get("timeout")
     if timeout is not None and not isinstance(timeout, (int, float)):
         errors.append("uart.timeout must be a number")
+
+
+def _validate_reset(reset, errors: list[str]):
+    if reset is None:
+        return
+    if not isinstance(reset, dict):
+        errors.append("reset must be an object")
+        return
+    strategy = reset.get("strategy")
+    if strategy is not None and not isinstance(strategy, str):
+        errors.append("reset.strategy must be a string")
+    command = reset.get("command")
+    if command is not None and (not isinstance(command, str) or not command.strip()):
+        errors.append("reset.command must not be empty when provided")
+    halt = reset.get("halt")
+    if halt is not None and not isinstance(halt, bool):
+        errors.append("reset.halt must be a boolean")
+
+
+def _validate_hil(hil, errors: list[str]):
+    if hil is None:
+        return
+    if not isinstance(hil, dict):
+        errors.append("hil must be an object")
+        return
+    for field in ("flash", "halt", "read_cpuid", "read_dbgmcu_idcode"):
+        value = hil.get(field)
+        if value is not None and not isinstance(value, bool):
+            errors.append(f"hil.{field} must be a boolean")
 
 
 def _is_string_list(value):

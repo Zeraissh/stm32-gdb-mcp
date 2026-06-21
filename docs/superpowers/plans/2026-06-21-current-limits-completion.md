@@ -46,7 +46,7 @@
 - Test: `tests/test_debug_config.py`
 - Test: `tests/test_server_tools.py`
 
-- [ ] **Step 1: Write failing reset strategy tests**
+- [x] **Step 1: Write failing reset strategy tests**
 
 Add `tests/test_reset_strategy.py`:
 
@@ -86,7 +86,7 @@ def test_unknown_reset_strategy_raises_clear_error():
         resolve_reset_command("openocd", halt=True, strategy="bad")
 ```
 
-- [ ] **Step 2: Run reset strategy tests and verify RED**
+- [x] **Step 2: Run reset strategy tests and verify RED**
 
 Run:
 
@@ -96,7 +96,7 @@ python -m pytest tests/test_reset_strategy.py -q
 
 Expected: FAIL because `mcp_server.reset_strategy` does not exist.
 
-- [ ] **Step 3: Implement minimal reset strategy resolver**
+- [x] **Step 3: Implement minimal reset strategy resolver**
 
 Create `src/mcp_server/reset_strategy.py`:
 
@@ -143,7 +143,7 @@ def resolve_reset_command(server_type: str | None, halt: bool, strategy: str | N
     }
 ```
 
-- [ ] **Step 4: Run reset strategy tests and verify GREEN**
+- [x] **Step 4: Run reset strategy tests and verify GREEN**
 
 Run:
 
@@ -153,7 +153,7 @@ python -m pytest tests/test_reset_strategy.py -q
 
 Expected: PASS.
 
-- [ ] **Step 5: Write failing debug config tests for reset/HIL sections**
+- [x] **Step 5: Write failing debug config tests for reset/HIL sections**
 
 Append to `tests/test_debug_config.py`:
 
@@ -181,7 +181,7 @@ def test_validate_debug_config_rejects_invalid_reset_and_hil_sections():
     assert "hil.flash must be a boolean" in result["errors"]
 ```
 
-- [ ] **Step 6: Run config tests and verify RED**
+- [x] **Step 6: Run config tests and verify RED**
 
 Run:
 
@@ -191,7 +191,7 @@ python -m pytest tests/test_debug_config.py -q
 
 Expected: FAIL because `reset` and `hil` are unknown or not validated.
 
-- [ ] **Step 7: Implement reset/HIL config validation**
+- [x] **Step 7: Implement reset/HIL config validation**
 
 Modify `src/mcp_server/debug_config.py`:
 
@@ -230,7 +230,7 @@ def _validate_hil(hil, errors: list[str]):
             errors.append(f"hil.{field} must be a boolean")
 ```
 
-- [ ] **Step 8: Update server `reset_target` schema and handler**
+- [x] **Step 8: Update server `reset_target` schema and handler**
 
 Modify `src/mcp_server/server.py`:
 
@@ -253,7 +253,7 @@ return content_success({"message": "Target reset", "reset": resolved}, raw_respo
 
 If response-envelope helpers are not implemented yet, return the existing text form temporarily and migrate in Task 2.
 
-- [ ] **Step 9: Run targeted tests**
+- [x] **Step 9: Run targeted tests**
 
 Run:
 
@@ -263,7 +263,7 @@ python -m pytest tests/test_reset_strategy.py tests/test_debug_config.py tests/t
 
 Expected: PASS.
 
-- [ ] **Step 10: Commit Task 1**
+- [x] **Step 10: Commit Task 1**
 
 ```bash
 git add src/mcp_server/reset_strategy.py src/mcp_server/debug_config.py src/mcp_server/debug_profile.py src/mcp_server/server.py tests/test_reset_strategy.py tests/test_debug_config.py tests/test_server_tools.py

@@ -52,3 +52,26 @@ def test_save_and_load_debug_config_round_trips_yaml(tmp_path):
     assert saved["path"] == str(path)
     assert loaded["config"] == config
     assert loaded["validation"]["valid"] is True
+
+
+def test_validate_debug_config_accepts_reset_and_hil_sections():
+    result = validate_debug_config({
+        "server_type": "openocd",
+        "reset": {"strategy": "under_reset", "halt": True},
+        "hil": {"read_cpuid": True, "read_dbgmcu_idcode": True, "flash": False},
+    })
+
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+
+def test_validate_debug_config_rejects_invalid_reset_and_hil_sections():
+    result = validate_debug_config({
+        "reset": {"strategy": 123, "halt": "yes"},
+        "hil": {"flash": "sometimes"},
+    })
+
+    assert result["valid"] is False
+    assert "reset.strategy must be a string" in result["errors"]
+    assert "reset.halt must be a boolean" in result["errors"]
+    assert "hil.flash must be a boolean" in result["errors"]
