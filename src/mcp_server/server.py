@@ -24,6 +24,7 @@ from .debug_experiments import (
 )
 from .debug_profile import DebugProfileStore
 from .debug_snapshot import collect_debug_snapshot
+from .exception_frame import build_fault_context
 from .fault_analysis import diagnose_fault_registers
 from .freertos_inspector import FreeRTOSInspector
 from .gdb_client import GdbClientManager
@@ -270,6 +271,14 @@ async def handle_list_tools() -> list[Tool]:
         Tool(
             name="diagnose_fault",
             description="Reads and decodes Cortex-M fault registers into likely fault causes.",
+            inputSchema={"type": "object", "properties": {}}
+        ),
+        Tool(
+            name="reconstruct_fault_context",
+            description="Reconstructs the full crash site after a HardFault: decodes fault "
+                        "registers, unwinds the auto-stacked exception frame from MSP/PSP via "
+                        "EXC_RETURN to recover the true faulting PC, and resolves it to source "
+                        "file:line. Run this when halted in a fault handler.",
             inputSchema={"type": "object", "properties": {}}
         ),
         Tool(
@@ -837,6 +846,13 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
             resp = gdb_client.read_fault_registers()
             diagnosis = diagnose_fault_registers(resp)
             return [content_success(diagnosis, raw_response=resp)]
+
+        elif name == "reconstruct_fault_context":
+            context = build_fault_context(gdb_client)
+            return [content_success(
+                context,
+                suggested_next_actions=["list_source", "read_frame_variables", "read_call_stack"],
+            )]
 
         elif name == "capture_debug_snapshot":
             profile = debug_profile.get()

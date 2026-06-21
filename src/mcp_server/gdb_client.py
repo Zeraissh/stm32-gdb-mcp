@@ -120,6 +120,21 @@ class GdbClientManager:
     def disassemble_around_pc(self, instructions: int = 8):
         return self.execute_cli_command(f"x/{instructions}i $pc", timeout_sec=2.0)
 
+    def read_register_value(self, expr: str) -> int:
+        """Evaluate a register/convenience expression (e.g. '$lr', '$msp') to an int."""
+        response = self.execute_command(f"-data-evaluate-expression {expr}", timeout_sec=2.0)
+        for record in response:
+            payload = record.get("payload")
+            if isinstance(payload, dict) and payload.get("value") is not None:
+                value = payload["value"].split()[0].strip()
+                return int(value, 0)
+        raise ValueError(f"Could not evaluate register expression: {expr}")
+
+    def read_word(self, address) -> int:
+        """Read a single 32-bit word at an address (int or hex string)."""
+        addr = address if isinstance(address, str) else hex(address)
+        return self._extract_first_memory_word(self.read_typed_memory(addr, width_bits=32, count=1))
+
     def read_fault_registers(self):
         registers = {}
         for name, address in FAULT_REGISTER_ADDRESSES.items():

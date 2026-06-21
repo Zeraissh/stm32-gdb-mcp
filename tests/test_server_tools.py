@@ -87,6 +87,13 @@ def test_server_exposes_run_and_wait_tools():
     assert "wait_for_stop" in tool_names
 
 
+def test_server_exposes_reconstruct_fault_context_tool():
+    tools = asyncio.run(handle_list_tools())
+    tool_names = {tool.name for tool in tools}
+
+    assert "reconstruct_fault_context" in tool_names
+
+
 def test_set_breakpoint_exposes_condition_and_temporary_options():
     tools = asyncio.run(handle_list_tools())
     bp_tool = next(tool for tool in tools if tool.name == "set_breakpoint")
