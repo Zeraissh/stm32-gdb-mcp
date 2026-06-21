@@ -141,5 +141,8 @@ class GdbServerManager:
         self.process = None
         self.port = None
 
+    def is_alive(self) -> bool:
+        return self.process is not None and self.process.poll() is None
+
     def get_logs(self):
         return "\n".join(self.log_buffer)

@@ -37,6 +37,19 @@ class GdbClientManager:
             self.gdb.exit()
             self.gdb = None
 
+    def is_alive(self) -> bool:
+        return self.gdb is not None
+
+    def probe_target(self) -> bool:
+        """Lightweight check that the target still answers an MI evaluation."""
+        if not self.gdb:
+            return False
+        try:
+            self.read_register_value("$pc")
+            return True
+        except Exception:
+            return False
+
     def execute_command(self, cmd: str, timeout_sec: float = 1.0):
         if not self.gdb:
             raise RuntimeError("GDB is not running.")

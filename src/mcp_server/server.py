@@ -72,6 +72,19 @@ async def handle_list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}}
         ),
         Tool(
+            name="check_session_health",
+            description="Reports whether the GDB client, GDB server process, and target are still "
+                        "alive and responsive. With reconnect=true, attempts to restart the GDB "
+                        "client and reconnect to the running server. Use this on long autonomous "
+                        "runs to detect a dropped session before it derails debugging.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "reconnect": {"type": "boolean", "description": "If true, try to reconnect the GDB client to the running server."}
+                }
+            }
+        ),
+        Tool(
             name="flash_firmware",
             description="Flashes a compiled firmware binary to the target device.",
             inputSchema={
@@ -774,6 +787,23 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
             gdb_manager.stop()
             variable_tracker.stop()
             return [content_success({"message": "Debug session stopped"})]
+
+        elif name == "check_session_health":
+            reconnected = False
+            if arguments.get("reconnect") and gdb_manager.is_alive():
+                gdb_client.start_gdb()
+                gdb_client.connect("localhost", gdb_manager.port)
+                reconnected = True
+            health = {
+                "gdb_alive": gdb_client.is_alive(),
+                "server_alive": gdb_manager.is_alive(),
+                "target_responsive": gdb_client.probe_target(),
+                "server_type": gdb_manager.server_type,
+                "port": gdb_manager.port,
+                "reconnected": reconnected,
+            }
+            next_actions = [] if health["target_responsive"] else ["start_debug_session", "get_gdb_server_logs"]
+            return [content_success(health, suggested_next_actions=next_actions)]
 
         elif name == "flash_firmware":
             resp = gdb_client.load_firmware(arguments["file_path"])

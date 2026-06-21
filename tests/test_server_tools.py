@@ -87,6 +87,41 @@ def test_server_exposes_run_and_wait_tools():
     assert "wait_for_stop" in tool_names
 
 
+def test_server_exposes_check_session_health_tool():
+    tools = asyncio.run(handle_list_tools())
+    tool_names = {tool.name for tool in tools}
+
+    assert "check_session_health" in tool_names
+
+
+def test_check_session_health_reports_status(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def is_alive(self):
+            return True
+
+        def probe_target(self):
+            return False
+
+    class FakeManager:
+        server_type = "openocd"
+        port = 3333
+
+        def is_alive(self):
+            return True
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    monkeypatch.setattr(server_module, "gdb_manager", FakeManager())
+
+    payload = _payload(asyncio.run(handle_call_tool("check_session_health", {})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["gdb_alive"] is True
+    assert payload["data"]["target_responsive"] is False
+    assert "start_debug_session" in payload["suggested_next_actions"]
+
+
 def test_server_exposes_configure_debug_freeze_tool():
     tools = asyncio.run(handle_list_tools())
     tool_names = {tool.name for tool in tools}
