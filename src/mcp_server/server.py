@@ -125,6 +125,29 @@ async def handle_list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}}
         ),
         Tool(
+            name="run_and_wait",
+            description="Resumes the target and waits, returning a structured stop event "
+                        "(reason, symbolized frame, breakpoint id, signal) or a timeout. "
+                        "Use this instead of continue_execution + polling to close the debug loop.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "timeout_sec": {"type": "number", "description": "Max seconds to wait for a stop (default 10)."}
+                }
+            }
+        ),
+        Tool(
+            name="wait_for_stop",
+            description="Waits for the next stop event WITHOUT resuming the target, returning "
+                        "a structured stop event or a timeout.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "timeout_sec": {"type": "number", "description": "Max seconds to wait for a stop (default 10)."}
+                }
+            }
+        ),
+        Tool(
             name="step_over",
             description="Steps over the current line of code.",
             inputSchema={"type": "object", "properties": {}}
@@ -590,6 +613,18 @@ async def handle_list_tools() -> list[Tool]:
         )
     ]
 
+def _stop_event_next_actions(event: dict) -> list[str]:
+    """Guide the model to the natural next loop step for a stop event."""
+    reason = event.get("reason")
+    if reason in ("signal-received", "exited-signalled"):
+        return ["diagnose_fault", "reconstruct_fault_context", "read_call_stack"]
+    if reason == "timeout":
+        return ["halt_execution", "get_gdb_server_logs"]
+    if event.get("stopped"):
+        return ["read_frame_variables", "list_source", "read_call_stack"]
+    return []
+
+
 @server.call_tool()
 async def handle_call_tool(name: str, arguments: dict | None) -> list[TextContent]:
     if arguments is None:
@@ -648,6 +683,18 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
         elif name == "halt_execution":
             resp = gdb_client.halt_execution()
             return [content_success({"message": "Execution halted"}, raw_response=resp)]
+
+        elif name == "run_and_wait":
+            event = gdb_client.run_and_wait(timeout_sec=arguments.get("timeout_sec", 10.0))
+            raw = event.pop("raw_response", None)
+            next_actions = _stop_event_next_actions(event)
+            return [content_success(event, raw_response=raw, suggested_next_actions=next_actions)]
+
+        elif name == "wait_for_stop":
+            event = gdb_client.wait_for_stop(timeout_sec=arguments.get("timeout_sec", 10.0))
+            raw = event.pop("raw_response", None)
+            next_actions = _stop_event_next_actions(event)
+            return [content_success(event, raw_response=raw, suggested_next_actions=next_actions)]
 
         elif name == "step_over":
             resp = gdb_client.step_over()

@@ -77,3 +77,34 @@ def test_unknown_tool_returns_stable_json_error_envelope():
     assert payload["ok"] is False
     assert payload["error"]["code"] == "tool_execution_error"
     assert "Unknown tool" in payload["error"]["message"]
+
+
+def test_server_exposes_run_and_wait_tools():
+    tools = asyncio.run(handle_list_tools())
+    tool_names = {tool.name for tool in tools}
+
+    assert "run_and_wait" in tool_names
+    assert "wait_for_stop" in tool_names
+
+
+def test_run_and_wait_returns_structured_stop_event(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def run_and_wait(self, timeout_sec):
+            assert timeout_sec == 5.0
+            return {
+                "stopped": True,
+                "reason": "breakpoint-hit",
+                "signal": None,
+                "breakpoint_id": "2",
+                "frame": {"func": "main", "file": "main.c", "line": 42, "addr": "0x08001000"},
+                "raw_response": [],
+            }
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool("run_and_wait", {"timeout_sec": 5.0})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["reason"] == "breakpoint-hit"
+    assert payload["data"]["frame"]["line"] == 42

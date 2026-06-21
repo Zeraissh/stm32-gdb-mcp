@@ -1,6 +1,9 @@
+import time
+
 from pygdbmi.gdbcontroller import GdbController
 
 from .fault_analysis import FAULT_REGISTER_ADDRESSES
+from .stop_event import parse_stop_event
 
 
 class GdbClientManager:
@@ -117,6 +120,44 @@ class GdbClientManager:
         if not self.gdb:
             return []
         return self.gdb.get_gdb_response(timeout_sec=timeout_sec)
+
+    def _wait_for_stop(self, initial, timeout_sec: float):
+        """Drain async records until a `*stopped` arrives or timeout elapses."""
+        records = list(initial or [])
+        event = parse_stop_event(records)
+        if event["stopped"]:
+            return event, records
+
+        deadline = time.monotonic() + timeout_sec
+        while time.monotonic() < deadline:
+            try:
+                more = self.gdb.get_gdb_response(timeout_sec=0.2, raise_error_on_timeout=False)
+            except TypeError:
+                # Older pygdbmi without the keyword still returns [] on timeout.
+                more = self.gdb.get_gdb_response(timeout_sec=0.2)
+            if more:
+                records.extend(more)
+                event = parse_stop_event(records)
+                if event["stopped"]:
+                    return event, records
+        return parse_stop_event(records), records
+
+    def run_and_wait(self, timeout_sec: float = 10.0):
+        """Resume the target and report why it next stops (or a timeout)."""
+        if not self.gdb:
+            raise RuntimeError("GDB is not running.")
+        initial = self.gdb.write("-exec-continue", timeout_sec=0.2)
+        event, records = self._wait_for_stop(initial, timeout_sec)
+        event["raw_response"] = records
+        return event
+
+    def wait_for_stop(self, timeout_sec: float = 10.0):
+        """Wait for the next stop event without resuming the target."""
+        if not self.gdb:
+            raise RuntimeError("GDB is not running.")
+        event, records = self._wait_for_stop([], timeout_sec)
+        event["raw_response"] = records
+        return event
 
     def _validate_memory_width(self, width_bits: int):
         if width_bits not in (8, 16, 32, 64):
