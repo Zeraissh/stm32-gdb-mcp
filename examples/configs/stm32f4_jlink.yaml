@@ -1,0 +1,26 @@
+mcu: STM32F407VG
+board: Custom STM32F4 board
+probe: jlink
+server_type: jlink
+server_args:
+  - -device
+  - STM32F407VG
+  - -if
+  - SWD
+  - -speed
+  - "4000"
+elf_path: build/app.elf
+svd_path: STM32F407.svd
+project_root: .
+rtt:
+  command: JLinkRTTClient
+  args:
+    - -Device
+    - STM32F407VG
+    - -If
+    - SWD
+uart:
+  port: COM7
+  baudrate: 115200
+  timeout: 0.1
+notes: Edit paths, device, and probe speed for your board.
