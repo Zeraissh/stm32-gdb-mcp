@@ -1,6 +1,7 @@
 import asyncio
+import json
 
-from mcp_server.server import handle_list_tools
+from mcp_server.server import handle_call_tool, handle_list_tools
 
 
 def test_server_exposes_debug_closure_tools():
@@ -46,3 +47,23 @@ def test_reset_target_exposes_strategy_and_custom_command_options():
 
     assert "strategy" in properties
     assert "command" in properties
+
+
+def _payload(result):
+    return json.loads(result[0].text)
+
+
+def test_get_debug_profile_returns_stable_json_envelope():
+    payload = _payload(asyncio.run(handle_call_tool("get_debug_profile", {})))
+
+    assert payload["ok"] is True
+    assert isinstance(payload["data"], dict)
+    assert payload["error"] is None
+
+
+def test_unknown_tool_returns_stable_json_error_envelope():
+    payload = _payload(asyncio.run(handle_call_tool("does_not_exist", {})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "tool_execution_error"
+    assert "Unknown tool" in payload["error"]["message"]

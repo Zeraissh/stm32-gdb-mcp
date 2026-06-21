@@ -280,7 +280,7 @@ git commit -m "Add probe reset strategy profiles"
 - Test: `tests/test_tool_response.py`
 - Test: `tests/test_server_tools.py`
 
-- [ ] **Step 1: Write failing TextContent envelope tests**
+- [x] **Step 1: Write failing TextContent envelope tests**
 
 Extend `tests/test_tool_response.py`:
 
@@ -311,7 +311,7 @@ def test_content_error_returns_textcontent_with_json_envelope():
     assert payload["suggested_next_actions"] == ["list_tools"]
 ```
 
-- [ ] **Step 2: Run envelope tests and verify RED**
+- [x] **Step 2: Run envelope tests and verify RED**
 
 Run:
 
@@ -321,7 +321,7 @@ python -m pytest tests/test_tool_response.py -q
 
 Expected: FAIL because helpers do not exist.
 
-- [ ] **Step 3: Implement TextContent envelope helpers**
+- [x] **Step 3: Implement TextContent envelope helpers**
 
 Modify `src/mcp_server/tool_response.py`:
 
@@ -372,7 +372,7 @@ def parse_content_text(content: TextContent) -> dict:
     return json.loads(content.text)
 ```
 
-- [ ] **Step 4: Run envelope tests and verify GREEN**
+- [x] **Step 4: Run envelope tests and verify GREEN**
 
 Run:
 
@@ -382,7 +382,7 @@ python -m pytest tests/test_tool_response.py -q
 
 Expected: PASS.
 
-- [ ] **Step 5: Write failing selected server response tests**
+- [x] **Step 5: Write failing selected server response tests**
 
 Extend `tests/test_server_tools.py`:
 
@@ -412,7 +412,7 @@ def test_unknown_tool_returns_stable_json_error_envelope():
     assert "Unknown tool" in payload["error"]["message"]
 ```
 
-- [ ] **Step 6: Run server response tests and verify RED**
+- [x] **Step 6: Run server response tests and verify RED**
 
 Run:
 
@@ -422,7 +422,7 @@ python -m pytest tests/test_server_tools.py -q
 
 Expected: FAIL because selected handlers still return plain text/JSON without envelope.
 
-- [ ] **Step 7: Migrate `server.py` handler returns to envelope helpers**
+- [x] **Step 7: Migrate `server.py` handler returns to envelope helpers**
 
 Modify `src/mcp_server/server.py`:
 
@@ -433,7 +433,7 @@ Modify `src/mcp_server/server.py`:
   - `content_error(str(e), code="tool_execution_error", suggested_next_actions=["capture_debug_snapshot"])` in the exception block.
 - Keep GDB MI responses in `raw_response` when the user may need the original records.
 
-- [ ] **Step 8: Run server response tests and all existing tests**
+- [x] **Step 8: Run server response tests and all existing tests**
 
 Run:
 
@@ -444,7 +444,7 @@ python -m pytest -q
 
 Expected: PASS.
 
-- [ ] **Step 9: Commit Task 2**
+- [x] **Step 9: Commit Task 2**
 
 ```bash
 git add src/mcp_server/tool_response.py src/mcp_server/server.py tests/test_tool_response.py tests/test_server_tools.py

@@ -1,5 +1,4 @@
 import asyncio
-import json
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -33,6 +32,7 @@ from .log_reader import ProcessLogReader, SerialLogReader
 from .project_inspector import inspect_project
 from .reset_strategy import resolve_reset_command
 from .svd_parser import SVDParser
+from .tool_response import content_error, content_success
 from .tracker import VariableTracker
 
 server = Server("stm32-gdb-mcp")
@@ -561,24 +561,26 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
         arguments = {}
 
     try:
-        # Step 4
         if name == "start_debug_session":
             server_type = arguments["server_type"]
             args = arguments.get("server_args", [])
             port = gdb_manager.start(server_type, args)
             gdb_client.start_gdb()
             resp = gdb_client.connect("localhost", port)
-            return [TextContent(type="text", text=f"Debug session started. Connected to {server_type} on port {port}.\nResponses: {resp}")]
-        
+            return [content_success(
+                {"message": "Debug session started", "server_type": server_type, "port": port},
+                raw_response=resp,
+            )]
+
         elif name == "stop_debug_session":
             gdb_client.stop_gdb()
             gdb_manager.stop()
             variable_tracker.stop()
-            return [TextContent(type="text", text="Debug session stopped.")]
+            return [content_success({"message": "Debug session stopped"})]
 
         elif name == "flash_firmware":
             resp = gdb_client.load_firmware(arguments["file_path"])
-            return [TextContent(type="text", text=f"Firmware flashed.\nResponses: {resp}")]
+            return [content_success({"message": "Firmware flashed", "file_path": arguments["file_path"]}, raw_response=resp)]
 
         elif name == "reset_target":
             halt = arguments["halt"]
@@ -591,70 +593,78 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
                 command=arguments.get("command") or reset_config.get("command"),
             )
             resp = gdb_client.reset_halt(command=resolved["command"])
-            return [TextContent(type="text", text=f"Target reset ({resolved}).\nResponses: {resp}")]
+            return [content_success({"message": "Target reset", "reset": resolved}, raw_response=resp)]
 
-        # Step 5
         elif name == "set_breakpoint":
             resp = gdb_client.set_breakpoint(arguments["location"])
-            return [TextContent(type="text", text=f"Breakpoint set.\nResponses: {resp}")]
+            return [content_success({"message": "Breakpoint set", "location": arguments["location"]}, raw_response=resp)]
 
         elif name == "delete_breakpoint":
             resp = gdb_client.delete_breakpoint(arguments["breakpoint_id"])
-            return [TextContent(type="text", text=f"Breakpoint deleted.\nResponses: {resp}")]
+            return [content_success(
+                {"message": "Breakpoint deleted", "breakpoint_id": arguments["breakpoint_id"]},
+                raw_response=resp,
+            )]
 
         elif name == "continue_execution":
             resp = gdb_client.continue_execution()
-            return [TextContent(type="text", text=f"Execution continued.\nResponses: {resp}")]
+            return [content_success({"message": "Execution continued"}, raw_response=resp)]
 
         elif name == "halt_execution":
             resp = gdb_client.halt_execution()
-            return [TextContent(type="text", text=f"Execution halted.\nResponses: {resp}")]
+            return [content_success({"message": "Execution halted"}, raw_response=resp)]
 
         elif name == "step_over":
             resp = gdb_client.step_over()
-            return [TextContent(type="text", text=f"Stepped over.\nResponses: {resp}")]
+            return [content_success({"message": "Stepped over"}, raw_response=resp)]
 
         elif name == "step_into":
             resp = gdb_client.step_into()
-            return [TextContent(type="text", text=f"Stepped into.\nResponses: {resp}")]
+            return [content_success({"message": "Stepped into"}, raw_response=resp)]
 
         elif name == "read_variable":
             resp = gdb_client.read_variable(arguments["name"])
-            return [TextContent(type="text", text=f"Variable read.\nResponses: {resp}")]
+            return [content_success({"message": "Variable read", "name": arguments["name"]}, raw_response=resp)]
 
         elif name == "read_memory":
             resp = gdb_client.read_memory(arguments["address"], arguments["length"])
-            return [TextContent(type="text", text=f"Memory read.\nResponses: {resp}")]
+            return [content_success(
+                {"message": "Memory read", "address": arguments["address"], "length": arguments["length"]},
+                raw_response=resp,
+            )]
 
         elif name == "write_memory":
             resp = gdb_client.write_memory(arguments["address"], arguments["value"])
-            return [TextContent(type="text", text=f"Memory written.\nResponses: {resp}")]
+            return [content_success(
+                {"message": "Memory written", "address": arguments["address"], "value": arguments["value"]},
+                raw_response=resp,
+            )]
 
         elif name == "get_gdb_events":
             resp = gdb_client.get_responses()
-            return [TextContent(type="text", text=json.dumps(resp, indent=2) if resp else "No new events.")]
+            return [content_success({"events": resp, "message": "GDB events read" if resp else "No new events"})]
 
         elif name == "get_gdb_server_logs":
-            return [TextContent(type="text", text=gdb_manager.get_logs() or "No GDB server logs captured.")]
+            logs = gdb_manager.get_logs()
+            return [content_success({"logs": logs, "message": "GDB server logs captured" if logs else "No GDB server logs captured"})]
 
-        # Step 6
         elif name == "read_call_stack":
             resp = gdb_client.read_call_stack()
-            return [TextContent(type="text", text=f"Call stack:\n{json.dumps(resp, indent=2)}")]
+            return [content_success({"message": "Call stack read"}, raw_response=resp)]
 
         elif name == "read_core_registers":
             resp = gdb_client.read_core_registers()
-            return [TextContent(type="text", text=f"Core registers:\n{json.dumps(resp, indent=2)}")]
+            return [content_success({"message": "Core registers read"}, raw_response=resp)]
 
         elif name == "read_fault_registers":
             resp = gdb_client.read_fault_registers()
             hex_resp = {key: f"0x{value & 0xFFFFFFFF:08x}" for key, value in resp.items()}
-            return [TextContent(type="text", text=json.dumps(hex_resp, indent=2))]
+            return [content_success(hex_resp, raw_response=resp)]
 
         elif name == "diagnose_fault":
             resp = gdb_client.read_fault_registers()
             diagnosis = diagnose_fault_registers(resp)
-            return [TextContent(type="text", text=json.dumps(diagnosis, indent=2))]
+            return [content_success(diagnosis, raw_response=resp)]
 
         elif name == "capture_debug_snapshot":
             profile = debug_profile.get()
@@ -683,60 +693,60 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
                 rtos_context=rtos_context,
                 log_context=log_context,
             )
-            return [TextContent(type="text", text=json.dumps(snapshot, indent=2))]
+            return [content_success(snapshot)]
 
         elif name == "inspect_project":
             profile = debug_profile.get()
             result = inspect_project(arguments.get("project_root") or profile.get("project_root"), profile)
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            return [content_success(result)]
 
         elif name == "detect_rtos":
             result = freertos_inspector.detect()
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            return [content_success(result)]
 
         elif name == "read_current_task":
             result = freertos_inspector.read_current_task()
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            return [content_success(result)]
 
         elif name == "read_freertos_tasks":
             result = freertos_inspector.read_tasks(
                 max_priorities=arguments.get("max_priorities"),
                 max_tasks=arguments.get("max_tasks", 64),
             )
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            return [content_success(result)]
 
         elif name == "read_freertos_task_lists":
             result = freertos_inspector.read_task_lists(
                 max_priorities=arguments.get("max_priorities"),
                 max_tasks=arguments.get("max_tasks", 128),
             )
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            return [content_success(result)]
 
         elif name == "read_freertos_queue":
             result = freertos_inspector.read_queue(arguments["queue"])
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            return [content_success(result)]
 
         elif name == "read_freertos_mutex":
             result = freertos_inspector.read_mutex(arguments["mutex"])
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            return [content_success(result)]
 
         elif name == "read_freertos_heap":
             result = freertos_inspector.read_heap()
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            return [content_success(result)]
 
         elif name == "capture_rtos_snapshot":
             result = freertos_inspector.capture_snapshot()
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            return [content_success(result)]
 
         elif name == "start_rtt_logging":
             command = [arguments.get("command", "JLinkRTTClient")]
             command.extend(arguments.get("args", []))
             rtt_log_reader.start(command)
-            return [TextContent(type="text", text=json.dumps(rtt_log_reader.status(), indent=2))]
+            return [content_success(rtt_log_reader.status())]
 
         elif name == "stop_rtt_logging":
             rtt_log_reader.stop()
-            return [TextContent(type="text", text=json.dumps(rtt_log_reader.status(), indent=2))]
+            return [content_success(rtt_log_reader.status())]
 
         elif name == "get_rtt_logs":
             result = {
@@ -747,11 +757,11 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
                     clear=arguments.get("clear", False),
                 ),
             }
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            return [content_success(result)]
 
         elif name == "clear_rtt_logs":
             rtt_log_reader.clear()
-            return [TextContent(type="text", text="RTT log buffer cleared.")]
+            return [content_success({"message": "RTT log buffer cleared"})]
 
         elif name == "start_uart_logging":
             uart_log_reader.start(
@@ -759,11 +769,11 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
                 baudrate=arguments.get("baudrate", 115200),
                 timeout=arguments.get("timeout", 0.1),
             )
-            return [TextContent(type="text", text=json.dumps(uart_log_reader.status(), indent=2))]
+            return [content_success(uart_log_reader.status())]
 
         elif name == "stop_uart_logging":
             uart_log_reader.stop()
-            return [TextContent(type="text", text=json.dumps(uart_log_reader.status(), indent=2))]
+            return [content_success(uart_log_reader.status())]
 
         elif name == "get_uart_logs":
             result = {
@@ -774,19 +784,19 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
                     clear=arguments.get("clear", False),
                 ),
             }
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            return [content_success(result)]
 
         elif name == "clear_uart_logs":
             uart_log_reader.clear()
-            return [TextContent(type="text", text="UART log buffer cleared.")]
+            return [content_success({"message": "UART log buffer cleared"})]
 
         elif name == "capture_expressions":
             result = run_expression_capture(gdb_client, arguments["expressions"])
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            return [content_success(result)]
 
         elif name == "assert_expressions":
             result = run_expression_assertions(gdb_client, arguments["assertions"])
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            return [content_success(result)]
 
         elif name == "compare_expressions_after_action":
             action_name = arguments["action"]
@@ -799,20 +809,31 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
             }
             action = action_map[action_name]
             result = compare_expressions_after_action(gdb_client, arguments["expressions"], action_name, action)
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            return [content_success(result)]
 
         elif name == "set_watchpoint":
             resp = gdb_client.set_watchpoint(arguments["location"], arguments["access_type"])
-            return [TextContent(type="text", text=f"Watchpoint set.\nResponses: {resp}")]
+            return [content_success(
+                {"message": "Watchpoint set", "location": arguments["location"], "access_type": arguments["access_type"]},
+                raw_response=resp,
+            )]
 
         elif name == "load_svd":
             svd_parser.load(arguments["filepath"])
-            return [TextContent(type="text", text="SVD file loaded successfully.")]
+            return [content_success({"message": "SVD file loaded successfully", "filepath": arguments["filepath"]})]
 
         elif name == "read_peripheral_register":
             addr = svd_parser.get_register_address(arguments["peripheral"], arguments["register"])
-            resp = gdb_client.read_memory(hex(addr), 4) # Assuming 32-bit register
-            return [TextContent(type="text", text=f"Register {arguments['peripheral']}.{arguments['register']} (Address: {hex(addr)}) read.\nResponses: {resp}")]
+            resp = gdb_client.read_memory(hex(addr), 4)  # Assuming 32-bit register
+            return [content_success(
+                {
+                    "message": "Peripheral register read",
+                    "peripheral": arguments["peripheral"],
+                    "register": arguments["register"],
+                    "address": hex(addr),
+                },
+                raw_response=resp,
+            )]
 
         elif name == "decode_peripheral_register":
             register = svd_parser.get_register(arguments["peripheral"], arguments["register"])
@@ -820,25 +841,41 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
             value = gdb_client._extract_first_memory_word(resp)
             decoded = svd_parser.decode_register_value(arguments["peripheral"], arguments["register"], value)
             decoded["raw_response"] = resp
-            return [TextContent(type="text", text=json.dumps(decoded, indent=2))]
+            return [content_success(decoded, raw_response=resp)]
 
         elif name == "read_typed_memory":
             resp = gdb_client.read_typed_memory(arguments["address"], arguments["width_bits"], arguments["count"])
-            return [TextContent(type="text", text=f"Typed memory read.\nResponses: {resp}")]
+            return [content_success(
+                {
+                    "message": "Typed memory read",
+                    "address": arguments["address"],
+                    "width_bits": arguments["width_bits"],
+                    "count": arguments["count"],
+                },
+                raw_response=resp,
+            )]
 
         elif name == "write_typed_memory":
             resp = gdb_client.write_typed_memory(arguments["address"], arguments["value"], arguments["width_bits"])
-            return [TextContent(type="text", text=f"Typed memory written.\nResponses: {resp}")]
+            return [content_success(
+                {
+                    "message": "Typed memory written",
+                    "address": arguments["address"],
+                    "value": arguments["value"],
+                    "width_bits": arguments["width_bits"],
+                },
+                raw_response=resp,
+            )]
 
         elif name == "set_debug_profile":
             profile = debug_profile.update(arguments)
             svd_path = profile.get("svd_path")
             if svd_path:
                 svd_parser.load(svd_path)
-            return [TextContent(type="text", text=json.dumps(profile, indent=2))]
+            return [content_success(profile)]
 
         elif name == "get_debug_profile":
-            return [TextContent(type="text", text=json.dumps(debug_profile.get(), indent=2))]
+            return [content_success(debug_profile.get())]
 
         elif name == "load_debug_config":
             result = load_debug_config_file(arguments["path"])
@@ -851,34 +888,39 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
                 svd_path = result["config"].get("svd_path")
                 if svd_path:
                     svd_parser.load(svd_path)
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            return [content_success(result)]
 
         elif name == "save_debug_config":
             result = save_debug_config_file(arguments["path"], arguments["config"])
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            return [content_success(result)]
 
         elif name == "validate_debug_config":
             result = validate_debug_config_data(arguments["config"])
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            return [content_success(result)]
 
-        # Step 7
         elif name == "start_variable_tracking":
             variable_tracker.start(arguments["variable"], arguments["interval_ms"])
-            return [TextContent(type="text", text=f"Started tracking {arguments['variable']} every {arguments['interval_ms']}ms.")]
+            return [content_success(
+                {
+                    "message": "Variable tracking started",
+                    "variable": arguments["variable"],
+                    "interval_ms": arguments["interval_ms"],
+                }
+            )]
 
         elif name == "stop_variable_tracking":
             variable_tracker.stop()
-            return [TextContent(type="text", text="Tracking stopped.")]
+            return [content_success({"message": "Tracking stopped"})]
 
         elif name == "get_tracked_data":
             data = variable_tracker.get_data()
-            return [TextContent(type="text", text=json.dumps(data, indent=2))]
+            return [content_success(data)]
 
         else:
             raise ValueError(f"Unknown tool: {name}")
 
     except Exception as e:
-        return [TextContent(type="text", text=f"Error executing {name}: {str(e)}")]
+        return [content_error(str(e), code="tool_execution_error", suggested_next_actions=["capture_debug_snapshot"])]
 
 async def main():
     async with stdio_server() as (read_stream, write_stream):
