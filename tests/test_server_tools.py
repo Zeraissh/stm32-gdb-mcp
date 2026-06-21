@@ -87,6 +87,59 @@ def test_server_exposes_run_and_wait_tools():
     assert "wait_for_stop" in tool_names
 
 
+def test_server_exposes_write_guard_tools():
+    tools = asyncio.run(handle_list_tools())
+    tool_names = {tool.name for tool in tools}
+
+    assert "set_write_policy" in tool_names
+    assert "get_write_audit_log" in tool_names
+
+
+def test_write_to_protected_region_is_blocked_without_touching_client(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def __init__(self):
+            self.writes = []
+
+        def write_memory(self, address, value):
+            self.writes.append((address, value))
+            return [{"message": "done"}]
+
+    fake = FakeClient()
+    monkeypatch.setattr(server_module, "gdb_client", fake)
+
+    payload = _payload(asyncio.run(
+        handle_call_tool("write_memory", {"address": "0x40003000", "value": "0x1"})
+    ))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "memory_write_blocked"
+    assert fake.writes == []  # guard prevented the hardware write
+
+
+def test_normal_ram_write_passes_through_guard(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def __init__(self):
+            self.writes = []
+
+        def write_memory(self, address, value):
+            self.writes.append((address, value))
+            return [{"message": "done"}]
+
+    fake = FakeClient()
+    monkeypatch.setattr(server_module, "gdb_client", fake)
+
+    payload = _payload(asyncio.run(
+        handle_call_tool("write_memory", {"address": "0x20000000", "value": "0x5"})
+    ))
+
+    assert payload["ok"] is True
+    assert fake.writes == [("0x20000000", "0x5")]
+
+
 def test_server_exposes_reconstruct_fault_context_tool():
     tools = asyncio.run(handle_list_tools())
     tool_names = {tool.name for tool in tools}

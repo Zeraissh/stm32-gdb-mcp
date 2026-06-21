@@ -30,6 +30,7 @@ from .freertos_inspector import FreeRTOSInspector
 from .gdb_client import GdbClientManager
 from .gdb_manager import GdbServerManager
 from .log_reader import ProcessLogReader, SerialLogReader
+from .memory_guard import MemoryWriteGuard
 from .project_inspector import inspect_project
 from .reset_strategy import resolve_reset_command
 from .svd_parser import SVDParser
@@ -46,6 +47,7 @@ freertos_inspector = FreeRTOSInspector(gdb_client)
 rtt_log_reader = ProcessLogReader("rtt")
 swo_log_reader = ProcessLogReader("swo")
 uart_log_reader = SerialLogReader()
+memory_guard = MemoryWriteGuard()
 
 @server.list_tools()
 async def handle_list_tools() -> list[Tool]:
@@ -196,6 +198,53 @@ async def handle_list_tools() -> list[Tool]:
                     "value": {"type": "string", "description": "Value to write, e.g., '0xFF' or '1234'."}
                 },
                 "required": ["address", "value"]
+            }
+        ),
+        Tool(
+            name="set_write_policy",
+            description="Configures memory-write guardrails: mode ('enforce' or 'dry_run'), and "
+                        "optional allow/protected regions. Protected regions (option bytes, IWDG, "
+                        "WWDG) block writes by default; dry_run simulates every write.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "mode": {"type": "string", "enum": ["enforce", "dry_run"], "description": "Guard mode."},
+                    "add_allow": {
+                        "type": "array",
+                        "description": "Regions to explicitly allow, overriding protection.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "start": {"type": "integer"},
+                                "end": {"type": "integer"}
+                            }
+                        }
+                    },
+                    "add_protected": {
+                        "type": "array",
+                        "description": "Additional regions to protect from writes.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "start": {"type": "integer"},
+                                "end": {"type": "integer"}
+                            }
+                        }
+                    }
+                }
+            }
+        ),
+        Tool(
+            name="get_write_audit_log",
+            description="Returns the append-only audit log of every memory-write decision "
+                        "(written, blocked, or simulated).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Return only the most recent N entries."}
+                }
             }
         ),
         Tool(
@@ -788,11 +837,38 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
             )]
 
         elif name == "write_memory":
-            resp = gdb_client.write_memory(arguments["address"], arguments["value"])
+            address = arguments["address"]
+            value = arguments["value"]
+            decision = memory_guard.evaluate(int(address, 0), width_bits=32)
+            memory_guard.audit("write_memory", address, value, decision)
+            if decision["action"] == "blocked":
+                return [content_error(
+                    f"Write to {address} blocked: {decision['reason']}",
+                    code="memory_write_blocked",
+                    raw_response=decision,
+                    suggested_next_actions=["set_write_policy", "get_write_audit_log"],
+                )]
+            if decision["action"] == "simulated":
+                return [content_success(
+                    {"message": "Memory write simulated (dry_run)", "address": address, "value": value, "guard": decision},
+                )]
+            resp = gdb_client.write_memory(address, value)
             return [content_success(
-                {"message": "Memory written", "address": arguments["address"], "value": arguments["value"]},
+                {"message": "Memory written", "address": address, "value": value, "guard": decision},
                 raw_response=resp,
             )]
+
+        elif name == "set_write_policy":
+            policy = memory_guard.set_policy(
+                mode=arguments.get("mode"),
+                add_allow=arguments.get("add_allow"),
+                add_protected=arguments.get("add_protected"),
+            )
+            return [content_success({"message": "Write policy updated", "policy": policy})]
+
+        elif name == "get_write_audit_log":
+            log = memory_guard.get_audit_log(limit=arguments.get("limit"))
+            return [content_success({"audit_log": log, "count": len(log)})]
 
         elif name == "get_gdb_events":
             resp = gdb_client.get_responses()
