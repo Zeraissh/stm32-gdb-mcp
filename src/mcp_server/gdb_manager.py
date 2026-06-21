@@ -1,9 +1,10 @@
+import os
+import shutil
+import signal
 import subprocess
 import threading
 import time
-import os
-import signal
-import shutil
+
 
 class GdbServerManager:
     def __init__(self):

@@ -2,7 +2,6 @@ from pathlib import Path
 
 import yaml
 
-
 ALLOWED_SERVER_TYPES = {"openocd", "stlink", "jlink"}
 TOP_LEVEL_FIELDS = {
     "mcu",

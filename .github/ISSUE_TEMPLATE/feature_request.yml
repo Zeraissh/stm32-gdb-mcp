@@ -1,0 +1,40 @@
+name: Feature request
+description: Suggest a capability for STM32 debugging, observability, or automation.
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use case
+      description: Describe the debugging workflow this would improve.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - GDB/session control
+        - Fault diagnosis
+        - FreeRTOS inspection
+        - Logs and tracing
+        - SVD/peripheral decoding
+        - Hardware-in-the-loop
+        - MCP response shape
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should the MCP tool return or automate?
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Hardware or toolchain constraints
+      description: Note probe, MCU family, RTOS, IDE/toolchain, or host OS constraints.

@@ -1,7 +1,6 @@
 import operator as operator_module
 import re
 
-
 OPERATORS = {
     "==": operator_module.eq,
     "!=": operator_module.ne,
@@ -54,7 +53,7 @@ def compare_expressions_after_action(gdb_client, expressions: list[str], action_
     after = capture_expressions(gdb_client, expressions)["values"]
 
     changes = []
-    for before_item, after_item in zip(before, after):
+    for before_item, after_item in zip(before, after, strict=True):
         expression = before_item["expression"]
         before_value = before_item.get("value")
         after_value = after_item.get("value")

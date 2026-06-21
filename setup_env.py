@@ -1,6 +1,4 @@
-import os
 import shutil
-import sys
 
 # Define tools and their installation instructions
 TOOLS = {

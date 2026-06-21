@@ -1,7 +1,7 @@
 from pygdbmi.gdbcontroller import GdbController
-import time
 
 from .fault_analysis import FAULT_REGISTER_ADDRESSES
+
 
 class GdbClientManager:
     def __init__(self):

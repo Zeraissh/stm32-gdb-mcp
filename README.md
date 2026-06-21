@@ -30,9 +30,18 @@ For development and tests:
 
 ```bash
 pip install -e ".[dev]"
+python -m ruff check .
 python -m pytest
 python -m compileall src tests
+python -m build
 ```
+
+Project maintenance guides:
+
+- `CONTRIBUTING.md`: development workflow, quality gate, and bug evidence
+- `SECURITY.md`: private vulnerability reporting and sensitive debug data
+- `docs/hil-validation.md`: self-hosted hardware-in-the-loop validation
+- `docs/release.md`: release checklist
 
 ## Run
 
@@ -229,13 +238,23 @@ client make decisions.
 - `examples/prompts/debug_hardfault.md`: HardFault diagnosis prompt
 - `examples/prompts/freertos_hang.md`: FreeRTOS hang diagnosis prompt
 
+## Hardware-in-the-loop Validation
+
+Normal CI is hardware-free and runs lint, tests, compile checks, and packaging.
+Real target validation is handled by the manual GitHub Actions workflow
+`Hardware-in-the-loop`, which expects a trusted self-hosted runner labeled
+`stm32`.
+
+See `docs/hil-validation.md` for runner requirements, smoke coverage, and the
+evidence to keep from each board run.
+
 ## Current Limits
 
 This MCP now covers a strong first debugging loop, but it is still GDB-centric.
 Future high-value additions are:
 
 - probe-specific reset strategy profiles
-- automated regression experiments for hardware-in-the-loop tests
+- board-specific regression experiments for hardware-in-the-loop tests
 - SWO/ITM capture
 - real hardware integration tests with example firmware
 - full migration of older tool responses to the stable JSON envelope

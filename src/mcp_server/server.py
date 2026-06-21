@@ -1,28 +1,38 @@
 import asyncio
 import json
+
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent
-from .gdb_manager import GdbServerManager
-from .gdb_client import GdbClientManager
-from .svd_parser import SVDParser
-from .tracker import VariableTracker
-from .debug_snapshot import collect_debug_snapshot
-from .fault_analysis import diagnose_fault_registers
-from .debug_profile import DebugProfileStore
-from .project_inspector import inspect_project
-from .freertos_inspector import FreeRTOSInspector
-from .log_reader import ProcessLogReader, SerialLogReader
-from .debug_experiments import (
-    assert_expressions as run_expression_assertions,
-    capture_expressions as run_expression_capture,
-    compare_expressions_after_action,
-)
+from mcp.types import TextContent, Tool
+
 from .debug_config import (
     load_debug_config as load_debug_config_file,
+)
+from .debug_config import (
     save_debug_config as save_debug_config_file,
+)
+from .debug_config import (
     validate_debug_config as validate_debug_config_data,
 )
+from .debug_experiments import (
+    assert_expressions as run_expression_assertions,
+)
+from .debug_experiments import (
+    capture_expressions as run_expression_capture,
+)
+from .debug_experiments import (
+    compare_expressions_after_action,
+)
+from .debug_profile import DebugProfileStore
+from .debug_snapshot import collect_debug_snapshot
+from .fault_analysis import diagnose_fault_registers
+from .freertos_inspector import FreeRTOSInspector
+from .gdb_client import GdbClientManager
+from .gdb_manager import GdbServerManager
+from .log_reader import ProcessLogReader, SerialLogReader
+from .project_inspector import inspect_project
+from .svd_parser import SVDParser
+from .tracker import VariableTracker
 
 server = Server("stm32-gdb-mcp")
 gdb_manager = GdbServerManager()

@@ -1,6 +1,5 @@
 from mcp_server.svd_parser import SVDParser
 
-
 SVD_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <device>
   <peripherals>

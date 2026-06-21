@@ -1,0 +1,46 @@
+name: Hardware-in-the-loop
+
+on:
+  workflow_dispatch:
+    inputs:
+      config_path:
+        description: "Debug config to validate before running board smoke checks"
+        required: false
+        default: "examples/configs/stm32f4_jlink.yaml"
+      smoke_command:
+        description: "Optional command to run on the self-hosted STM32 runner"
+        required: false
+        default: ""
+
+jobs:
+  hil-smoke:
+    name: HIL smoke check
+    runs-on: [self-hosted, stm32]
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Check host debug tools
+        run: python setup_env.py
+
+      - name: Validate debug config
+        run: >
+          python -c "from mcp_server.debug_config import load_debug_config;
+          import json, sys;
+          result = load_debug_config(r'${{ inputs.config_path }}');
+          print(json.dumps(result['validation'], indent=2));
+          sys.exit(0 if result['validation']['valid'] else 1)"
+
+      - name: Run optional board smoke command
+        if: ${{ inputs.smoke_command != '' }}
+        run: ${{ inputs.smoke_command }}

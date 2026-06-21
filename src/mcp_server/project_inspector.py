@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 IGNORED_DIRS = {".git", ".venv", "venv", "__pycache__", ".pytest_cache", "node_modules"}
 FILE_KINDS = {
     ".elf": "elf",

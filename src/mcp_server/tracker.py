@@ -1,6 +1,7 @@
 import threading
 import time
 
+
 class VariableTracker:
     def __init__(self, gdb_client):
         self.gdb_client = gdb_client
