@@ -94,11 +94,16 @@ async def handle_list_tools() -> list[Tool]:
         # --- Step 5: Core Debug Interaction ---
         Tool(
             name="set_breakpoint",
-            description="Sets a breakpoint at a specific function, line, or address.",
+            description="Sets a breakpoint at a function, line, or address. Supports an optional "
+                        "condition (break only when true), temporary (auto-delete on first hit), "
+                        "and ignore_count (skip N hits) so the AI can set a hypothesis trap and resume.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "location": {"type": "string", "description": "Location to break at, e.g., 'main', 'main.c:42', or '*0x08001000'."}
+                    "location": {"type": "string", "description": "Location to break at, e.g., 'main', 'main.c:42', or '*0x08001000'."},
+                    "condition": {"type": "string", "description": "Optional C expression; break only when it is non-zero, e.g. 'count > 5'."},
+                    "temporary": {"type": "boolean", "description": "If true, the breakpoint is deleted after its first hit."},
+                    "ignore_count": {"type": "integer", "description": "Number of hits to ignore before stopping."}
                 },
                 "required": ["location"]
             }
@@ -710,8 +715,22 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
             return [content_success({"message": "Target reset", "reset": resolved}, raw_response=resp)]
 
         elif name == "set_breakpoint":
-            resp = gdb_client.set_breakpoint(arguments["location"])
-            return [content_success({"message": "Breakpoint set", "location": arguments["location"]}, raw_response=resp)]
+            resp = gdb_client.set_breakpoint(
+                arguments["location"],
+                condition=arguments.get("condition"),
+                temporary=arguments.get("temporary", False),
+                ignore_count=arguments.get("ignore_count"),
+            )
+            return [content_success(
+                {
+                    "message": "Breakpoint set",
+                    "location": arguments["location"],
+                    "condition": arguments.get("condition"),
+                    "temporary": arguments.get("temporary", False),
+                },
+                raw_response=resp,
+                suggested_next_actions=["run_and_wait"],
+            )]
 
         elif name == "delete_breakpoint":
             resp = gdb_client.delete_breakpoint(arguments["breakpoint_id"])

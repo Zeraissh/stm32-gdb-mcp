@@ -6,6 +6,22 @@ from .fault_analysis import FAULT_REGISTER_ADDRESSES
 from .stop_event import parse_stop_event
 
 
+def build_break_insert_command(location, condition=None, temporary=False, ignore_count=None):
+    """Construct a `-break-insert` MI command with optional condition/temporary/ignore.
+
+    Kept as a module function so the flag composition can be unit-tested without GDB.
+    """
+    parts = ["-break-insert"]
+    if temporary:
+        parts.append("-t")
+    if condition is not None and str(condition).strip():
+        parts.append(f'-c "{condition}"')
+    if ignore_count is not None:
+        parts.append(f"-i {int(ignore_count)}")
+    parts.append(location)
+    return " ".join(parts)
+
+
 class GdbClientManager:
     def __init__(self):
         self.gdb = None
@@ -46,8 +62,9 @@ class GdbClientManager:
         """Resets the MCU and halts it. OpenOCD uses 'monitor reset halt'."""
         return self.execute_command(command, timeout_sec=5.0)
 
-    def set_breakpoint(self, location: str):
-        return self.execute_command(f"-break-insert {location}")
+    def set_breakpoint(self, location: str, condition=None, temporary=False, ignore_count=None):
+        command = build_break_insert_command(location, condition, temporary, ignore_count)
+        return self.execute_command(command)
 
     def delete_breakpoint(self, breakpoint_id: str):
         return self.execute_command(f"-break-delete {breakpoint_id}")

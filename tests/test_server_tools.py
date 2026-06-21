@@ -87,6 +87,16 @@ def test_server_exposes_run_and_wait_tools():
     assert "wait_for_stop" in tool_names
 
 
+def test_set_breakpoint_exposes_condition_and_temporary_options():
+    tools = asyncio.run(handle_list_tools())
+    bp_tool = next(tool for tool in tools if tool.name == "set_breakpoint")
+    properties = bp_tool.inputSchema["properties"]
+
+    assert "condition" in properties
+    assert "temporary" in properties
+    assert "ignore_count" in properties
+
+
 def test_server_exposes_frame_navigation_tools():
     tools = asyncio.run(handle_list_tools())
     tool_names = {tool.name for tool in tools}
