@@ -826,7 +826,7 @@ git commit -m "Add HIL smoke regression tests"
 - Create: `examples/firmware/stm32l431_blinky/src/startup_stm32l431xx.c`
 - Create: `examples/firmware/stm32l431_blinky/cmake/arm-none-eabi.cmake`
 
-- [ ] **Step 1: Create minimal firmware files**
+- [x] **Step 1: Create minimal firmware files**
 
 Add a tiny bare-metal example:
 
@@ -836,7 +836,7 @@ Add a tiny bare-metal example:
 - `main.c` toggles a GPIO or increments a volatile heartbeat counter if board LED pin is unknown
 - CMake uses `arm-none-eabi-gcc`, `arm-none-eabi-objcopy`, and emits `.elf`, `.bin`, `.map`
 
-- [ ] **Step 2: Add firmware README**
+- [x] **Step 2: Add firmware README**
 
 Document bilingual build commands:
 
@@ -847,7 +847,7 @@ cmake --build build/stm32l431_blinky
 
 State clearly that flashing is manual/opt-in.
 
-- [ ] **Step 3: Optional local build check**
+- [x] **Step 3: Optional local build check**
 
 Run only if CMake and `arm-none-eabi-gcc` are available:
 
@@ -858,7 +858,7 @@ cmake --build build/stm32l431_blinky
 
 Expected: Builds `.elf`; if toolchain is absent, record skip reason.
 
-- [ ] **Step 4: Commit Task 5**
+- [x] **Step 4: Commit Task 5**
 
 ```bash
 git add examples/firmware/stm32l431_blinky
