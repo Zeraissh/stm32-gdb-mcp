@@ -70,6 +70,33 @@ class GdbClientManager:
     def read_call_stack(self):
         return self.execute_command("-stack-list-frames")
 
+    def select_frame(self, level: int):
+        return self.execute_command(f"-stack-select-frame {int(level)}")
+
+    def read_frame_variables(self, level: int | None = None):
+        """List locals + arguments (with values) for a frame."""
+        if level is not None:
+            self.select_frame(level)
+        return self.execute_command("-stack-list-variables --all-values", timeout_sec=2.0)
+
+    def read_frame_arguments(self, level: int | None = None):
+        if level is not None:
+            self.select_frame(level)
+        return self.execute_command("-stack-list-arguments --all-values", timeout_sec=2.0)
+
+    def list_source(self, location: str | None = None, count: int = 10):
+        """List source lines around a location (function, file:line, or *addr)."""
+        if location:
+            self.execute_cli_command(f"list {location}", timeout_sec=2.0)
+        return self.execute_cli_command(f"list +{int(count)}", timeout_sec=2.0)
+
+    def resolve_address(self, expr: str):
+        """Map an address/expression to source line and nearest symbol."""
+        responses = []
+        responses.extend(self.execute_cli_command(f"info line *({expr})", timeout_sec=2.0))
+        responses.extend(self.execute_cli_command(f"info symbol {expr}", timeout_sec=2.0))
+        return responses
+
     def read_core_registers(self):
         return self.execute_cli_command("info registers", timeout_sec=2.0)
 

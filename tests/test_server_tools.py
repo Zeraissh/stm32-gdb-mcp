@@ -87,6 +87,35 @@ def test_server_exposes_run_and_wait_tools():
     assert "wait_for_stop" in tool_names
 
 
+def test_server_exposes_frame_navigation_tools():
+    tools = asyncio.run(handle_list_tools())
+    tool_names = {tool.name for tool in tools}
+
+    assert "select_frame" in tool_names
+    assert "read_frame_variables" in tool_names
+    assert "list_source" in tool_names
+    assert "resolve_address" in tool_names
+
+
+def test_read_frame_variables_passes_level_to_client(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def __init__(self):
+            self.calls = []
+
+        def read_frame_variables(self, level):
+            self.calls.append(level)
+            return [{"message": "done"}]
+
+    fake = FakeClient()
+    monkeypatch.setattr(server_module, "gdb_client", fake)
+    payload = _payload(asyncio.run(handle_call_tool("read_frame_variables", {"level": 1})))
+
+    assert payload["ok"] is True
+    assert fake.calls == [1]
+
+
 def test_run_and_wait_returns_structured_stop_event(monkeypatch):
     import mcp_server.server as server_module
 

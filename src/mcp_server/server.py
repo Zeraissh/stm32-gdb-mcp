@@ -214,6 +214,50 @@ async def handle_list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}}
         ),
         Tool(
+            name="select_frame",
+            description="Selects a stack frame by level (0 = innermost) for subsequent variable reads.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "level": {"type": "integer", "description": "Frame level, 0 is the innermost/current frame."}
+                },
+                "required": ["level"]
+            }
+        ),
+        Tool(
+            name="read_frame_variables",
+            description="Lists local variables and arguments (with values) for a stack frame.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "level": {"type": "integer", "description": "Optional frame level to select first (0 = innermost)."}
+                }
+            }
+        ),
+        Tool(
+            name="list_source",
+            description="Lists source lines around a location (function, 'file.c:42', or '*0xADDR').",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string", "description": "Where to list around. Omit to continue from current."},
+                    "count": {"type": "integer", "description": "Approximate number of lines (default 10)."}
+                }
+            }
+        ),
+        Tool(
+            name="resolve_address",
+            description="Maps an address or expression (e.g. '$pc', '0x08001234') to its source "
+                        "file:line and nearest symbol.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "expr": {"type": "string", "description": "Address or expression to resolve, e.g. '$pc' or '0x08001234'."}
+                },
+                "required": ["expr"]
+            }
+        ),
+        Tool(
             name="read_fault_registers",
             description="Reads Cortex-M SCB fault status registers (CFSR, HFSR, DFSR, MMFAR, BFAR, AFSR).",
             inputSchema={"type": "object", "properties": {}}
@@ -737,6 +781,33 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
         elif name == "read_core_registers":
             resp = gdb_client.read_core_registers()
             return [content_success({"message": "Core registers read"}, raw_response=resp)]
+
+        elif name == "select_frame":
+            resp = gdb_client.select_frame(arguments["level"])
+            return [content_success({"message": "Frame selected", "level": arguments["level"]}, raw_response=resp)]
+
+        elif name == "read_frame_variables":
+            resp = gdb_client.read_frame_variables(arguments.get("level"))
+            return [content_success(
+                {"message": "Frame variables read", "level": arguments.get("level")},
+                raw_response=resp,
+                suggested_next_actions=["list_source", "read_variable"],
+            )]
+
+        elif name == "list_source":
+            resp = gdb_client.list_source(arguments.get("location"), arguments.get("count", 10))
+            return [content_success(
+                {"message": "Source listed", "location": arguments.get("location")},
+                raw_response=resp,
+            )]
+
+        elif name == "resolve_address":
+            resp = gdb_client.resolve_address(arguments["expr"])
+            return [content_success(
+                {"message": "Address resolved", "expr": arguments["expr"]},
+                raw_response=resp,
+                suggested_next_actions=["list_source", "read_frame_variables"],
+            )]
 
         elif name == "read_fault_registers":
             resp = gdb_client.read_fault_registers()
