@@ -2,6 +2,19 @@
 
 ## Unreleased / 未发布
 
+### Autonomous debug loop / 自主调试闭环
+
+- Added `run_and_wait` / `wait_for_stop` structured stop events to close the observe loop. / 新增 `run_and_wait`/`wait_for_stop` 结构化停止事件以闭合观察环。
+- Added source symbolization and frame navigation: `select_frame`, `read_frame_variables`, `list_source`, `resolve_address`. / 新增源码符号化和栈帧导航工具。
+- Extended `set_breakpoint` with condition, temporary, and ignore_count. / 为 `set_breakpoint` 增加条件、临时和忽略计数选项。
+- Added `reconstruct_fault_context` to unwind the stacked exception frame and recover the faulting PC's source line. / 新增 `reconstruct_fault_context`，展开异常压栈帧并还原出错 PC 的源码行。
+- Added memory-write guardrails and audit log (`set_write_policy`, `get_write_audit_log`). / 新增内存写入护栏和审计日志。
+- Added `configure_debug_freeze` to freeze IWDG/WWDG/timers via DBGMCU while halted. / 新增 `configure_debug_freeze`，halt 时通过 DBGMCU 冻结看门狗/定时器。
+- Added `check_session_health` with optional reconnect for long autonomous runs. / 新增 `check_session_health` 及可选重连。
+- Added Tier 3 depth tools: execution control (`step_out`, `step_instruction`, `run_to_line`), `disassemble`, symbol/type discovery, coredump capture/load, `verify_flash`, and DWT timing/PC sampling. / 新增第三梯队深度工具:执行控制、反汇编、符号/类型发现、coredump、flash 校验、DWT 计时与 PC 采样。
+
+### Earlier in Unreleased / 早前未发布内容
+
 - Added probe-specific reset strategy profiles and YAML reset config. / 新增面向不同调试器的复位策略 profile 和 YAML reset 配置。
 - Migrated MCP tool responses to the stable JSON envelope. / 将 MCP 工具响应迁移到稳定 JSON 包络。
 - Added SWO/ITM process-output log capture tools. / 新增 SWO/ITM 进程输出日志采集工具。

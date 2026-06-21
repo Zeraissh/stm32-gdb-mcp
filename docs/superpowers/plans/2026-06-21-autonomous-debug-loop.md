@@ -129,3 +129,17 @@ so the model is guided through the loop.
 
 Tier 1 (T1.1 → T1.4) first — highest ROI, each committed separately. Then Tier 2, then
 Tier 3. Commit message per capability, mirroring existing history.
+
+---
+
+## Status / 状态
+
+- [x] **Tier 1** — T1.1 run_and_wait, T1.2 frame navigation, T1.3 conditional breakpoints,
+  T1.4 fault-context reconstruction. *Done, each committed.*
+- [x] **Tier 2** — T2.1 write guardrails + audit, T2.2 DBGMCU debug-freeze, T2.3 session
+  health/reconnect. *Done, each committed.*
+- [x] **Tier 3** — execution control, disassemble, symbol/type discovery, coredump,
+  verify_flash, DWT timing/PC sampling. *Done, committed.*
+
+All work is covered by unit tests (pure modules with fakes) and server exposure/behavior
+tests; hardware paths remain gated behind `STM32_GDB_MCP_HIL=1`. Total MCP tools: 83.

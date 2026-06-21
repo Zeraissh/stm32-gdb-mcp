@@ -312,11 +312,30 @@ Implemented / 已实现：
 - STM32L431 OpenOCD config and minimal example firmware under `examples/firmware/stm32l431_blinky` / `examples/firmware/stm32l431_blinky` 下的 STM32L431 OpenOCD 配置和最小示例固件
 - stable JSON response envelope for MCP tool results while preserving the MCP `TextContent` transport / MCP 工具结果使用稳定 JSON 响应包络，同时保留 MCP `TextContent` 传输外壳
 
+### Autonomous debug loop / 自主调试闭环
+
+English: Primitives that let the AI close the *observe → orient → hypothesize →
+act safely → verify* loop and run hands-off. See
+`docs/superpowers/plans/2026-06-21-autonomous-debug-loop.md`.
+
+中文：让 AI 闭合"观察 → 定位 → 假设 → 安全动作 → 验证"调试环、可放手运行的原语。
+详见 `docs/superpowers/plans/2026-06-21-autonomous-debug-loop.md`。
+
+- structured `run_and_wait` / `wait_for_stop` stop events (reason + symbolized frame) / 结构化停止事件(原因 + 符号化栈帧)
+- frame navigation and source symbolization: `select_frame`, `read_frame_variables`, `list_source`, `resolve_address` / 栈帧导航与源码符号化
+- conditional / temporary / ignore-count breakpoints / 条件、临时、忽略计数断点
+- `reconstruct_fault_context` — unwinds the Cortex-M exception frame to the faulting source line / 还原 Cortex-M 异常压栈帧到出错源码行
+- memory-write guardrails + audit log (`set_write_policy`, `get_write_audit_log`) / 内存写入护栏与审计日志
+- `configure_debug_freeze` for DBGMCU watchdog/timer freeze while halted / halt 时冻结看门狗/定时器
+- `check_session_health` with reconnect for long runs / 会话健康检查与重连
+- depth tools: execution control, `disassemble`, symbol/type discovery, coredump capture/load, `verify_flash`, DWT timing and PC sampling / 深度工具:执行控制、反汇编、符号/类型发现、coredump、flash 校验、DWT 计时与 PC 采样
+
 Roadmap / 路线图：
 
 - richer vendor-specific SWO/TPIU auto-configuration / 更完整的厂商特定 SWO/TPIU 自动配置
 - more board-specific firmware examples and HIL fixtures / 更多板卡专用示例固件和 HIL fixture
 - deeper RTOS-aware deadlock and timing analysis / 更深入的 RTOS 死锁和时序分析
+- more STM32 families in the DBGMCU freeze map (G0/G4/H7) / DBGMCU 冻结表覆盖更多 STM32 系列
 
 ## Project Discovery / 项目发现
 
