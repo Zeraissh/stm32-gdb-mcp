@@ -355,6 +355,57 @@ def test_read_frame_variables_returns_decoded_map(monkeypatch):
     assert payload["raw_response"] is None  # raw is opt-in for token economy
 
 
+def test_flash_firmware_resets_and_runs_by_default(monkeypatch):
+    import mcp_server.server as server_module
+
+    calls = []
+
+    class FakeClient:
+        def load_firmware(self, path):
+            calls.append(("flash", path))
+            return [{"m": "ok"}]
+
+        def reset_run(self, command):
+            calls.append(("reset_run", command))
+            return [{"m": "reset"}]
+
+    class FakeManager:
+        server_type = "openocd"
+
+    class FakeProfile:
+        def get(self):
+            return {}
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    monkeypatch.setattr(server_module, "gdb_manager", FakeManager())
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile())
+
+    payload = _payload(asyncio.run(handle_call_tool("flash_firmware", {"file_path": "fw.elf"})))
+
+    assert payload["data"]["reset_run"] is True
+    assert ("reset_run", "monitor reset run") in calls
+
+
+def test_flash_firmware_flash_only_when_reset_run_false(monkeypatch):
+    import mcp_server.server as server_module
+
+    calls = []
+
+    class FakeClient:
+        def load_firmware(self, path):
+            calls.append("flash")
+            return [{"m": "ok"}]
+
+        def reset_run(self, command):
+            calls.append("reset_run")
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool("flash_firmware", {"file_path": "fw.elf", "reset_run": False})))
+
+    assert payload["data"]["reset_run"] is False
+    assert "reset_run" not in calls
+
+
 def test_server_exposes_build_firmware_tool():
     tools = asyncio.run(handle_list_tools())
     assert "build_firmware" in {t.name for t in tools}

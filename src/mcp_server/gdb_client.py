@@ -97,6 +97,10 @@ class GdbClientManager:
             pass
         return resp
 
+    def reset_run(self, command: str = "monitor reset run"):
+        """Reset the MCU and let it run (Keil-style 'Reset and Run' after download)."""
+        return self.execute_command(command, timeout_sec=self.timeouts.get("reset"))
+
     def _drain(self, rounds: int = 5):
         """Consume any pending async/stale GDB responses left in the buffer."""
         if not self.gdb:

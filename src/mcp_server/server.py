@@ -238,12 +238,15 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="flash_firmware",
-            description="Flashes a compiled firmware binary to the target device. Accepts GCC .elf "
-                        "or Keil .axf (both ELF with debug info).",
+            description="Flashes a compiled firmware binary to the target. Accepts GCC .elf or Keil "
+                        ".axf. By default it then resets and RUNS the firmware (Keil-style 'Load + "
+                        "Run'). Pass reset_run=false to flash only (e.g. to set breakpoints before "
+                        "the firmware starts).",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "file_path": {"type": "string", "description": "Absolute path to the compiled firmware file (e.g. .elf)."}
+                    "file_path": {"type": "string", "description": "Absolute path to the compiled firmware file (e.g. .elf/.axf)."},
+                    "reset_run": {"type": "boolean", "description": "Reset and run after flashing (default true). False = flash only, leave halted."}
                 },
                 "required": ["file_path"]
             }
@@ -1405,7 +1408,20 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
 
         elif name == "flash_firmware":
             resp = gdb_client.load_firmware(arguments["file_path"])
-            return [content_success({"message": "Firmware flashed", "file_path": arguments["file_path"]}, raw_response=resp)]
+            data = {"message": "Firmware flashed", "file_path": arguments["file_path"], "reset_run": False}
+            if arguments.get("reset_run", True):
+                profile = debug_profile.get()
+                reset_config = profile.get("reset", {})
+                resolved = resolve_reset_command(
+                    gdb_manager.server_type or profile.get("server_type"),
+                    halt=False,
+                    strategy=reset_config.get("strategy"),
+                    command=reset_config.get("command"),
+                )
+                resp = (resp or []) + gdb_client.reset_run(command=resolved["command"])
+                data["reset_run"] = True
+                data["message"] = "Firmware flashed; target reset and running"
+            return [content_success(data, raw_response=resp)]
 
         elif name == "reset_target":
             halt = arguments["halt"]
