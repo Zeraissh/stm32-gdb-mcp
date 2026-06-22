@@ -303,6 +303,44 @@ def test_read_frame_variables_returns_decoded_map(monkeypatch):
     assert payload["raw_response"] is None  # raw is opt-in for token economy
 
 
+def test_server_exposes_build_firmware_tool():
+    tools = asyncio.run(handle_list_tools())
+    assert "build_firmware" in {t.name for t in tools}
+
+
+def test_build_firmware_cmake_success(monkeypatch):
+    import mcp_server.build as build_mod
+
+    captured = {}
+
+    def fake_run(argv, timeout=600, cwd=None, log_path=None):
+        captured["argv"] = argv
+        return {"returncode": 0, "output": "[100%] Built target app"}
+
+    monkeypatch.setattr(build_mod, "run_build", fake_run)
+    payload = _payload(asyncio.run(handle_call_tool(
+        "build_firmware", {"kind": "cmake", "build_dir": "build/x", "target": "app"}
+    )))
+
+    assert payload["ok"] is True
+    assert payload["data"]["success"] is True
+    assert captured["argv"] == ["cmake", "--build", "build/x", "--target", "app"]
+    assert "flash_firmware" in payload["suggested_next_actions"]
+
+
+def test_build_firmware_failure_is_reported(monkeypatch):
+    import mcp_server.build as build_mod
+
+    monkeypatch.setattr(build_mod, "run_build", lambda *a, **k: {"returncode": 2, "output": "error: undefined reference"})
+    payload = _payload(asyncio.run(handle_call_tool(
+        "build_firmware", {"kind": "keil", "project": "fw.uvprojx"}
+    )))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "build_failed"
+    assert payload["raw_response"]["returncode"] == 2
+
+
 def test_start_openocd_without_server_args_gives_clear_error(monkeypatch):
     import mcp_server.server as server_module
 

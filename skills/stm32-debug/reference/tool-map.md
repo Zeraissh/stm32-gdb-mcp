@@ -7,7 +7,8 @@ Quick index of the stm32-gdb-mcp tools. Most results carry `suggested_next_actio
 - `self_check` (run right after connecting), `check_session_health`
 - `get_timeouts`, `set_timeouts`
 
-## Bring-up & flashing
+## Build & bring-up & flashing
+- `build_firmware` (Keil UV4 / CMake / make / custom — Keil .axf debugs like a .elf)
 - `flash_firmware`, `flash_and_run`, `verify_flash`, `reset_target`
 - `inspect_project`, `set_debug_profile`, `get_debug_profile`
 - `load_debug_config`, `save_debug_config`, `validate_debug_config`

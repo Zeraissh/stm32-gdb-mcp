@@ -2,6 +2,11 @@
 
 ## Unreleased / 未发布
 
+### Toolchain & robustness / 工具链与健壮性
+
+- Added `build_firmware`: build with Keil uVision (UV4), CMake, make, or a custom command; Keil `.axf` (ELF/DWARF) debugs through the existing tools like a `.elf`. / 新增 `build_firmware`,支持 Keil uVision(UV4)、CMake、make 或自定义命令构建;Keil 的 `.axf` 与 `.elf` 一样可被现有工具调试。
+- `start_debug_session` now rejects openocd with empty `server_args` up front (clear guidance), and openocd config errors are classified as non-retryable `invalid_server_args` instead of a misleading `probe_unavailable`. / `start_debug_session` 现在对 openocd 缺少 `server_args` 提前给出清晰报错,openocd 配置错误被正确分类为不可重试的 `invalid_server_args`。
+
 ### Single-target excellence / 单端极致 (Phase 2)
 
 - Comprehension layer: `read_core_registers`, `read_call_stack`, `read_frame_variables` now return decoded structured data + a one-line summary, with raw output opt-in via `include_raw`. / 理解层:核心读取工具返回解码后的结构化数据与一行摘要,原始输出通过 `include_raw` 可选。

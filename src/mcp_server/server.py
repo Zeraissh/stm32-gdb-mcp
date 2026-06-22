@@ -1,13 +1,16 @@
 import asyncio
 import json
 import logging
+import os
 import sys
+import tempfile
 import time
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
+from . import build as build_mod
 from .composites import capture_state, debug_until, flash_and_run
 from .debug_config import (
     load_debug_config as load_debug_config_file,
@@ -162,8 +165,33 @@ async def handle_list_tools() -> list[Tool]:
             }
         ),
         Tool(
+            name="build_firmware",
+            description="Builds firmware with Keil uVision (UV4), CMake, make, or a custom command, "
+                        "so the AI can rebuild after a fix. Keil emits a .axf (ELF/DWARF) that the "
+                        "debug tools load like any .elf. Returns the exit code, success flag, and "
+                        "build log tail.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string", "enum": ["keil", "cmake", "make", "custom"], "description": "Toolchain to build with."},
+                    "project": {"type": "string", "description": "keil: path to the .uvprojx/.uvproj project."},
+                    "rebuild": {"type": "boolean", "description": "keil: rebuild all (-r) instead of incremental (-b)."},
+                    "uv4_path": {"type": "string", "description": "keil: path to UV4.exe (auto-detected if omitted)."},
+                    "build_dir": {"type": "string", "description": "cmake: the configured build directory."},
+                    "directory": {"type": "string", "description": "make: directory containing the Makefile."},
+                    "target": {"type": "string", "description": "cmake/make: build target."},
+                    "config": {"type": "string", "description": "cmake: build config, e.g. Debug/Release."},
+                    "command": {"type": "array", "items": {"type": "string"}, "description": "custom: full argv to run."},
+                    "cwd": {"type": "string", "description": "Working directory for the build."},
+                    "timeout_sec": {"type": "number", "description": "Max build seconds (default 600)."}
+                },
+                "required": ["kind"]
+            }
+        ),
+        Tool(
             name="flash_firmware",
-            description="Flashes a compiled firmware binary to the target device.",
+            description="Flashes a compiled firmware binary to the target device. Accepts GCC .elf "
+                        "or Keil .axf (both ELF with debug info).",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1217,6 +1245,45 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
             }
             next_actions = [] if health["target_responsive"] else ["start_debug_session", "get_gdb_server_logs"]
             return [content_success(health, suggested_next_actions=next_actions)]
+
+        elif name == "build_firmware":
+            kind = arguments["kind"]
+            log_path = None
+            uv4_path = arguments.get("uv4_path")
+            if kind == "keil":
+                uv4_path = uv4_path or build_mod.find_uv4()
+                log_path = os.path.join(tempfile.gettempdir(), f"uv4_build_{session_journal.run_id}.log")
+            cmd = build_mod.resolve_build_command(
+                kind,
+                project=arguments.get("project"),
+                build_dir=arguments.get("build_dir"),
+                directory=arguments.get("directory"),
+                target=arguments.get("target"),
+                config=arguments.get("config"),
+                rebuild=arguments.get("rebuild", False),
+                uv4_path=uv4_path,
+                log_path=log_path,
+                command=arguments.get("command"),
+            )
+            result = build_mod.run_build(
+                cmd, timeout=arguments.get("timeout_sec", 600), cwd=arguments.get("cwd"), log_path=log_path
+            )
+            success = build_mod.is_build_success(kind, result["returncode"])
+            payload = {
+                "kind": kind,
+                "command": cmd,
+                "returncode": result["returncode"],
+                "success": success,
+                "log_tail": result["output"][-4000:],
+            }
+            if success:
+                return [content_success(payload, suggested_next_actions=["flash_firmware", "flash_and_run"])]
+            return [content_error(
+                f"Build failed (exit {result['returncode']})",
+                code="build_failed",
+                raw_response=payload,
+                suggested_next_actions=["get_session_journal"],
+            )]
 
         elif name == "flash_firmware":
             resp = gdb_client.load_firmware(arguments["file_path"])
