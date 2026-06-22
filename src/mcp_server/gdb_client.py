@@ -4,6 +4,7 @@ from pygdbmi.gdbcontroller import GdbController
 
 from . import dwt
 from .fault_analysis import FAULT_REGISTER_ADDRESSES
+from .gdb_decode import decode_backtrace, decode_registers, decode_variables
 from .stop_event import parse_stop_event
 
 
@@ -120,6 +121,9 @@ class GdbClientManager:
             self.select_frame(level)
         return self.execute_command("-stack-list-variables --all-values", timeout_sec=2.0)
 
+    def read_frame_variables_decoded(self, level: int | None = None):
+        return decode_variables(self.read_frame_variables(level))
+
     def read_frame_arguments(self, level: int | None = None):
         if level is not None:
             self.select_frame(level)
@@ -140,6 +144,15 @@ class GdbClientManager:
 
     def read_core_registers(self):
         return self.execute_cli_command("info registers", timeout_sec=2.0)
+
+    def read_core_registers_decoded(self):
+        """Return {name: hex} via the structured MI register queries."""
+        names = self.execute_command("-data-list-register-names", timeout_sec=2.0)
+        values = self.execute_command("-data-list-register-values x", timeout_sec=2.0)
+        return decode_registers(names, values)
+
+    def read_call_stack_decoded(self):
+        return decode_backtrace(self.read_call_stack())
 
     def disassemble_around_pc(self, instructions: int = 8):
         return self.execute_cli_command(f"x/{instructions}i $pc", timeout_sec=2.0)

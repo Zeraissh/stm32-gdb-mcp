@@ -29,6 +29,7 @@ from .exception_frame import build_fault_context
 from .fault_analysis import diagnose_fault_registers
 from .freertos_inspector import FreeRTOSInspector
 from .gdb_client import GdbClientManager
+from .gdb_decode import registers_summary
 from .gdb_manager import GdbServerManager
 from .log_reader import ProcessLogReader, SerialLogReader
 from .memory_guard import MemoryWriteGuard
@@ -274,13 +275,26 @@ async def handle_list_tools() -> list[Tool]:
         # --- Step 6: Advanced Analysis ---
         Tool(
             name="read_call_stack",
-            description="Reads the current call stack (backtrace).",
-            inputSchema={"type": "object", "properties": {}}
+            description="Reads the call stack as a decoded list of frames "
+                        "{level, func, file, line, addr} plus a one-line summary. "
+                        "Set include_raw=true to also get the raw GDB output.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "include_raw": {"type": "boolean", "description": "Include the raw GDB transcript (default false)."}
+                }
+            }
         ),
         Tool(
             name="read_core_registers",
-            description="Reads CPU core registers using GDB's info registers command.",
-            inputSchema={"type": "object", "properties": {}}
+            description="Reads CPU core registers as a decoded {name: hex} map plus a one-line "
+                        "summary of PC/LR/SP. Set include_raw=true to also get the raw GDB output.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "include_raw": {"type": "boolean", "description": "Include the raw GDB transcript (default false)."}
+                }
+            }
         ),
         Tool(
             name="select_frame",
@@ -295,11 +309,13 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="read_frame_variables",
-            description="Lists local variables and arguments (with values) for a stack frame.",
+            description="Returns a decoded {name: value} map of locals and arguments for a stack "
+                        "frame, plus a count summary. Set include_raw=true for the raw GDB output.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "level": {"type": "integer", "description": "Optional frame level to select first (0 = innermost)."}
+                    "level": {"type": "integer", "description": "Optional frame level to select first (0 = innermost)."},
+                    "include_raw": {"type": "boolean", "description": "Include the raw GDB transcript (default false)."}
                 }
             }
         ),
@@ -1077,22 +1093,41 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
             return [content_success({"logs": logs, "message": "GDB server logs captured" if logs else "No GDB server logs captured"})]
 
         elif name == "read_call_stack":
-            resp = gdb_client.read_call_stack()
-            return [content_success({"message": "Call stack read"}, raw_response=resp)]
+            frames = gdb_client.read_call_stack_decoded()
+            if frames:
+                top = frames[0]
+                summary = f"{len(frames)} frames; top: {top['func']} at {top['file']}:{top['line']}"
+            else:
+                summary = "no frames available (target running or no symbols)"
+            raw = gdb_client.read_call_stack() if arguments.get("include_raw") else None
+            return [content_success(
+                {"frames": frames, "summary": summary},
+                raw_response=raw,
+                suggested_next_actions=["read_frame_variables", "list_source"],
+            )]
 
         elif name == "read_core_registers":
-            resp = gdb_client.read_core_registers()
-            return [content_success({"message": "Core registers read"}, raw_response=resp)]
+            registers = gdb_client.read_core_registers_decoded()
+            raw = gdb_client.read_core_registers() if arguments.get("include_raw") else None
+            return [content_success(
+                {"registers": registers, "summary": registers_summary(registers)},
+                raw_response=raw,
+            )]
 
         elif name == "select_frame":
             resp = gdb_client.select_frame(arguments["level"])
             return [content_success({"message": "Frame selected", "level": arguments["level"]}, raw_response=resp)]
 
         elif name == "read_frame_variables":
-            resp = gdb_client.read_frame_variables(arguments.get("level"))
+            variables = gdb_client.read_frame_variables_decoded(arguments.get("level"))
+            raw = gdb_client.read_frame_variables(arguments.get("level")) if arguments.get("include_raw") else None
             return [content_success(
-                {"message": "Frame variables read", "level": arguments.get("level")},
-                raw_response=resp,
+                {
+                    "level": arguments.get("level"),
+                    "variables": variables,
+                    "summary": f"{len(variables)} variables in scope",
+                },
+                raw_response=raw,
                 suggested_next_actions=["list_source", "read_variable"],
             )]
 

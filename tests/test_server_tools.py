@@ -273,16 +273,16 @@ def test_server_exposes_frame_navigation_tools():
     assert "resolve_address" in tool_names
 
 
-def test_read_frame_variables_passes_level_to_client(monkeypatch):
+def test_read_frame_variables_returns_decoded_map(monkeypatch):
     import mcp_server.server as server_module
 
     class FakeClient:
         def __init__(self):
             self.calls = []
 
-        def read_frame_variables(self, level):
+        def read_frame_variables_decoded(self, level):
             self.calls.append(level)
-            return [{"message": "done"}]
+            return {"i": "42", "g_divisor": "0"}
 
     fake = FakeClient()
     monkeypatch.setattr(server_module, "gdb_client", fake)
@@ -290,6 +290,22 @@ def test_read_frame_variables_passes_level_to_client(monkeypatch):
 
     assert payload["ok"] is True
     assert fake.calls == [1]
+    assert payload["data"]["variables"] == {"i": "42", "g_divisor": "0"}
+    assert payload["raw_response"] is None  # raw is opt-in for token economy
+
+
+def test_read_core_registers_returns_decoded_map_and_summary(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def read_core_registers_decoded(self):
+            return {"pc": "0x8000058", "lr": "0xfffffff9", "sp": "0x200040b0"}
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool("read_core_registers", {})))
+
+    assert payload["data"]["registers"]["pc"] == "0x8000058"
+    assert "pc=0x8000058" in payload["data"]["summary"]
 
 
 def test_run_and_wait_returns_structured_stop_event(monkeypatch):
