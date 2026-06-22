@@ -28,6 +28,7 @@ from .debug_experiments import (
 from .debug_freeze import plan_freeze_writes, resolve_freeze_targets, supported_families
 from .debug_profile import DebugProfileStore
 from .debug_snapshot import collect_debug_snapshot
+from .error_taxonomy import classify_error
 from .exception_frame import build_fault_context
 from .fault_analysis import diagnose_fault_registers
 from .freertos_inspector import FreeRTOSInspector
@@ -39,6 +40,7 @@ from .memory_guard import MemoryWriteGuard
 from .project_inspector import inspect_project
 from .reset_strategy import resolve_reset_command
 from .scenario import load_scenario, replay_scenario, step_summary
+from .self_check import evaluate_self_check
 from .session_journal import SessionJournal
 from .svd_parser import SVDParser
 from .tool_response import content_error, content_success
@@ -77,6 +79,19 @@ async def handle_list_tools() -> list[Tool]:
             name="stop_debug_session",
             description="Stops the GDB client and server.",
             inputSchema={"type": "object", "properties": {}}
+        ),
+        Tool(
+            name="self_check",
+            description="Validates the link right after connecting: reads CPUID and DBGMCU IDCODE "
+                        "and checks byte order, that a real Cortex-M is present, and that the device "
+                        "matches the expected family (from the profile MCU or the 'expected_family' "
+                        "arg). Run this first to catch endianness/config faults before debugging.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "expected_family": {"type": "string", "description": "Expected MCU/family, e.g. 'STM32L431'. Defaults to the profile MCU."}
+                }
+            }
         ),
         Tool(
             name="check_session_health",
@@ -1040,6 +1055,14 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
             variable_tracker.stop()
             return [content_success({"message": "Debug session stopped"})]
 
+        elif name == "self_check":
+            cpuid = gdb_client.read_word(0xE000ED00)
+            dbgmcu_idcode = gdb_client.read_word(0xE0042000)
+            expected = arguments.get("expected_family") or debug_profile.get().get("mcu")
+            result = evaluate_self_check(cpuid, dbgmcu_idcode, expected_family=expected)
+            next_actions = [] if result["ok"] else ["check_session_health", "start_debug_session"]
+            return [content_success(result, suggested_next_actions=next_actions)]
+
         elif name == "check_session_health":
             reconnected = False
             if arguments.get("reconnect") and gdb_manager.is_alive():
@@ -1659,7 +1682,16 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
             raise ValueError(f"Unknown tool: {name}")
 
     except Exception as e:
-        return [content_error(str(e), code="tool_execution_error", suggested_next_actions=["capture_debug_snapshot"])]
+        classification = classify_error(str(e))
+        message = str(e)
+        if classification.get("hint"):
+            message = f"{message} — {classification['hint']}"
+        return [content_error(
+            message,
+            code=classification["code"],
+            raw_response={"retryable": classification["retryable"]},
+            suggested_next_actions=classification["suggested_next_actions"],
+        )]
 
 
 # Meta tools that operate on the journal itself are not journaled (avoids noise/recursion).

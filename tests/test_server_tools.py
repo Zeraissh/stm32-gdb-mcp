@@ -294,6 +294,41 @@ def test_read_frame_variables_returns_decoded_map(monkeypatch):
     assert payload["raw_response"] is None  # raw is opt-in for token economy
 
 
+def test_self_check_reports_decoded_identity(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def read_word(self, address):
+            return {0xE000ED00: 0x410FC241, 0xE0042000: 0x10016435}[address]
+
+    class FakeProfile:
+        def get(self):
+            return {"mcu": "STM32L431"}
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile())
+
+    payload = _payload(asyncio.run(handle_call_tool("self_check", {})))
+
+    assert payload["data"]["ok"] is True
+    assert payload["data"]["core"] == "Cortex-M4"
+
+
+def test_tool_error_is_classified_with_actionable_code(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def read_core_registers_decoded(self):
+            raise RuntimeError("Did not get response from gdb after 1.0 seconds")
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool("read_core_registers", {})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "target_unresponsive"
+    assert "halt_execution" in payload["suggested_next_actions"]
+
+
 def test_server_journals_tool_calls_and_exposes_journal():
     import mcp_server.server as server_module
 
