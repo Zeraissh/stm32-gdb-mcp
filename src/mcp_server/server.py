@@ -1,5 +1,7 @@
 import asyncio
 import json
+import logging
+import sys
 import time
 
 from mcp.server import Server
@@ -37,6 +39,7 @@ from .gdb_decode import registers_summary
 from .gdb_manager import GdbServerManager
 from .log_reader import ProcessLogReader, SerialLogReader
 from .memory_guard import MemoryWriteGuard
+from .metrics import compute_metrics
 from .project_inspector import inspect_project
 from .reset_strategy import resolve_reset_command
 from .scenario import load_scenario, replay_scenario, step_summary
@@ -58,6 +61,14 @@ swo_log_reader = ProcessLogReader("swo")
 uart_log_reader = SerialLogReader()
 memory_guard = MemoryWriteGuard()
 session_journal = SessionJournal()
+
+# Structured logging to stderr (stdout is the MCP transport), correlated by run-id.
+logger = logging.getLogger("stm32-gdb-mcp")
+if not logger.handlers:
+    _handler = logging.StreamHandler(sys.stderr)
+    _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
 
 @server.list_tools()
 async def handle_list_tools() -> list[Tool]:
@@ -846,6 +857,18 @@ async def handle_list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}}
         ),
         Tool(
+            name="get_session_timeline",
+            description="Returns a compact, human-readable timeline of every tool call this session "
+                        "(built on the journal) for a quick replay of what happened.",
+            inputSchema={"type": "object", "properties": {}}
+        ),
+        Tool(
+            name="get_session_metrics",
+            description="Returns per-tool metrics for this session: call counts, success/failure, "
+                        "and average/total duration, plus totals.",
+            inputSchema={"type": "object", "properties": {}}
+        ),
+        Tool(
             name="run_scenario",
             description="Replays a declarative scenario — a list of {tool, args} steps — "
                         "deterministically and returns a per-step pass/fail report. Provide inline "
@@ -1606,6 +1629,13 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
             session_journal.clear()
             return [content_success({"message": "Session journal cleared", "run_id": session_journal.run_id})]
 
+        elif name == "get_session_timeline":
+            return [content_success({"run_id": session_journal.run_id, "timeline": session_journal.timeline()})]
+
+        elif name == "get_session_metrics":
+            metrics = compute_metrics(session_journal.get())
+            return [content_success({"run_id": session_journal.run_id, **metrics})]
+
         elif name == "step_out":
             resp = gdb_client.step_out()
             return [content_success({"message": "Stepped out"}, raw_response=resp)]
@@ -1695,7 +1725,7 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
 
 
 # Meta tools that operate on the journal itself are not journaled (avoids noise/recursion).
-_JOURNAL_SKIP = {"get_session_journal", "clear_session_journal", "get_session_timeline"}
+_JOURNAL_SKIP = {"get_session_journal", "clear_session_journal", "get_session_timeline", "get_session_metrics"}
 
 
 @server.call_tool()
@@ -1713,14 +1743,16 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
     if name not in _JOURNAL_SKIP:
         try:
             payload = json.loads(result[0].text)
+            ok = payload.get("ok")
             session_journal.record(
                 name,
                 arguments,
-                ok=payload.get("ok"),
+                ok=ok,
                 summary=step_summary(payload),
-                error=(payload.get("error") if not payload.get("ok") else None),
+                error=(payload.get("error") if not ok else None),
                 duration_ms=duration_ms,
             )
+            logger.info("[%s] %s ok=%s %sms", session_journal.run_id, name, ok, duration_ms)
         except (ValueError, IndexError, AttributeError):
             pass
 

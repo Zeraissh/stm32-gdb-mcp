@@ -344,6 +344,21 @@ def test_server_journals_tool_calls_and_exposes_journal():
     assert payload["data"]["entries"][0]["duration_ms"] is not None
 
 
+def test_session_metrics_and_timeline_reflect_calls():
+    import mcp_server.server as server_module
+
+    server_module.session_journal.clear()
+    asyncio.run(handle_call_tool("get_debug_profile", {}))
+    asyncio.run(handle_call_tool("get_debug_profile", {}))
+
+    metrics = _payload(asyncio.run(handle_call_tool("get_session_metrics", {})))
+    assert metrics["data"]["by_tool"]["get_debug_profile"]["calls"] == 2
+    assert metrics["data"]["totals"]["calls"] == 2
+
+    timeline = _payload(asyncio.run(handle_call_tool("get_session_timeline", {})))
+    assert any("get_debug_profile" in line for line in timeline["data"]["timeline"])
+
+
 def test_run_scenario_replays_steps_and_reports(monkeypatch):
     import mcp_server.server as server_module
 
