@@ -54,7 +54,7 @@ def test_read_typed_memory_reads_byte_count_for_width_and_count():
     client.read_typed_memory("0x20000000", width_bits=16, count=4)
 
     assert client.gdb.commands == [
-        ("-data-read-memory-bytes 0x20000000 8", 1.0)
+        ("-data-read-memory-bytes 0x20000000 8", 2.0)  # routed through the 'memory' timeout
     ]
 
 

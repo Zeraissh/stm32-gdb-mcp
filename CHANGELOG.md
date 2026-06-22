@@ -9,7 +9,9 @@
 - Determinism: append-only session journal and declarative `run_scenario` replay (`get_session_journal`, `clear_session_journal`, `run_scenario`). / 确定性:仅追加会话日志与声明式 `run_scenario` 回放。
 - Reliability: `self_check` (byte-order / Cortex-M core / device-family validation) and a structured error taxonomy with actionable next-actions. / 可靠性:`self_check` 链路自检与结构化错误分类。
 - Observability: per-tool metrics (`get_session_metrics`), `get_session_timeline`, and run-id-correlated structured logging. / 可观测性:逐工具指标、会话时间线与按 run-id 关联的结构化日志。
-- Fixed a byte-order bug in 32-bit memory word reads (found via HIL on STM32L431). / 修复 32 位内存字读取的字节序 bug(在 STM32L431 真机验证中发现)。
+- Reproducibility: `export_debug_report` bundles journal + metrics + profile (+ optional snapshot/coredump) into one run-id-keyed JSON artifact. / 可复现:`export_debug_report` 将日志+指标+profile 打包为单一工件。
+- Reliability: retry/backoff for transient probe failures and `recover_session` to restart a dropped/wedged probe; centralized overridable timeouts (`get_timeouts`/`set_timeouts`). / 可靠性:瞬时探针失败的重试退避、`recover_session` 会话恢复、集中可覆盖的超时配置。
+- Fixed a byte-order bug in 32-bit memory word reads, and stale first-read after reset, both found via HIL on STM32L431. / 修复 32 位内存字读取字节序 bug 与复位后首次读脏数据(均在 STM32L431 真机验证中发现)。
 
 ### Autonomous debug loop / 自主调试闭环
 

@@ -6,6 +6,7 @@ from . import dwt
 from .fault_analysis import FAULT_REGISTER_ADDRESSES
 from .gdb_decode import decode_backtrace, decode_registers, decode_variables
 from .stop_event import parse_stop_event
+from .timeouts import TimeoutConfig
 
 
 def build_break_insert_command(location, condition=None, temporary=False, ignore_count=None):
@@ -27,6 +28,7 @@ def build_break_insert_command(location, condition=None, temporary=False, ignore
 class GdbClientManager:
     def __init__(self):
         self.gdb = None
+        self.timeouts = TimeoutConfig()
         
     def start_gdb(self, gdb_path="arm-none-eabi-gdb"):
         if self.gdb:
@@ -62,7 +64,9 @@ class GdbClientManager:
 
     def connect(self, host="localhost", port=3333):
         """Connects to the GDB Server."""
-        return self.execute_command(f"-target-select extended-remote {host}:{port}", timeout_sec=5.0)
+        return self.execute_command(
+            f"-target-select extended-remote {host}:{port}", timeout_sec=self.timeouts.get("connect")
+        )
 
     def load_firmware(self, filepath: str):
         """Loads symbols and flashes the firmware to the device."""
@@ -70,12 +74,12 @@ class GdbClientManager:
         # Load symbols
         responses.extend(self.execute_command(f"-file-exec-and-symbols {filepath}", timeout_sec=2.0))
         # Download (flash) the firmware to target memory
-        responses.extend(self.execute_command("-target-download", timeout_sec=60.0))
+        responses.extend(self.execute_command("-target-download", timeout_sec=self.timeouts.get("download")))
         return responses
 
     def reset_halt(self, command: str = "monitor reset halt"):
         """Resets the MCU and halts it. OpenOCD uses 'monitor reset halt'."""
-        resp = self.execute_command(command, timeout_sec=5.0)
+        resp = self.execute_command(command, timeout_sec=self.timeouts.get("reset"))
         self._drain()
         # The first memory-AP access after a reset was observed on hardware to return
         # stale data (e.g. CPUID read back as 0x01000000). Issue one throwaway read of
@@ -252,7 +256,9 @@ class GdbClientManager:
         return self.execute_command(cmd)
 
     def read_memory(self, address: str, length: int):
-        return self.execute_command(f"-data-read-memory-bytes {address} {length}")
+        return self.execute_command(
+            f"-data-read-memory-bytes {address} {length}", timeout_sec=self.timeouts.get("memory")
+        )
 
     def write_memory(self, address: str, value: str):
         return self.write_typed_memory(address, value, width_bits=32)

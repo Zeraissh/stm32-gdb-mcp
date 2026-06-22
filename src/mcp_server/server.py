@@ -868,6 +868,27 @@ async def handle_list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}}
         ),
         Tool(
+            name="get_timeouts",
+            description="Returns the current named GDB operation timeouts (connect, reset, memory, "
+                        "registers, source, run, download).",
+            inputSchema={"type": "object", "properties": {}}
+        ),
+        Tool(
+            name="set_timeouts",
+            description="Overrides one or more named timeouts (positive seconds). Useful for a slow "
+                        "or flaky probe. Recorded in the journal so replays are deterministic.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "overrides": {
+                        "type": "object",
+                        "description": "Map of timeout name -> seconds, e.g. {\"memory\": 4.0, \"connect\": 8.0}."
+                    }
+                },
+                "required": ["overrides"]
+            }
+        ),
+        Tool(
             name="get_session_timeline",
             description="Returns a compact, human-readable timeline of every tool call this session "
                         "(built on the journal) for a quick replay of what happened.",
@@ -1681,6 +1702,13 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
         elif name == "clear_session_journal":
             session_journal.clear()
             return [content_success({"message": "Session journal cleared", "run_id": session_journal.run_id})]
+
+        elif name == "get_timeouts":
+            return [content_success({"timeouts": gdb_client.timeouts.as_dict()})]
+
+        elif name == "set_timeouts":
+            updated = gdb_client.timeouts.set(arguments["overrides"])
+            return [content_success({"message": "Timeouts updated", "timeouts": updated})]
 
         elif name == "get_session_timeline":
             return [content_success({"run_id": session_journal.run_id, "timeline": session_journal.timeline()})]

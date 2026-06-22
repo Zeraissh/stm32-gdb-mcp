@@ -96,9 +96,19 @@ E3. D1/D2 land early because the HIL session proved their necessity. Commit per 
 - [x] **E — observability**: per-tool metrics, `get_session_timeline`, run-id stderr
   logging (`metrics.py`).
 
-Deferred by decision: C3 centralized-timeout refactor, C4 `export_debug_report`,
-D3 retry/backoff + probe-reset recovery — fold into a follow-up. Total MCP tools: 92.
+- [x] **C4 — export_debug_report**: one self-contained JSON artifact (journal + metrics +
+  profile + optional snapshot/coredump) keyed by run-id (`debug_report.py`).
+- [x] **D3 — retry/backoff + recover_session**: `retry_call` retries taxonomy-retryable
+  failures; `recover_session` tears down and restarts the probe from the last start args
+  (`reliability.py`). HIL-validated on L431.
+- [x] **C3 — centralized timeouts**: named, overridable, journaled timeouts
+  (`timeouts.py`, `get_timeouts`/`set_timeouts`); connect/reset/memory/download routed
+  through them.
 
-Lesson from the HIL session: hard-killing OpenOCD wedges the ST-Link USB endpoint
-(`Error: open failed`) until a physical replug — concrete motivation for D3 (graceful
-probe reset/recovery) before any multi-target work.
+All Phase 2 workstreams (A–E plus C3/C4/D3) complete. Total MCP tools: 96; 145 tests green.
+
+Also fixed two correctness bugs that only surfaced on hardware: 32-bit reads were
+byte-reversed, and the first memory read after `monitor reset halt` returned stale data
+(now primed). Lesson: hard-killing OpenOCD wedges the ST-Link USB endpoint
+(`Error: open failed`) until a physical replug — `recover_session` + retry/backoff is the
+in-tool mitigation; never hard-kill the server.

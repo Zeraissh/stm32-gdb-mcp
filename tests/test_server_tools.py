@@ -390,6 +390,22 @@ def test_server_journals_tool_calls_and_exposes_journal():
     assert payload["data"]["entries"][0]["duration_ms"] is not None
 
 
+def test_get_and_set_timeouts_round_trip(monkeypatch):
+    import mcp_server.server as server_module
+
+    server_module.gdb_client.timeouts.set({"memory": 2.0})  # reset to default-ish baseline
+    before = _payload(asyncio.run(handle_call_tool("get_timeouts", {})))
+    assert "connect" in before["data"]["timeouts"]
+
+    updated = _payload(asyncio.run(handle_call_tool("set_timeouts", {"overrides": {"memory": 4.0}})))
+    assert updated["ok"] is True
+    assert updated["data"]["timeouts"]["memory"] == 4.0
+    assert server_module.gdb_client.timeouts.get("memory") == 4.0
+
+    # restore default so other tests are unaffected
+    server_module.gdb_client.timeouts.set({"memory": 2.0})
+
+
 def test_export_debug_report_writes_artifact(tmp_path):
     import json as _json
 
