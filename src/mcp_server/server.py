@@ -85,6 +85,11 @@ Key rules (the target must cooperate):
 - If halting causes mysterious resets, configure_debug_freeze (freeze IWDG/WWDG/timers).
 - On probe_unavailable / connection_lost, call recover_session; tune flaky probes with
   set_timeouts.
+- The ST-Link SWD/debug interface is EXCLUSIVE: while this MCP session is active, never
+  start a second OpenOCD/GDB on the same probe (e.g. a verify script's own --reset will
+  fail with "ST-Link in use"). Reset via reset_target instead. The ST-Link virtual COM
+  port (e.g. COM3) is a SEPARATE USB endpoint and DOES coexist with debugging — read it
+  with start_uart_logging, or let an external serial script use it without resetting.
 
 Determinism & sharing: every call is journaled (get_session_journal / get_session_timeline
 / get_session_metrics). Replay a repro with run_scenario; bundle a full, shareable report
