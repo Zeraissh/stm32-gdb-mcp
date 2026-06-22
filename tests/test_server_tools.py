@@ -344,6 +344,24 @@ def test_server_journals_tool_calls_and_exposes_journal():
     assert payload["data"]["entries"][0]["duration_ms"] is not None
 
 
+def test_export_debug_report_writes_artifact(tmp_path):
+    import json as _json
+
+    import mcp_server.server as server_module
+
+    server_module.session_journal.clear()
+    asyncio.run(handle_call_tool("get_debug_profile", {}))
+
+    path = tmp_path / "report.json"
+    payload = _payload(asyncio.run(handle_call_tool("export_debug_report", {"path": str(path)})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["path"] == str(path)
+    report = _json.loads(path.read_text(encoding="utf-8"))
+    assert report["run_id"] == server_module.session_journal.run_id
+    assert "metrics" in report and "journal" in report
+
+
 def test_session_metrics_and_timeline_reflect_calls():
     import mcp_server.server as server_module
 

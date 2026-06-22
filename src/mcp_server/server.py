@@ -29,6 +29,7 @@ from .debug_experiments import (
 )
 from .debug_freeze import plan_freeze_writes, resolve_freeze_targets, supported_families
 from .debug_profile import DebugProfileStore
+from .debug_report import build_report, write_report
 from .debug_snapshot import collect_debug_snapshot
 from .error_taxonomy import classify_error
 from .exception_frame import build_fault_context
@@ -869,6 +870,21 @@ async def handle_list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}}
         ),
         Tool(
+            name="export_debug_report",
+            description="Writes a single self-contained JSON report (journal + metrics + profile, "
+                        "optionally a state snapshot and a coredump) tied to the run-id, so a bug "
+                        "session is fully reproducible and shareable from one artifact.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Output path for the report JSON."},
+                    "include_snapshot": {"type": "boolean", "description": "Capture and embed a debug snapshot (requires a halted target)."},
+                    "coredump_path": {"type": "string", "description": "If set, capture a coredump there and reference it in the report."}
+                },
+                "required": ["path"]
+            }
+        ),
+        Tool(
             name="run_scenario",
             description="Replays a declarative scenario — a list of {tool, args} steps — "
                         "deterministically and returns a per-step pass/fail report. Provide inline "
@@ -1635,6 +1651,30 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
         elif name == "get_session_metrics":
             metrics = compute_metrics(session_journal.get())
             return [content_success({"run_id": session_journal.run_id, **metrics})]
+
+        elif name == "export_debug_report":
+            snapshot = None
+            if arguments.get("include_snapshot"):
+                snapshot = collect_debug_snapshot(gdb_client, gdb_manager)
+            coredump_path = arguments.get("coredump_path")
+            if coredump_path:
+                gdb_client.capture_coredump(coredump_path)
+            report = build_report(
+                run_id=session_journal.run_id,
+                journal_entries=session_journal.get(),
+                profile=debug_profile.get(),
+                snapshot=snapshot,
+                coredump_path=coredump_path,
+            )
+            written = write_report(arguments["path"], report)
+            return [content_success({
+                "message": "Debug report exported",
+                "path": written,
+                "run_id": session_journal.run_id,
+                "entries": len(report["journal"]),
+                "included_snapshot": snapshot is not None,
+                "coredump": coredump_path,
+            })]
 
         elif name == "step_out":
             resp = gdb_client.step_out()
