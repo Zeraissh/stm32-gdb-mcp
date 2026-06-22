@@ -44,6 +44,7 @@ from .gdb_manager import GdbServerManager
 from .log_reader import ProcessLogReader, SerialLogReader
 from .memory_guard import MemoryWriteGuard
 from .metrics import compute_metrics
+from .openocd_config import find_openocd_scripts, suggest_server_args
 from .project_inspector import inspect_project
 from .reliability import retry_call
 from .reset_strategy import resolve_reset_command
@@ -141,6 +142,21 @@ async def handle_list_tools() -> list[Tool]:
                 "properties": {
                     "expected_family": {"type": "string", "description": "Expected MCU/family, e.g. 'STM32L431'. Defaults to the profile MCU."}
                 }
+            }
+        ),
+        Tool(
+            name="suggest_server_args",
+            description="Returns the correct OpenOCD server_args for an MCU family + probe (e.g. "
+                        "STM32L431 + stlink -> ['-f','interface/stlink.cfg','-f','target/stm32l4x.cfg']) "
+                        "and validates the config files exist in OpenOCD's bundled scripts dir. Call "
+                        "this to get start_debug_session args — do NOT search the disk for .cfg files.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "mcu": {"type": "string", "description": "MCU or family, e.g. 'STM32L431' or 'STM32F4'."},
+                    "probe": {"type": "string", "description": "Debug probe: stlink, jlink, or cmsis-dap."}
+                },
+                "required": ["mcu", "probe"]
             }
         ),
         Tool(
@@ -1189,6 +1205,11 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
                 {"message": "Debug session started", "server_type": server_type, "port": port},
                 raw_response=resp,
             )]
+
+        elif name == "suggest_server_args":
+            scripts_dir = find_openocd_scripts()
+            result = suggest_server_args(arguments["mcu"], arguments["probe"], scripts_dir=scripts_dir)
+            return [content_success(result, suggested_next_actions=["start_debug_session", "self_check"])]
 
         elif name == "recover_session":
             if not _last_session.get("server_type"):

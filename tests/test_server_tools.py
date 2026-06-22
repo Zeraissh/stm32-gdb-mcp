@@ -308,6 +308,15 @@ def test_server_exposes_build_firmware_tool():
     assert "build_firmware" in {t.name for t in tools}
 
 
+def test_suggest_server_args_returns_validated_openocd_args():
+    payload = _payload(asyncio.run(handle_call_tool(
+        "suggest_server_args", {"mcu": "STM32L431", "probe": "stlink"}
+    )))
+    assert payload["ok"] is True
+    assert payload["data"]["server_args"] == ["-f", "interface/stlink.cfg", "-f", "target/stm32l4x.cfg"]
+    assert "start_debug_session" in payload["suggested_next_actions"]
+
+
 def test_build_firmware_cmake_success(monkeypatch):
     import mcp_server.build as build_mod
 
