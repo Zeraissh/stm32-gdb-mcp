@@ -5,11 +5,20 @@ import pytest
 from mcp_server.openocd_config import find_openocd_scripts, suggest_server_args
 
 
-def test_l431_stlink_resolves_to_l4_target():
+def test_l431_stlink_resolves_to_l4_target_with_fast_clock():
     r = suggest_server_args("STM32L431", "stlink")
-    assert r["server_args"] == ["-f", "interface/stlink.cfg", "-f", "target/stm32l4x.cfg"]
+    assert r["server_args"] == [
+        "-f", "interface/stlink.cfg", "-f", "target/stm32l4x.cfg",
+        "-c", "adapter speed 4000",
+    ]
     assert r["interface"] == "stlink.cfg"
     assert r["target"] == "stm32l4x.cfg"
+    assert r["speed_khz"] == 4000
+
+
+def test_speed_can_be_omitted():
+    r = suggest_server_args("STM32L431", "stlink", speed_khz=0)
+    assert r["server_args"] == ["-f", "interface/stlink.cfg", "-f", "target/stm32l4x.cfg"]
 
 
 def test_various_families_and_probes():

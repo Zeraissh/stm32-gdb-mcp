@@ -411,13 +411,42 @@ def test_server_exposes_build_firmware_tool():
     assert "build_firmware" in {t.name for t in tools}
 
 
-def test_suggest_server_args_returns_validated_openocd_args():
+def test_suggest_server_args_returns_validated_openocd_args_with_fast_clock():
     payload = _payload(asyncio.run(handle_call_tool(
         "suggest_server_args", {"mcu": "STM32L431", "probe": "stlink"}
     )))
     assert payload["ok"] is True
-    assert payload["data"]["server_args"] == ["-f", "interface/stlink.cfg", "-f", "target/stm32l4x.cfg"]
+    assert payload["data"]["server_args"] == [
+        "-f", "interface/stlink.cfg", "-f", "target/stm32l4x.cfg", "-c", "adapter speed 4000",
+    ]
+    assert payload["data"]["speed_khz"] == 4000
     assert "start_debug_session" in payload["suggested_next_actions"]
+
+
+def test_batch_runs_steps_in_one_call_returning_full_results():
+    steps = [
+        {"tool": "get_debug_profile", "args": {}},
+        {"tool": "suggest_server_args", "args": {"mcu": "STM32L431", "probe": "stlink"}},
+    ]
+    payload = _payload(asyncio.run(handle_call_tool("batch", {"steps": steps})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["count"] == 2
+    results = payload["data"]["results"]
+    assert results[0]["tool"] == "get_debug_profile" and results[0]["ok"] is True
+    # full data is returned, not just a summary
+    assert results[1]["data"]["server_args"][0] == "-f"
+
+
+def test_batch_stop_on_error():
+    steps = [
+        {"tool": "does_not_exist", "args": {}},
+        {"tool": "get_debug_profile", "args": {}},
+    ]
+    payload = _payload(asyncio.run(handle_call_tool("batch", {"steps": steps, "stop_on_error": True})))
+
+    assert payload["data"]["count"] == 1  # stopped after the failing step
+    assert payload["data"]["results"][0]["ok"] is False
 
 
 def test_build_firmware_cmake_success(monkeypatch):

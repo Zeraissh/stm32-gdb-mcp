@@ -179,6 +179,44 @@ async def handle_list_tools() -> list[Tool]:
             }
         ),
         Tool(
+            name="set_adapter_speed",
+            description="Sets the SWD/JTAG adapter clock (kHz) at runtime. The default ST-Link "
+                        "speed is only ~480 kHz; raising it (e.g. 4000) speeds up flashing and "
+                        "memory reads ~8x. Lower it if reads/flash become unreliable.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "khz": {"type": "integer", "description": "Adapter clock in kHz, e.g. 4000."}
+                },
+                "required": ["khz"]
+            }
+        ),
+        Tool(
+            name="batch",
+            description="Runs several tool calls in ONE round trip and returns ALL their full "
+                        "results — the fastest way to do a sequence of operations (e.g. read "
+                        "registers + backtrace + several variables) without per-call latency.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "steps": {
+                        "type": "array",
+                        "description": "Ordered tool calls, each {tool, args}.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "tool": {"type": "string"},
+                                "args": {"type": "object"}
+                            },
+                            "required": ["tool"]
+                        }
+                    },
+                    "stop_on_error": {"type": "boolean", "description": "Stop at the first failing step (default false)."}
+                },
+                "required": ["steps"]
+            }
+        ),
+        Tool(
             name="recover_session",
             description="Recovers a dropped or wedged session: cleanly tears down the GDB client and "
                         "server, then restarts the server (with retry/backoff for a busy probe) using "
@@ -1285,6 +1323,10 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
             result = suggest_server_args(arguments["mcu"], arguments["probe"], scripts_dir=scripts_dir)
             return [content_success(result, suggested_next_actions=["start_debug_session", "self_check"])]
 
+        elif name == "set_adapter_speed":
+            resp = gdb_client.set_adapter_speed(arguments["khz"])
+            return [content_success({"message": "Adapter speed set", "khz": arguments["khz"]}, raw_response=resp)]
+
         elif name == "recover_session":
             if not _last_session.get("server_type"):
                 return [content_error(
@@ -2108,6 +2150,9 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
     if name == "run_scenario":
         return await _run_scenario(arguments)
 
+    if name == "batch":
+        return await _run_batch(arguments)
+
     start = time.monotonic()
     result = await _dispatch_tool(name, arguments)
     duration_ms = round((time.monotonic() - start) * 1000, 1)
@@ -2129,6 +2174,20 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
             pass
 
     return result
+
+
+async def _run_batch(arguments: dict) -> list[TextContent]:
+    """Execute several tool calls in one round trip, returning all full results."""
+    steps = arguments.get("steps") or []
+    stop_on_error = arguments.get("stop_on_error", False)
+    results = []
+    for step in steps:
+        payload = json.loads((await handle_call_tool(step["tool"], step.get("args", {})))[0].text)
+        ok = bool(payload.get("ok"))
+        results.append({"tool": step["tool"], "ok": ok, "data": payload.get("data"), "error": payload.get("error")})
+        if stop_on_error and not ok:
+            break
+    return [content_success({"results": results, "count": len(results), "total": len(steps)})]
 
 
 async def _run_scenario(arguments: dict) -> list[TextContent]:

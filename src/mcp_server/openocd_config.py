@@ -51,18 +51,28 @@ def _family_key(mcu: str) -> str:
     raise ValueError(f"Unknown or unsupported STM32 family for MCU {mcu!r}. Known: {sorted(_TARGET_CFG)}")
 
 
-def suggest_server_args(mcu: str, probe: str, scripts_dir: str | None = None) -> dict:
-    """Return the OpenOCD ``server_args`` for an MCU + probe, optionally validated."""
+def suggest_server_args(mcu: str, probe: str, scripts_dir: str | None = None, speed_khz: int = 4000) -> dict:
+    """Return the OpenOCD ``server_args`` for an MCU + probe, optionally validated.
+
+    Appends ``-c "adapter speed <speed_khz>"`` (default 4 MHz) — the default ST-Link
+    SWD clock is only ~480 kHz, so this speeds up flashing and memory reads ~8x.
+    Pass speed_khz=0 to omit (use the config default).
+    """
     target = _TARGET_CFG[_family_key(mcu)]
     probe_key = (probe or "").lower().strip()
     if probe_key not in _INTERFACE_CFG:
         raise ValueError(f"Unknown probe {probe!r}. Known: {sorted(set(_INTERFACE_CFG))}")
     interface = _INTERFACE_CFG[probe_key]
 
+    args = ["-f", f"interface/{interface}", "-f", f"target/{target}"]
+    if speed_khz:
+        args += ["-c", f"adapter speed {speed_khz}"]
+
     result = {
         "interface": interface,
         "target": target,
-        "server_args": ["-f", f"interface/{interface}", "-f", f"target/{target}"],
+        "speed_khz": speed_khz,
+        "server_args": args,
     }
 
     if scripts_dir:

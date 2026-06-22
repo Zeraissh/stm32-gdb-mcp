@@ -101,6 +101,10 @@ class GdbClientManager:
         """Reset the MCU and let it run (Keil-style 'Reset and Run' after download)."""
         return self.execute_command(command, timeout_sec=self.timeouts.get("reset"))
 
+    def set_adapter_speed(self, khz: int):
+        """Set the SWD/JTAG adapter clock at runtime (kHz). Higher = faster flash/reads."""
+        return self.execute_cli_command(f"monitor adapter speed {int(khz)}", timeout_sec=2.0)
+
     def _drain(self, rounds: int = 5):
         """Consume any pending async/stale GDB responses left in the buffer."""
         if not self.gdb:
