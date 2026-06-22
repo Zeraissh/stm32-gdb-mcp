@@ -66,7 +66,9 @@ Core workflow:
    NEVER search the disk for .cfg files; OpenOCD resolves them from its scripts dir.
 1. start_debug_session, then ALWAYS run self_check first — it validates byte order,
    the Cortex-M core, and the device family, catching link/config faults early.
-2. Optionally set_debug_profile (mcu, elf_path, svd_path) so symbols/peripherals resolve.
+2. Set set_debug_profile (mcu, elf_path, svd_path) — symbols then auto-load on every
+   connect/recover_session (symbols are per-session). To load symbols mid-session without
+   flashing, call load_symbols. Without symbols, breakpoints on function names won't resolve.
 3. Reproduce with the fewest calls: prefer the composites over manual sequences —
    flash_and_run (ELF -> halted at entry), debug_until (conditional breakpoint + run +
    decoded backtrace/locals in one call), capture_state ("where am I" in one call).
@@ -206,6 +208,19 @@ async def handle_list_tools() -> list[Tool]:
                     "timeout_sec": {"type": "number", "description": "Max build seconds (default 600)."}
                 },
                 "required": ["kind"]
+            }
+        ),
+        Tool(
+            name="load_symbols",
+            description="Loads symbols from an ELF/AXF into the current GDB session WITHOUT flashing. "
+                        "Symbols are per-session, so after a fresh connect or recover_session you need "
+                        "this (or flash_firmware) before symbol breakpoints resolve. Falls back to the "
+                        "debug profile's elf_path if elf_path is omitted.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "elf_path": {"type": "string", "description": "Path to the ELF/AXF. Defaults to the profile elf_path."}
+                }
             }
         ),
         Tool(
@@ -1188,6 +1203,18 @@ async def handle_list_tools() -> list[Tool]:
         )
     ]
 
+def _autoload_symbols() -> bool:
+    """Load symbols from the profile's elf_path after a connect, if configured."""
+    elf_path = debug_profile.get().get("elf_path")
+    if not elf_path:
+        return False
+    try:
+        gdb_client.load_symbols(elf_path)
+        return True
+    except Exception:
+        return False
+
+
 def _stop_event_next_actions(event: dict) -> list[str]:
     """Guide the model to the natural next loop step for a stop event."""
     reason = event.get("reason")
@@ -1221,8 +1248,9 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
             resp = gdb_client.connect("localhost", port)
             _last_session["server_type"] = server_type
             _last_session["server_args"] = args
+            symbols = _autoload_symbols()
             return [content_success(
-                {"message": "Debug session started", "server_type": server_type, "port": port},
+                {"message": "Debug session started", "server_type": server_type, "port": port, "symbols_loaded": symbols},
                 raw_response=resp,
             )]
 
@@ -1250,8 +1278,9 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
             port = retry_call(_restart, attempts=3, backoff_base=0.8)
             gdb_client.start_gdb()
             resp = gdb_client.connect("localhost", port)
+            symbols = _autoload_symbols()
             return [content_success(
-                {"message": "Session recovered", "server_type": _last_session["server_type"], "port": port},
+                {"message": "Session recovered", "server_type": _last_session["server_type"], "port": port, "symbols_loaded": symbols},
                 raw_response=resp,
                 suggested_next_actions=["self_check", "check_session_health"],
             )]
@@ -1324,6 +1353,21 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
                 code="build_failed",
                 raw_response=payload,
                 suggested_next_actions=["get_session_journal"],
+            )]
+
+        elif name == "load_symbols":
+            elf_path = arguments.get("elf_path") or debug_profile.get().get("elf_path")
+            if not elf_path:
+                return [content_error(
+                    "No elf_path given and none in the debug profile.",
+                    code="missing_elf",
+                    suggested_next_actions=["set_debug_profile"],
+                )]
+            resp = gdb_client.load_symbols(elf_path)
+            return [content_success(
+                {"message": "Symbols loaded", "elf_path": elf_path},
+                raw_response=resp,
+                suggested_next_actions=["set_breakpoint", "list_functions", "analyze_stack"],
             )]
 
         elif name == "flash_firmware":

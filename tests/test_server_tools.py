@@ -388,6 +388,64 @@ def test_start_openocd_without_server_args_gives_clear_error(monkeypatch):
     assert "load_debug_config" in payload["suggested_next_actions"]
 
 
+def test_load_symbols_falls_back_to_profile_elf(monkeypatch):
+    import mcp_server.server as server_module
+
+    loaded = []
+
+    class FakeClient:
+        def load_symbols(self, path):
+            loaded.append(path)
+            return [{"message": "ok"}]
+
+    class FakeProfile:
+        def get(self):
+            return {"elf_path": "build/fw.elf"}
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile())
+    payload = _payload(asyncio.run(handle_call_tool("load_symbols", {})))
+
+    assert payload["ok"] is True
+    assert loaded == ["build/fw.elf"]
+
+
+def test_start_debug_session_autoloads_symbols_from_profile(monkeypatch):
+    import mcp_server.server as server_module
+
+    loaded = []
+
+    class FakeManager:
+        def start(self, server_type, args):
+            return 3333
+
+    class FakeClient:
+        def start_gdb(self):
+            pass
+
+        def connect(self, host, port):
+            return [{"message": "connected"}]
+
+        def load_symbols(self, path):
+            loaded.append(path)
+
+    class FakeProfile:
+        def get(self):
+            return {"elf_path": "build/fw.elf"}
+
+    monkeypatch.setattr(server_module, "gdb_manager", FakeManager())
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile())
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "start_debug_session", {"server_type": "openocd", "server_args": ["-f", "x.cfg"]}
+    )))
+
+    assert payload["ok"] is True
+    assert payload["data"]["symbols_loaded"] is True
+    assert loaded == ["build/fw.elf"]
+
+
 def test_recover_session_without_prior_session_errors():
     import mcp_server.server as server_module
 

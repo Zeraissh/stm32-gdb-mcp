@@ -13,6 +13,15 @@ class FakeGdb:
         return []
 
 
+def test_load_symbols_uses_file_exec_and_symbols_without_download():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+
+    client.load_symbols("fw.axf")
+
+    assert client.gdb.commands == [("-file-exec-and-symbols fw.axf", 2.0)]
+
+
 def test_reset_halt_primes_the_ap_with_a_throwaway_read():
     client = GdbClientManager()
     client.gdb = FakeGdb()

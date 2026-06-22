@@ -68,11 +68,18 @@ class GdbClientManager:
             f"-target-select extended-remote {host}:{port}", timeout_sec=self.timeouts.get("connect")
         )
 
+    def load_symbols(self, filepath: str):
+        """Loads symbols/exec from an ELF/AXF without flashing the device.
+
+        Symbols are per-GDB-session, so after a fresh connect (or recover_session)
+        this is needed before symbol breakpoints resolve — unless load_firmware ran.
+        """
+        return self.execute_command(f"-file-exec-and-symbols {filepath}", timeout_sec=2.0)
+
     def load_firmware(self, filepath: str):
         """Loads symbols and flashes the firmware to the device."""
         responses = []
-        # Load symbols
-        responses.extend(self.execute_command(f"-file-exec-and-symbols {filepath}", timeout_sec=2.0))
+        responses.extend(self.load_symbols(filepath))
         # Download (flash) the firmware to target memory
         responses.extend(self.execute_command("-target-download", timeout_sec=self.timeouts.get("download")))
         return responses
