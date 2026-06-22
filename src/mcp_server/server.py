@@ -142,11 +142,13 @@ async def handle_list_tools() -> list[Tool]:
             description="Validates the link right after connecting: reads CPUID and DBGMCU IDCODE "
                         "and checks byte order, that a real Cortex-M is present, and that the device "
                         "matches the expected family (from the profile MCU or the 'expected_family' "
-                        "arg). Run this first to catch endianness/config faults before debugging.",
+                        "arg). Run this first to catch endianness/config faults before debugging. "
+                        "Halts the core first (identity reads are unreliable while running); pass halt=false to skip.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "expected_family": {"type": "string", "description": "Expected MCU/family, e.g. 'STM32L431'. Defaults to the profile MCU."}
+                    "expected_family": {"type": "string", "description": "Expected MCU/family, e.g. 'STM32L431'. Defaults to the profile MCU."},
+                    "halt": {"type": "boolean", "description": "Halt the core before reading (default true)."}
                 }
             }
         ),
@@ -1292,10 +1294,20 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
             return [content_success({"message": "Debug session stopped"})]
 
         elif name == "self_check":
+            # Identity registers can't be read reliably while the core is running, so halt
+            # first (a self_check is a deliberate diagnostic). Pass halt=false to skip.
+            halted = False
+            if arguments.get("halt", True):
+                try:
+                    gdb_client.halt_execution()
+                    halted = True
+                except Exception:
+                    pass
             cpuid = gdb_client.read_word(0xE000ED00)
             dbgmcu_idcode = gdb_client.read_word(0xE0042000)
             expected = arguments.get("expected_family") or debug_profile.get().get("mcu")
             result = evaluate_self_check(cpuid, dbgmcu_idcode, expected_family=expected)
+            result["halted_for_check"] = halted
             next_actions = [] if result["ok"] else ["check_session_health", "start_debug_session"]
             return [content_success(result, suggested_next_actions=next_actions)]
 

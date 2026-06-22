@@ -496,6 +496,12 @@ def test_self_check_reports_decoded_identity(monkeypatch):
     import mcp_server.server as server_module
 
     class FakeClient:
+        def __init__(self):
+            self.halted = False
+
+        def halt_execution(self):
+            self.halted = True
+
         def read_word(self, address):
             return {0xE000ED00: 0x410FC241, 0xE0042000: 0x10016435}[address]
 
@@ -503,13 +509,16 @@ def test_self_check_reports_decoded_identity(monkeypatch):
         def get(self):
             return {"mcu": "STM32L431"}
 
-    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    fake = FakeClient()
+    monkeypatch.setattr(server_module, "gdb_client", fake)
     monkeypatch.setattr(server_module, "debug_profile", FakeProfile())
 
     payload = _payload(asyncio.run(handle_call_tool("self_check", {})))
 
     assert payload["data"]["ok"] is True
     assert payload["data"]["core"] == "Cortex-M4"
+    assert fake.halted is True  # halts the core before reading identity
+    assert payload["data"]["halted_for_check"] is True
 
 
 def test_tool_error_is_classified_with_actionable_code(monkeypatch):
