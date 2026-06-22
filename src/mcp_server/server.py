@@ -102,6 +102,10 @@ Key rules (the target must cooperate):
 Determinism & sharing: every call is journaled (get_session_journal / get_session_timeline
 / get_session_metrics). Replay a repro with run_scenario; bundle a full, shareable report
 with export_debug_report. Most results carry suggested_next_actions — follow them.
+
+Self-reporting: if a tool behaves wrongly, gives a confusing result, or you get stuck on
+what looks like an MCP bug (not a target bug), call report_issue(title, description) — it
+files a structured GitHub issue auto-bundling this session's journal so the MCP can be fixed.
 """
 
 server = Server("stm32-gdb-mcp", instructions=SERVER_INSTRUCTIONS)
