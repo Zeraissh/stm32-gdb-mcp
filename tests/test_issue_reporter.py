@@ -1,3 +1,5 @@
+import subprocess
+
 from mcp_server.issue_reporter import build_issue_body, file_issue, issue_fingerprint
 
 
@@ -31,12 +33,13 @@ class _Proc:
         self.stderr = stderr
 
 
-def test_file_issue_success_returns_url():
+def test_file_issue_success_runs_gh_non_interactively():
     captured = {}
 
-    def runner(cmd, input=None, capture_output=False, text=False, timeout=None):
+    def runner(cmd, input=None, capture_output=False, text=False, timeout=None, env=None):
         captured["cmd"] = cmd
         captured["input"] = input
+        captured["env"] = env
         return _Proc(0, stdout="https://github.com/Zeraissh/stm32-gdb-mcp/issues/7\n")
 
     result = file_issue("Zeraissh/stm32-gdb-mcp", "[agent] bug", "body text", runner=runner)
@@ -44,8 +47,19 @@ def test_file_issue_success_returns_url():
     assert result["ok"] is True
     assert result["url"] == "https://github.com/Zeraissh/stm32-gdb-mcp/issues/7"
     assert captured["cmd"][:3] == ["gh", "issue", "create"]
-    assert "--repo" in captured["cmd"] and "Zeraissh/stm32-gdb-mcp" in captured["cmd"]
     assert captured["input"] == "body text"
+    assert captured["env"]["GH_PROMPT_DISABLED"] == "1"  # cannot hang on a prompt
+
+
+def test_file_issue_handles_timeout_without_hanging():
+    def runner(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, kw.get("timeout", 20))
+
+    result = file_issue("r/x", "t", "the body", runner=runner)
+
+    assert result["ok"] is False
+    assert "timed out" in result["error"].lower()
+    assert result["body"] == "the body"  # returned so the agent can file it another way
 
 
 def test_file_issue_reports_failure_with_body_for_manual_filing():

@@ -8,6 +8,7 @@ deduplication (see server.report_issue) keeps a retry loop from spamming issues.
 """
 
 import hashlib
+import os
 import subprocess
 
 DEFAULT_REPO = "Zeraissh/stm32-gdb-mcp"
@@ -41,14 +42,26 @@ def build_issue_body(description=None, env=None, version=None, journal=None, met
     return "\n".join(lines)
 
 
-def file_issue(repo: str, title: str, body: str, runner=None) -> dict:
-    """File a GitHub issue via the gh CLI. Returns {ok, url} or {ok:False, error, body}."""
+def file_issue(repo: str, title: str, body: str, runner=None, timeout: int = 20) -> dict:
+    """File a GitHub issue via the gh CLI. Returns {ok, url} or {ok:False, error, body}.
+
+    Forces gh to run NON-INTERACTIVELY so it can never hang waiting for a prompt
+    (auth, template choice, credential dialog) — it fails fast instead, and the
+    prepared body is returned so the caller can file it another way.
+    """
     runner = runner or subprocess.run
     cmd = ["gh", "issue", "create", "--repo", repo, "--title", title, "--body-file", "-"]
+    env = dict(os.environ)
+    env["GH_PROMPT_DISABLED"] = "1"      # never open an interactive prompt
+    env["GH_NO_UPDATE_NOTIFIER"] = "1"
     try:
-        proc = runner(cmd, input=body, capture_output=True, text=True, timeout=30)
+        proc = runner(cmd, input=body, capture_output=True, text=True, timeout=timeout, env=env)
     except FileNotFoundError:
         return {"ok": False, "error": "gh CLI not found — install/auth GitHub CLI or file manually.", "body": body}
+    except subprocess.TimeoutExpired:
+        return {"ok": False,
+                "error": f"gh timed out after {timeout}s (is it authenticated? run 'gh auth login').",
+                "body": body}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc), "body": body}
     if proc.returncode != 0:
