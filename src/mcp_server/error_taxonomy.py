@@ -27,6 +27,12 @@ _RULES = [
         "suggested_next_actions": ["check_session_health", "start_debug_session"],
         "hint": "The link to the GDB server dropped.",
     }),
+    (("open failed", "failed to start", "unable to open", "libusb", "no device found"), {
+        "code": "probe_unavailable",
+        "retryable": True,
+        "suggested_next_actions": ["recover_session", "check_session_health"],
+        "hint": "The debug probe could not be opened — it may be busy or need a physical replug.",
+    }),
     (("no symbol", "no symbol table"), {
         "code": "no_symbols",
         "retryable": False,

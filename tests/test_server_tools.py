@@ -294,6 +294,52 @@ def test_read_frame_variables_returns_decoded_map(monkeypatch):
     assert payload["raw_response"] is None  # raw is opt-in for token economy
 
 
+def test_recover_session_without_prior_session_errors():
+    import mcp_server.server as server_module
+
+    server_module._last_session.update({"server_type": None, "server_args": []})
+    payload = _payload(asyncio.run(handle_call_tool("recover_session", {})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "no_session"
+
+
+def test_recover_session_restarts_server_and_reconnects(monkeypatch):
+    import mcp_server.server as server_module
+
+    events = []
+
+    class FakeManager:
+        def stop(self):
+            events.append("server_stop")
+
+        def start(self, server_type, args):
+            events.append(("server_start", server_type, args))
+            return 3333
+
+    class FakeClient:
+        def stop_gdb(self):
+            events.append("client_stop")
+
+        def start_gdb(self):
+            events.append("client_start")
+
+        def connect(self, host, port):
+            events.append(("connect", host, port))
+            return [{"message": "connected"}]
+
+    monkeypatch.setattr(server_module, "gdb_manager", FakeManager())
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    server_module._last_session.update({"server_type": "openocd", "server_args": ["-f", "x.cfg"]})
+
+    payload = _payload(asyncio.run(handle_call_tool("recover_session", {})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["port"] == 3333
+    assert ("server_start", "openocd", ["-f", "x.cfg"]) in events
+    assert events.index("client_stop") < events.index("server_stop") < events.index("client_start")
+
+
 def test_self_check_reports_decoded_identity(monkeypatch):
     import mcp_server.server as server_module
 

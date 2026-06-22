@@ -42,6 +42,7 @@ from .log_reader import ProcessLogReader, SerialLogReader
 from .memory_guard import MemoryWriteGuard
 from .metrics import compute_metrics
 from .project_inspector import inspect_project
+from .reliability import retry_call
 from .reset_strategy import resolve_reset_command
 from .scenario import load_scenario, replay_scenario, step_summary
 from .self_check import evaluate_self_check
@@ -62,6 +63,7 @@ swo_log_reader = ProcessLogReader("swo")
 uart_log_reader = SerialLogReader()
 memory_guard = MemoryWriteGuard()
 session_journal = SessionJournal()
+_last_session = {"server_type": None, "server_args": []}
 
 # Structured logging to stderr (stdout is the MCP transport), correlated by run-id.
 logger = logging.getLogger("stm32-gdb-mcp")
@@ -104,6 +106,14 @@ async def handle_list_tools() -> list[Tool]:
                     "expected_family": {"type": "string", "description": "Expected MCU/family, e.g. 'STM32L431'. Defaults to the profile MCU."}
                 }
             }
+        ),
+        Tool(
+            name="recover_session",
+            description="Recovers a dropped or wedged session: cleanly tears down the GDB client and "
+                        "server, then restarts the server (with retry/backoff for a busy probe) using "
+                        "the last start_debug_session arguments and reconnects. Use after a "
+                        "probe_unavailable or connection_lost error.",
+            inputSchema={"type": "object", "properties": {}}
         ),
         Tool(
             name="check_session_health",
@@ -1083,9 +1093,36 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
             port = gdb_manager.start(server_type, args)
             gdb_client.start_gdb()
             resp = gdb_client.connect("localhost", port)
+            _last_session["server_type"] = server_type
+            _last_session["server_args"] = args
             return [content_success(
                 {"message": "Debug session started", "server_type": server_type, "port": port},
                 raw_response=resp,
+            )]
+
+        elif name == "recover_session":
+            if not _last_session.get("server_type"):
+                return [content_error(
+                    "No prior session to recover; call start_debug_session first.",
+                    code="no_session",
+                    suggested_next_actions=["start_debug_session"],
+                )]
+            for teardown in (gdb_client.stop_gdb, gdb_manager.stop):
+                try:
+                    teardown()
+                except Exception:
+                    pass
+
+            def _restart():
+                return gdb_manager.start(_last_session["server_type"], _last_session["server_args"])
+
+            port = retry_call(_restart, attempts=3, backoff_base=0.8)
+            gdb_client.start_gdb()
+            resp = gdb_client.connect("localhost", port)
+            return [content_success(
+                {"message": "Session recovered", "server_type": _last_session["server_type"], "port": port},
+                raw_response=resp,
+                suggested_next_actions=["self_check", "check_session_health"],
             )]
 
         elif name == "stop_debug_session":

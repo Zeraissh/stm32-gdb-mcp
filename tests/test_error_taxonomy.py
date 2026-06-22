@@ -30,6 +30,14 @@ def test_memory_access_error_suggests_halt():
     assert "halt_execution" in c["suggested_next_actions"]
 
 
+def test_probe_open_failure_is_retryable_with_recover_suggestion():
+    c = classify_error("Error: open failed")
+
+    assert c["code"] == "probe_unavailable"
+    assert c["retryable"] is True
+    assert "recover_session" in c["suggested_next_actions"]
+
+
 def test_unknown_error_falls_back():
     c = classify_error("something totally unexpected")
 
