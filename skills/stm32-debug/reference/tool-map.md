@@ -15,7 +15,7 @@ Quick index of the stm32-gdb-mcp tools. Most results carry `suggested_next_actio
 
 ## Execution control
 - `continue_execution`, `halt_execution`, `run_and_wait`, `wait_for_stop`
-- `step_over`, `step_into`, `step_out`, `step_instruction`, `run_to_line`
+- `step` (kind = over | into | out | instruction), `run_to_line`
 - `set_breakpoint` (condition/temporary/ignore_count), `delete_breakpoint`, `set_watchpoint`
 
 ## Observe state (core must be halted)

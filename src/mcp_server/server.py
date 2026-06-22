@@ -432,14 +432,17 @@ async def handle_list_tools() -> list[Tool]:
             }
         ),
         Tool(
-            name="step_over",
-            description="Steps over the current line of code.",
-            inputSchema={"type": "object", "properties": {}}
-        ),
-        Tool(
-            name="step_into",
-            description="Steps into the current function call.",
-            inputSchema={"type": "object", "properties": {}}
+            name="step",
+            description="Single-steps the target: kind='over' (over the line), 'into' (into calls), "
+                        "'out' (run until the function returns), or 'instruction' (one machine "
+                        "instruction; set over=true to step over a call).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string", "enum": ["over", "into", "out", "instruction"], "description": "Step kind (default 'over')."},
+                    "over": {"type": "boolean", "description": "For kind='instruction', step over a called function."}
+                }
+            }
         ),
         Tool(
             name="read_variable",
@@ -1102,21 +1105,6 @@ async def handle_list_tools() -> list[Tool]:
         ),
         # --- Tier 3: Execution control, symbol discovery, postmortem, timing ---
         Tool(
-            name="step_out",
-            description="Runs until the current function returns (GDB finish).",
-            inputSchema={"type": "object", "properties": {}}
-        ),
-        Tool(
-            name="step_instruction",
-            description="Steps a single machine instruction. Set over=true to step over calls.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "over": {"type": "boolean", "description": "If true, step over a called function instead of into it."}
-                }
-            }
-        ),
-        Tool(
             name="run_to_line",
             description="Runs until a given location is reached (function, 'file.c:42', or '*0xADDR').",
             inputSchema={
@@ -1547,13 +1535,19 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
             next_actions = _stop_event_next_actions(event)
             return [content_success(event, raw_response=raw, suggested_next_actions=next_actions)]
 
-        elif name == "step_over":
-            resp = gdb_client.step_over()
-            return [content_success({"message": "Stepped over"}, raw_response=resp)]
-
-        elif name == "step_into":
-            resp = gdb_client.step_into()
-            return [content_success({"message": "Stepped into"}, raw_response=resp)]
+        elif name == "step":
+            kind = arguments.get("kind", "over")
+            if kind == "over":
+                resp = gdb_client.step_over()
+            elif kind == "into":
+                resp = gdb_client.step_into()
+            elif kind == "out":
+                resp = gdb_client.step_out()
+            elif kind == "instruction":
+                resp = gdb_client.step_instruction(over=arguments.get("over", False))
+            else:
+                raise ValueError(f"Unknown step kind '{kind}'. Use over, into, out, or instruction.")
+            return [content_success({"message": f"Stepped ({kind})", "kind": kind}, raw_response=resp)]
 
         elif name == "read_variable":
             resp = gdb_client.read_variable(arguments["name"])
@@ -2032,14 +2026,6 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
                 "included_snapshot": snapshot is not None,
                 "coredump": coredump_path,
             })]
-
-        elif name == "step_out":
-            resp = gdb_client.step_out()
-            return [content_success({"message": "Stepped out"}, raw_response=resp)]
-
-        elif name == "step_instruction":
-            resp = gdb_client.step_instruction(over=arguments.get("over", False))
-            return [content_success({"message": "Stepped one instruction"}, raw_response=resp)]
 
         elif name == "run_to_line":
             resp = gdb_client.run_to_line(arguments["location"])

@@ -99,12 +99,14 @@ def test_server_exposes_tier3_depth_tools():
     tool_names = {tool.name for tool in tools}
 
     for expected in (
-        "step_out", "step_instruction", "run_to_line", "disassemble",
+        "step", "run_to_line", "disassemble",
         "list_functions", "list_variables", "lookup_type", "sizeof", "address_of",
         "capture_coredump", "load_coredump", "verify_flash",
         "read_cycle_counter", "sample_pc",
     ):
         assert expected in tool_names
+    # old per-kind step tools merged into `step`
+    assert "step_out" not in tool_names and "step_into" not in tool_names
 
 
 def test_read_cycle_counter_enables_then_reads(monkeypatch):
