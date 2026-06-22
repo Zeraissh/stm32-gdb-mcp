@@ -79,3 +79,26 @@ Goal: turn raw GDB output into clean structured data with summaries.
 A (comprehension) and B (composites) first — they directly serve the two cross-cutting
 laws the user prioritized. C1/C2 (journal + scenario replay) anchor determinism and feed
 E3. D1/D2 land early because the HIL session proved their necessity. Commit per capability.
+
+---
+
+## Status / 状态
+
+- [x] **A — comprehension layer**: decoded registers/backtrace/variables + summaries,
+  raw opt-in (`gdb_decode.py`). HIL-checked on L431.
+- [x] **B — minimal-step composites**: `debug_until`, `capture_state`, `flash_and_run`
+  (`composites.py`). `capture_state` HIL-checked.
+- [x] **C — determinism**: session journal + replayable `run_scenario`
+  (`session_journal.py`, `scenario.py`). HIL-checked (4-step scenario replayed 4/4).
+- [x] **D — reliability**: `self_check` (byte-order/core/family) + structured
+  `error_taxonomy` wired into the dispatcher (`self_check.py`, `error_taxonomy.py`).
+  Unit-validated incl. the byte-reversed-CPUID case; HIL re-check pending a probe replug.
+- [x] **E — observability**: per-tool metrics, `get_session_timeline`, run-id stderr
+  logging (`metrics.py`).
+
+Deferred by decision: C3 centralized-timeout refactor, C4 `export_debug_report`,
+D3 retry/backoff + probe-reset recovery — fold into a follow-up. Total MCP tools: 92.
+
+Lesson from the HIL session: hard-killing OpenOCD wedges the ST-Link USB endpoint
+(`Error: open failed`) until a physical replug — concrete motivation for D3 (graceful
+probe reset/recovery) before any multi-target work.

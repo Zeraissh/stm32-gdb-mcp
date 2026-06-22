@@ -2,6 +2,15 @@
 
 ## Unreleased / 未发布
 
+### Single-target excellence / 单端极致 (Phase 2)
+
+- Comprehension layer: `read_core_registers`, `read_call_stack`, `read_frame_variables` now return decoded structured data + a one-line summary, with raw output opt-in via `include_raw`. / 理解层:核心读取工具返回解码后的结构化数据与一行摘要,原始输出通过 `include_raw` 可选。
+- Minimal-step composites: `debug_until`, `capture_state`, `flash_and_run` collapse multi-step repro sequences into one call. / 最少步骤复合工具,将多步复现压缩为一次调用。
+- Determinism: append-only session journal and declarative `run_scenario` replay (`get_session_journal`, `clear_session_journal`, `run_scenario`). / 确定性:仅追加会话日志与声明式 `run_scenario` 回放。
+- Reliability: `self_check` (byte-order / Cortex-M core / device-family validation) and a structured error taxonomy with actionable next-actions. / 可靠性:`self_check` 链路自检与结构化错误分类。
+- Observability: per-tool metrics (`get_session_metrics`), `get_session_timeline`, and run-id-correlated structured logging. / 可观测性:逐工具指标、会话时间线与按 run-id 关联的结构化日志。
+- Fixed a byte-order bug in 32-bit memory word reads (found via HIL on STM32L431). / 修复 32 位内存字读取的字节序 bug(在 STM32L431 真机验证中发现)。
+
 ### Autonomous debug loop / 自主调试闭环
 
 - Added `run_and_wait` / `wait_for_stop` structured stop events to close the observe loop. / 新增 `run_and_wait`/`wait_for_stop` 结构化停止事件以闭合观察环。
