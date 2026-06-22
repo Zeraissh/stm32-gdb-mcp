@@ -71,6 +71,9 @@ whatever is beneath it, which later HardFaults (often a stacking fault).
    / drive it over UART).
 4. **Diagnose:**
    - `analyze_stack(stack_size=<from .map>)` → `overflow: true` and how far past the limit.
+     Note: a breakpoint at a function's *entry* lands before its `sub sp` (the large
+     local isn't allocated yet, so SP looks fine). Break a line *inside* the function,
+     or `step_into` once past the prologue, then `analyze_stack`.
    - `reconstruct_fault_context` → CFSR `STKERR`/`MSTKERR` confirms a stacking fault.
    - `read_call_stack` → the deep chain / the function with the huge local that ate the stack.
    - FreeRTOS: `read_freertos_tasks` → the offending task's stack high-water mark ≈ 0.
