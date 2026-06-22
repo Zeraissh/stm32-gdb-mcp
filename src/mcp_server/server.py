@@ -80,6 +80,12 @@ Key rules (the target must cooperate):
 - Reads (registers/memory/frames) require a HALTED core. If a read fails with
   target_unresponsive, the core is running — call halt_execution first.
 - run_and_wait returns a structured stop event; on timeout it leaves the core RUNNING.
+- A breakpoint TIMEOUT means the code path was NOT reached — do NOT just retry run_and_wait.
+  The location is usually gated by a flag/state/stimulus. Instead: halt_execution, then
+  capture_state + list_breakpoints (hit_count=0 confirms it was never reached); read the
+  gating flag; then either set a breakpoint EARLIER on the path (or where the flag is set),
+  drive the precondition (write the flag/variable, send the UART/input stimulus), or use a
+  conditional breakpoint. Forcing a flag via write_memory changes behavior — note it.
 - Memory writes are guarded: option bytes, IWDG, and WWDG are blocked by default;
   use set_write_policy to allow, or dry_run to simulate. Every write is audited.
 - If halting causes mysterious resets, configure_debug_freeze (freeze IWDG/WWDG/timers).
@@ -271,6 +277,13 @@ async def handle_list_tools() -> list[Tool]:
                 },
                 "required": ["location"]
             }
+        ),
+        Tool(
+            name="list_breakpoints",
+            description="Lists breakpoints with their HIT COUNTS. A hit_count of 0 means the code "
+                        "path was never reached — so a run_and_wait timeout means the precondition "
+                        "(a flag/state) to get there was not satisfied. Use this instead of retrying.",
+            inputSchema={"type": "object", "properties": {}}
         ),
         Tool(
             name="delete_breakpoint",
@@ -1228,7 +1241,10 @@ def _stop_event_next_actions(event: dict) -> list[str]:
     if reason in ("signal-received", "exited-signalled"):
         return ["diagnose_fault", "reconstruct_fault_context", "read_call_stack"]
     if reason == "timeout":
-        return ["halt_execution", "get_gdb_server_logs"]
+        # Timeout means the breakpoint's code path was NOT reached — do not just retry.
+        # Halt, see where execution actually is, and check whether the breakpoint was
+        # ever hit (hit_count=0 => the precondition/flag to reach it was not satisfied).
+        return ["halt_execution", "capture_state", "list_breakpoints"]
     if event.get("stopped"):
         return ["read_frame_variables", "list_source", "read_call_stack"]
     return []
@@ -1421,6 +1437,13 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
                 raw_response=resp,
                 suggested_next_actions=["run_and_wait"],
             )]
+
+        elif name == "list_breakpoints":
+            bps = gdb_client.list_breakpoints_decoded()
+            never_hit = [b["number"] for b in bps if b.get("hit_count") == 0]
+            summary = (f"{len(bps)} breakpoints; never reached (hit_count=0): {never_hit}"
+                       if never_hit else f"{len(bps)} breakpoints, all reached at least once")
+            return [content_success({"breakpoints": bps, "summary": summary})]
 
         elif name == "delete_breakpoint":
             resp = gdb_client.delete_breakpoint(arguments["breakpoint_id"])

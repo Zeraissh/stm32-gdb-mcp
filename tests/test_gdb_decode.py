@@ -1,5 +1,6 @@
 from mcp_server.gdb_decode import (
     decode_backtrace,
+    decode_breakpoints,
     decode_registers,
     decode_variables,
     registers_summary,
@@ -67,6 +68,30 @@ def test_decode_variables_returns_name_value_map():
     ])
 
     assert decode_variables(records) == {"i": "42", "g_divisor": "0"}
+
+
+def test_decode_breakpoints_extracts_hit_counts_and_conditions():
+    records = [{"type": "result", "message": "done", "payload": {"BreakpointTable": {"body": [
+        {"number": "1", "func": "flash_write_buggy", "file": "main.c", "line": "14",
+         "addr": "0x08000040", "enabled": "y", "times": "0", "original-location": "flash_write_buggy"},
+        {"number": "2", "func": "do_thing", "file": "main.c", "line": "30",
+         "addr": "0x08000100", "enabled": "y", "times": "5", "cond": "state == 2"},
+    ]}}}]
+
+    bps = decode_breakpoints(records)
+
+    assert bps[0]["number"] == "1"
+    assert bps[0]["hit_count"] == 0          # never reached -> path not taken
+    assert bps[0]["func"] == "flash_write_buggy"
+    assert bps[1]["hit_count"] == 5
+    assert bps[1]["condition"] == "state == 2"
+    assert bps[1]["enabled"] is True
+
+
+def test_decode_breakpoints_handles_nested_bkpt_and_empty():
+    nested = [{"payload": {"BreakpointTable": {"body": [{"bkpt": {"number": "3", "times": "2"}}]}}}]
+    assert decode_breakpoints(nested)[0]["hit_count"] == 2
+    assert decode_breakpoints([{"type": "console", "payload": "noise"}]) == []
 
 
 def test_decoders_tolerate_missing_payload():

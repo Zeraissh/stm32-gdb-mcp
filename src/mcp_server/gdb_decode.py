@@ -63,6 +63,36 @@ def decode_backtrace(records) -> list:
     return frames
 
 
+def decode_breakpoints(records) -> list:
+    """Return a clean breakpoint list with hit counts.
+
+    ``hit_count == 0`` is the key signal that a breakpoint's code path was never
+    reached — i.e. a run_and_wait timeout means the precondition to get there was
+    not satisfied, not that you should retry.
+    """
+    table = _find_payload_value(records, "BreakpointTable")
+    if not isinstance(table, dict):
+        return []
+    out = []
+    for item in table.get("body") or []:
+        bp = item.get("bkpt") if isinstance(item, dict) and "bkpt" in item else item
+        if not isinstance(bp, dict):
+            continue
+        enabled = bp.get("enabled")
+        out.append({
+            "number": bp.get("number"),
+            "location": bp.get("original-location") or bp.get("func"),
+            "func": bp.get("func"),
+            "file": bp.get("file"),
+            "line": _coerce_int(bp.get("line")),
+            "addr": bp.get("addr"),
+            "enabled": (enabled == "y") if enabled is not None else None,
+            "condition": bp.get("cond"),
+            "hit_count": _coerce_int(bp.get("times")),
+        })
+    return out
+
+
 def decode_variables(records) -> dict:
     """Return a ``{name: value}`` map of frame locals/arguments."""
     variables = _find_payload_value(records, "variables") or []

@@ -281,6 +281,39 @@ def test_server_exposes_reconstruct_fault_context_tool():
     assert "reconstruct_fault_context" in tool_names
 
 
+def test_list_breakpoints_flags_never_reached(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def list_breakpoints_decoded(self):
+            return [
+                {"number": "1", "func": "gated_fn", "hit_count": 0},
+                {"number": "2", "func": "main", "hit_count": 4},
+            ]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool("list_breakpoints", {})))
+
+    assert payload["ok"] is True
+    assert "['1']" in payload["data"]["summary"]  # bp 1 never reached
+    assert payload["data"]["breakpoints"][0]["hit_count"] == 0
+
+
+def test_run_and_wait_timeout_suggests_investigation_not_retry(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def run_and_wait(self, timeout_sec):
+            return {"stopped": False, "reason": "timeout", "frame": None, "raw_response": []}
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool("run_and_wait", {"timeout_sec": 1.0})))
+
+    actions = payload["suggested_next_actions"]
+    assert "list_breakpoints" in actions and "capture_state" in actions
+    assert "run_and_wait" not in actions  # do not nudge a blind retry
+
+
 def test_set_breakpoint_exposes_condition_and_temporary_options():
     tools = asyncio.run(handle_list_tools())
     bp_tool = next(tool for tool in tools if tool.name == "set_breakpoint")

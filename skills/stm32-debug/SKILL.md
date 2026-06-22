@@ -17,6 +17,11 @@ the way a senior embedded engineer would. The model is a loop:
 - **The core must be HALTED to read** registers, memory, or frames. If a read returns
   `target_unresponsive`, the core is running — call `halt_execution` first.
 - **`run_and_wait` leaves the core running on timeout.** Halt before reading state.
+- **A breakpoint timeout means the path was NOT reached — don't just retry.** The location
+  is gated by a flag/state/stimulus. Halt, then `capture_state` + `list_breakpoints`
+  (`hit_count=0` confirms it was never reached), read the gating flag, and then: set a
+  breakpoint *earlier* on the path (or where the flag is set), *drive* the precondition
+  (write the flag/variable, send the UART/input stimulus), or use a *conditional* breakpoint.
 - **Prefer composites over manual sequences** (fewest round-trips): `flash_and_run`,
   `debug_until`, `capture_state`.
 - **Writes are guarded.** Option bytes, IWDG, WWDG are blocked by default. Use

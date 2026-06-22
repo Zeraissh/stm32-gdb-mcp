@@ -4,7 +4,7 @@ from pygdbmi.gdbcontroller import GdbController
 
 from . import dwt
 from .fault_analysis import FAULT_REGISTER_ADDRESSES
-from .gdb_decode import decode_backtrace, decode_registers, decode_variables
+from .gdb_decode import decode_backtrace, decode_breakpoints, decode_registers, decode_variables
 from .stop_event import parse_stop_event
 from .timeouts import TimeoutConfig
 
@@ -115,6 +115,10 @@ class GdbClientManager:
 
     def delete_breakpoint(self, breakpoint_id: str):
         return self.execute_command(f"-break-delete {breakpoint_id}")
+
+    def list_breakpoints_decoded(self):
+        """Return breakpoints with hit counts (times each has actually been reached)."""
+        return decode_breakpoints(self.execute_command("-break-list", timeout_sec=2.0))
 
     def continue_execution(self):
         return self.execute_command("-exec-continue", timeout_sec=1.0)
