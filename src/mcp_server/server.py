@@ -51,7 +51,37 @@ from .svd_parser import SVDParser
 from .tool_response import content_error, content_success
 from .tracker import VariableTracker
 
-server = Server("stm32-gdb-mcp")
+SERVER_INSTRUCTIONS = """\
+STM32 on-chip debugging over GDB + OpenOCD/ST-Link/J-Link. Drive it as a loop:
+observe -> orient (symbolize) -> hypothesize -> act safely -> verify.
+
+Core workflow:
+1. start_debug_session, then ALWAYS run self_check first — it validates byte order,
+   the Cortex-M core, and the device family, catching link/config faults early.
+2. Optionally set_debug_profile (mcu, elf_path, svd_path) so symbols/peripherals resolve.
+3. Reproduce with the fewest calls: prefer the composites over manual sequences —
+   flash_and_run (ELF -> halted at entry), debug_until (conditional breakpoint + run +
+   decoded backtrace/locals in one call), capture_state ("where am I" in one call).
+4. Diagnose a crash with reconstruct_fault_context: it unwinds the stacked exception
+   frame and resolves the true faulting PC to source file:line.
+5. Verify a fix with compare_expressions_after_action / assert_expressions.
+
+Key rules (the target must cooperate):
+- Reads (registers/memory/frames) require a HALTED core. If a read fails with
+  target_unresponsive, the core is running — call halt_execution first.
+- run_and_wait returns a structured stop event; on timeout it leaves the core RUNNING.
+- Memory writes are guarded: option bytes, IWDG, and WWDG are blocked by default;
+  use set_write_policy to allow, or dry_run to simulate. Every write is audited.
+- If halting causes mysterious resets, configure_debug_freeze (freeze IWDG/WWDG/timers).
+- On probe_unavailable / connection_lost, call recover_session; tune flaky probes with
+  set_timeouts.
+
+Determinism & sharing: every call is journaled (get_session_journal / get_session_timeline
+/ get_session_metrics). Replay a repro with run_scenario; bundle a full, shareable report
+with export_debug_report. Most results carry suggested_next_actions — follow them.
+"""
+
+server = Server("stm32-gdb-mcp", instructions=SERVER_INSTRUCTIONS)
 gdb_manager = GdbServerManager()
 gdb_client = GdbClientManager()
 svd_parser = SVDParser()
@@ -1882,5 +1912,10 @@ async def main():
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, server.create_initialization_options())
 
-if __name__ == "__main__":
+
+def cli_main():
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    cli_main()

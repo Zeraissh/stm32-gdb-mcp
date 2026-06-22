@@ -4,6 +4,15 @@ import json
 from mcp_server.server import handle_call_tool, handle_list_tools
 
 
+def test_server_provides_workflow_instructions():
+    from mcp_server.server import server
+
+    instructions = server.instructions
+    assert instructions and "self_check" in instructions
+    assert "HALTED" in instructions
+    assert "recover_session" in instructions
+
+
 def test_server_exposes_debug_closure_tools():
     tools = asyncio.run(handle_list_tools())
     tool_names = {tool.name for tool in tools}

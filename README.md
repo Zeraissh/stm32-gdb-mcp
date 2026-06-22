@@ -337,6 +337,27 @@ Roadmap / 路线图：
 - deeper RTOS-aware deadlock and timing analysis / 更深入的 RTOS 死锁和时序分析
 - more STM32 families in the DBGMCU freeze map (G0/G4/H7) / DBGMCU 冻结表覆盖更多 STM32 系列
 
+## Agent guidance / 智能体引导
+
+English: The agent is guided at three levels, so it knows *how* to drive the tools, not
+just *what* they are:
+
+1. **Inline** — most tool results carry `suggested_next_actions` (the next loop step).
+2. **Always-on** — the MCP server ships `instructions` (the core debug loop + key rules)
+   that any MCP client injects automatically; no setup needed.
+3. **On-demand** — the `stm32-debug` skill under `skills/stm32-debug/` is a fuller playbook
+   (bring-up, HardFault triage, hang finding, minimal-step repro) with replayable
+   `run_scenario` templates in `skills/stm32-debug/scenarios/`.
+
+中文：智能体在三个层面被引导,使其知道**如何**驱动工具而不仅是工具**是什么**:
+
+1. **内联** —— 多数工具结果带 `suggested_next_actions`(下一步循环动作)。
+2. **常驻** —— MCP server 自带 `instructions`(核心调试循环 + 关键规则),任何 MCP 客户端
+   连上即自动注入,无需配置。
+3. **按需** —— `skills/stm32-debug/` 下的 `stm32-debug` skill 是更完整的 playbook(bring-up、
+   HardFault 定位、挂死排查、最少步骤复现),并在 `skills/stm32-debug/scenarios/` 提供可回放
+   的 `run_scenario` 模板。
+
 ## Project Discovery / 项目发现
 
 English: `inspect_project` scans a firmware directory and reports common debug artifacts.

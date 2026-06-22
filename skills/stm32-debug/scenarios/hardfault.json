@@ -1,0 +1,12 @@
+{
+  "name": "hardfault",
+  "description": "Trap a HardFault and reconstruct the crash site to source. Assumes a session is started and the ELF is flashed with symbols.",
+  "steps": [
+    {"tool": "self_check", "args": {}},
+    {"tool": "reset_target", "args": {"halt": true}},
+    {"tool": "set_breakpoint", "args": {"location": "HardFault_Handler"}},
+    {"tool": "run_and_wait", "args": {"timeout_sec": 8.0}},
+    {"tool": "reconstruct_fault_context", "args": {}},
+    {"tool": "read_call_stack", "args": {}}
+  ]
+}

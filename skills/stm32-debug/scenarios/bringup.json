@@ -1,0 +1,11 @@
+{
+  "name": "bringup",
+  "description": "Connect, self-check, set profile, flash and run to main. Replace placeholders.",
+  "steps": [
+    {"tool": "start_debug_session", "args": {"server_type": "openocd", "server_args": ["-f", "interface/stlink.cfg", "-f", "target/stm32l4x.cfg"]}},
+    {"tool": "self_check", "args": {"expected_family": "STM32L431"}},
+    {"tool": "set_debug_profile", "args": {"mcu": "STM32L431", "elf_path": "build/fw.elf"}},
+    {"tool": "flash_and_run", "args": {"file_path": "build/fw.elf", "run_to": "main"}},
+    {"tool": "capture_state", "args": {}}
+  ]
+}
