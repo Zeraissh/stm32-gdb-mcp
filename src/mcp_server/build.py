@@ -72,7 +72,11 @@ def is_build_success(kind, returncode) -> bool:
 
 def run_build(argv, timeout=600, cwd=None, log_path=None) -> dict:
     """Run the build and capture output (preferring Keil's -o log file when present)."""
-    proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, cwd=cwd)
+    # stdin=DEVNULL: never let the build inherit the MCP server's JSON-RPC stdin
+    # (a build step that reads stdin would otherwise hang the whole server).
+    proc = subprocess.run(
+        argv, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout, cwd=cwd
+    )
     output = (proc.stdout or "") + (proc.stderr or "")
     if log_path and os.path.isfile(log_path):
         try:

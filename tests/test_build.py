@@ -55,3 +55,13 @@ def test_run_build_executes_and_captures_output():
     result = run_build([sys.executable, "-c", "print('built-ok')"], timeout=30)
     assert result["returncode"] == 0
     assert "built-ok" in result["output"]
+
+
+def test_run_build_isolates_stdin_so_a_reading_build_cannot_hang():
+    # A build step that reads stdin must get instant EOF (stdin=DEVNULL), not block on
+    # the MCP server's JSON-RPC stdin. Without isolation this could hang forever.
+    result = run_build(
+        [sys.executable, "-c", "import sys; sys.stdin.read(); print('done')"], timeout=10
+    )
+    assert result["returncode"] == 0
+    assert "done" in result["output"]

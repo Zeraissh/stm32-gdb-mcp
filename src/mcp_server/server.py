@@ -129,7 +129,7 @@ def _mcp_version() -> str:
         root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         out = subprocess.run(
             ["git", "-C", root, "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, timeout=5,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=5,
         )
         if out.returncode == 0 and out.stdout.strip():
             return out.stdout.strip()

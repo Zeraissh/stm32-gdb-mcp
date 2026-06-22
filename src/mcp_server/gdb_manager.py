@@ -63,8 +63,12 @@ class GdbServerManager:
         # We create a new process group so we can send CTRL_BREAK_EVENT on Windows
         creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
         
+        # stdin=DEVNULL is critical: the MCP server talks JSON-RPC over its own stdin,
+        # so a spawned child must NEVER inherit it (it would steal protocol bytes and
+        # hang the server with no output).
         self.process = subprocess.Popen(
             cmd,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
