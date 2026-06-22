@@ -60,6 +60,9 @@ STM32 on-chip debugging over GDB + OpenOCD/ST-Link/J-Link. Drive it as a loop:
 observe -> orient (symbolize) -> hypothesize -> act safely -> verify.
 
 Core workflow:
+0. Need OpenOCD server_args? Call suggest_server_args(mcu, probe) — it returns the
+   right -f interface/target cfgs (validated against OpenOCD's bundled scripts).
+   NEVER search the disk for .cfg files; OpenOCD resolves them from its scripts dir.
 1. start_debug_session, then ALWAYS run self_check first — it validates byte order,
    the Cortex-M core, and the device family, catching link/config faults early.
 2. Optionally set_debug_profile (mcu, elf_path, svd_path) so symbols/peripherals resolve.
