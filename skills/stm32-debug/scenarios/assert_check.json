@@ -1,0 +1,12 @@
+{
+  "name": "assert_check",
+  "description": "Catch a fired assert and read its context. Replace ASSERT_HANDLER with the project's assert function (assert_failed / __aeabi_assert / vAssertCalled).",
+  "steps": [
+    {"tool": "self_check", "args": {}},
+    {"tool": "reset_target", "args": {"halt": true}},
+    {"tool": "set_breakpoint", "args": {"location": "ASSERT_HANDLER"}},
+    {"tool": "run_and_wait", "args": {"timeout_sec": 10.0}},
+    {"tool": "read_frame_variables", "args": {}},
+    {"tool": "read_call_stack", "args": {}}
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "name": "peripheral_check",
+  "description": "Triage a non-working peripheral. Replace RCC_REG with the clock-enable register and PERIPH with the peripheral name; assumes svd_path is set in the profile.",
+  "steps": [
+    {"tool": "self_check", "args": {}},
+    {"tool": "load_svd", "args": {"filepath": "SVD_PATH"}},
+    {"tool": "read_peripheral_register", "args": {"peripheral": "RCC", "register": "RCC_REG"}},
+    {"tool": "decode_peripheral_register", "args": {"peripheral": "RCC", "register": "RCC_REG"}},
+    {"tool": "read_peripheral_register", "args": {"peripheral": "PERIPH", "register": "CR1"}},
+    {"tool": "decode_peripheral_register", "args": {"peripheral": "PERIPH", "register": "CR1"}}
+  ]
+}

@@ -83,6 +83,44 @@ whatever is beneath it, which later HardFaults (often a stacking fault).
 
 See `scenarios/stack_overflow.json`.
 
+## A peripheral isn't working (UART/SPI/I2C/timer/GPIO)
+
+Most "dead peripheral" bugs are one of: clock not enabled, wrong GPIO alternate
+function/mode, or a misconfigured control register. Check those before anything else.
+
+1. `load_svd` (from the profile's `svd_path`) so registers decode by name.
+2. **Clock first:** read the relevant `RCC` enable register and confirm the peripheral's
+   clock bit is set (`read_peripheral_register("RCC", ...)` / `decode_peripheral_register`).
+   A clock-gated peripheral reads back as all-zero and never responds.
+3. **Pins:** check the GPIO `MODER` (alternate-function mode) and `AFRL/AFRH` (the AF
+   number) for the peripheral's pins.
+4. **Config:** decode the peripheral's own control/status registers and compare against the
+   expected setup (baud/prescaler, enable bit, etc.).
+
+See `scenarios/peripheral_check.json`.
+
+## Heap exhaustion / memory leak
+
+1. **FreeRTOS:** `read_freertos_heap` → free bytes and minimum-ever-free. If min-ever-free
+   is near zero, the heap is (or was) exhausted.
+2. **Trend it:** `start_variable_tracking` on the free-heap metric (e.g. `xFreeBytesRemaining`),
+   run the workload, `get_tracked_data` → a monotonic decline is a leak.
+3. **Pin the leak:** breakpoint the allocator (`pvPortMalloc`/`malloc`) and the matching free,
+   or `set_watchpoint` on the free-heap counter, to find allocations that are never released.
+
+See `scenarios/heap_check.json`.
+
+## An assert/configASSERT fired
+
+Asserts usually park in an infinite loop in the handler. Catch it and read the context.
+
+1. `set_breakpoint` on the assert handler (`assert_failed`, `__aeabi_assert`,
+   `vAssertCalled`, or the project's `configASSERT` target), then `run_and_wait`.
+2. `read_frame_variables` → the failing file/line/expression arguments.
+3. `read_call_stack` → who triggered it. Fix the offending condition.
+
+See `scenarios/assert_check.json`.
+
 ## Reproduce a complex logic bug with minimal steps
 
 - Set a hypothesis trap and run hands-off in one call:
