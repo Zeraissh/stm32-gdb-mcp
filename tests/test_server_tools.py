@@ -26,12 +26,7 @@ def test_server_exposes_debug_closure_tools():
     assert "get_debug_profile" in tool_names
     assert "inspect_project" in tool_names
     assert "detect_rtos" in tool_names
-    assert "read_current_task" in tool_names
-    assert "read_freertos_tasks" in tool_names
-    assert "read_freertos_task_lists" in tool_names
-    assert "read_freertos_queue" in tool_names
-    assert "read_freertos_mutex" in tool_names
-    assert "read_freertos_heap" in tool_names
+    assert "read_freertos" in tool_names
     assert "capture_rtos_snapshot" in tool_names
     assert "start_logging" in tool_names
     assert "stop_logging" in tool_names

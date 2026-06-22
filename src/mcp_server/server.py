@@ -689,58 +689,21 @@ async def handle_list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}}
         ),
         Tool(
-            name="read_current_task",
-            description="Reads the current FreeRTOS task from pxCurrentTCB.",
-            inputSchema={"type": "object", "properties": {}}
-        ),
-        Tool(
-            name="read_freertos_tasks",
-            description="Walks FreeRTOS ready task lists and returns task names, priorities, TCB addresses, and stack pointers.",
+            name="read_freertos",
+            description="Reads FreeRTOS state by 'what': 'current_task' (pxCurrentTCB), 'tasks' (ready "
+                        "list: names/priorities/TCB/stack), 'task_lists' (ready/delayed/suspended/"
+                        "deleted), 'queue' or 'mutex' (needs handle = a Queue_t expression), or 'heap' "
+                        "(heap_4/5 usage).",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "max_priorities": {"type": "integer", "description": "Optional priority count override."},
-                    "max_tasks": {"type": "integer", "description": "Maximum number of tasks to return."}
-                }
-            }
-        ),
-        Tool(
-            name="read_freertos_task_lists",
-            description="Reads FreeRTOS ready, delayed, suspended, and deleted task lists.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "max_priorities": {"type": "integer", "description": "Optional priority count override."},
-                    "max_tasks": {"type": "integer", "description": "Maximum number of tasks to return across lists."}
-                }
-            }
-        ),
-        Tool(
-            name="read_freertos_queue",
-            description="Reads a FreeRTOS Queue_t/Semaphore object and tasks waiting to send or receive.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "queue": {"type": "string", "description": "GDB expression resolving to a Queue_t pointer, e.g. 'myQueueHandle'."}
+                    "what": {"type": "string", "enum": ["current_task", "tasks", "task_lists", "queue", "mutex", "heap"]},
+                    "handle": {"type": "string", "description": "For 'queue'/'mutex': GDB expression for the Queue_t pointer/handle."},
+                    "max_priorities": {"type": "integer", "description": "tasks/task_lists: priority count override."},
+                    "max_tasks": {"type": "integer", "description": "tasks/task_lists: max tasks to return."}
                 },
-                "required": ["queue"]
+                "required": ["what"]
             }
-        ),
-        Tool(
-            name="read_freertos_mutex",
-            description="Reads a FreeRTOS mutex/semaphore Queue_t object, including mutex holder and recursive call count when available.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "mutex": {"type": "string", "description": "GDB expression resolving to a mutex/semaphore Queue_t pointer or handle."}
-                },
-                "required": ["mutex"]
-            }
-        ),
-        Tool(
-            name="read_freertos_heap",
-            description="Reads FreeRTOS heap_4/heap_5 style heap usage variables when debug symbols are available.",
-            inputSchema={"type": "object", "properties": {}}
         ),
         Tool(
             name="capture_rtos_snapshot",
@@ -1754,35 +1717,29 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
             result = freertos_inspector.detect()
             return [content_success(result)]
 
-        elif name == "read_current_task":
-            result = freertos_inspector.read_current_task()
-            return [content_success(result)]
-
-        elif name == "read_freertos_tasks":
-            result = freertos_inspector.read_tasks(
-                max_priorities=arguments.get("max_priorities"),
-                max_tasks=arguments.get("max_tasks", 64),
-            )
-            return [content_success(result)]
-
-        elif name == "read_freertos_task_lists":
-            result = freertos_inspector.read_task_lists(
-                max_priorities=arguments.get("max_priorities"),
-                max_tasks=arguments.get("max_tasks", 128),
-            )
-            return [content_success(result)]
-
-        elif name == "read_freertos_queue":
-            result = freertos_inspector.read_queue(arguments["queue"])
-            return [content_success(result)]
-
-        elif name == "read_freertos_mutex":
-            result = freertos_inspector.read_mutex(arguments["mutex"])
-            return [content_success(result)]
-
-        elif name == "read_freertos_heap":
-            result = freertos_inspector.read_heap()
-            return [content_success(result)]
+        elif name == "read_freertos":
+            what = arguments["what"]
+            if what == "current_task":
+                result = freertos_inspector.read_current_task()
+            elif what == "tasks":
+                result = freertos_inspector.read_tasks(
+                    max_priorities=arguments.get("max_priorities"),
+                    max_tasks=arguments.get("max_tasks", 64),
+                )
+            elif what == "task_lists":
+                result = freertos_inspector.read_task_lists(
+                    max_priorities=arguments.get("max_priorities"),
+                    max_tasks=arguments.get("max_tasks", 128),
+                )
+            elif what == "queue":
+                result = freertos_inspector.read_queue(arguments["handle"])
+            elif what == "mutex":
+                result = freertos_inspector.read_mutex(arguments["handle"])
+            elif what == "heap":
+                result = freertos_inspector.read_heap()
+            else:
+                raise ValueError(f"Unknown read_freertos what '{what}'.")
+            return [content_success({"what": what, **result} if isinstance(result, dict) else {"what": what, "result": result})]
 
         elif name == "capture_rtos_snapshot":
             result = freertos_inspector.capture_snapshot()

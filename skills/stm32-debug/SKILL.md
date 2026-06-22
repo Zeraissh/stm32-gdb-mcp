@@ -65,7 +65,7 @@ See `scenarios/hardfault.json`.
 
 1. If the core is running, `halt_execution`, then `capture_state` to see where it stopped.
 2. `read_call_stack` to see who is spinning; for RTOS, `capture_rtos_snapshot` /
-   `read_freertos_tasks` to find the blocked/looping task and check queues/mutexes/heap.
+   `read_freertos(what="tasks")` to find the blocked/looping task and check queues/mutexes/heap.
 3. For timing/hot-spots, `read_cycle_counter` and `sample_pc`.
 
 ## Diagnose a stack overflow (e.g. crash during flash read/write)
@@ -89,7 +89,7 @@ whatever is beneath it, which later HardFaults (often a stacking fault).
      or `step(kind="into")` once past the prologue, then `analyze_stack`.
    - `reconstruct_fault_context` → CFSR `STKERR`/`MSTKERR` confirms a stacking fault.
    - `read_call_stack` → the deep chain / the function with the huge local that ate the stack.
-   - FreeRTOS: `read_freertos_tasks` → the offending task's stack high-water mark ≈ 0.
+   - FreeRTOS: `read_freertos(what="tasks")` → the offending task's stack high-water mark ≈ 0.
 5. **Fix & verify:** move the big buffer off the stack (e.g. `static`/`.bss`) or grow the
    stack; then `build_firmware` → `flash_and_run` → re-run `scenarios/stack_overflow.json`
    → `analyze_stack` shows healthy headroom.
@@ -114,7 +114,7 @@ See `scenarios/peripheral_check.json`.
 
 ## Heap exhaustion / memory leak
 
-1. **FreeRTOS:** `read_freertos_heap` → free bytes and minimum-ever-free. If min-ever-free
+1. **FreeRTOS:** `read_freertos(what="heap")` → free bytes and minimum-ever-free. If min-ever-free
    is near zero, the heap is (or was) exhausted.
 2. **Trend it:** `start_variable_tracking` on the free-heap metric (e.g. `xFreeBytesRemaining`),
    run the workload, `get_tracked_data` → a monotonic decline is a leak.

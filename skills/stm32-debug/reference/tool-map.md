@@ -31,8 +31,8 @@ Quick index of the stm32-gdb-mcp tools. Most results carry `suggested_next_actio
 - `read_fault_registers`, `capture_debug_snapshot`, `capture_coredump`, `load_coredump`
 
 ## RTOS (FreeRTOS)
-- `detect_rtos`, `read_current_task`, `read_freertos_tasks`, `read_freertos_task_lists`
-- `read_freertos_queue`, `read_freertos_mutex`, `read_freertos_heap`, `capture_rtos_snapshot`
+- `detect_rtos`, `capture_rtos_snapshot`
+- `read_freertos` (what = current_task | tasks | task_lists | queue | mutex | heap)
 
 ## Logging & tracing
 - `start_logging` / `stop_logging` / `get_logs` / `clear_logs` (channel = rtt | swo | uart)
