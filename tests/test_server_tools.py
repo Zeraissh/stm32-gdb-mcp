@@ -680,6 +680,33 @@ def test_get_and_set_timeouts_round_trip(monkeypatch):
     server_module.gdb_client.timeouts.set({"memory": 2.0})
 
 
+def test_report_issue_files_once_and_dedups(monkeypatch):
+    import mcp_server.issue_reporter as ir
+    import mcp_server.server as server_module
+
+    calls = []
+
+    def fake_file_issue(repo, title, body, runner=None):
+        calls.append((repo, title))
+        return {"ok": True, "url": "https://github.com/Zeraissh/stm32-gdb-mcp/issues/9"}
+
+    monkeypatch.setattr(server_module, "file_issue", fake_file_issue)
+    monkeypatch.setattr(ir, "file_issue", fake_file_issue)
+    server_module._reported_issues.clear()
+
+    p1 = _payload(asyncio.run(handle_call_tool(
+        "report_issue", {"title": "[agent] X fails", "description": "did Y, got Z"})))
+    assert p1["ok"] is True
+    assert "issues/9" in p1["data"]["url"]
+    assert len(calls) == 1
+
+    # same title again -> deduped, not filed twice
+    p2 = _payload(asyncio.run(handle_call_tool(
+        "report_issue", {"title": "[agent] X fails", "description": "again"})))
+    assert "deduplicated" in p2["data"]["message"]
+    assert len(calls) == 1
+
+
 def test_export_debug_report_writes_artifact(tmp_path):
     import json as _json
 

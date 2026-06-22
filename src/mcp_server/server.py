@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -41,6 +42,7 @@ from .freertos_inspector import FreeRTOSInspector
 from .gdb_client import GdbClientManager
 from .gdb_decode import registers_summary
 from .gdb_manager import GdbServerManager
+from .issue_reporter import DEFAULT_REPO, build_issue_body, file_issue, issue_fingerprint
 from .log_reader import ProcessLogReader, SerialLogReader
 from .memory_guard import MemoryWriteGuard
 from .metrics import compute_metrics
@@ -115,6 +117,21 @@ uart_log_reader = SerialLogReader()
 memory_guard = MemoryWriteGuard()
 session_journal = SessionJournal()
 _last_session = {"server_type": None, "server_args": []}
+_reported_issues = {}  # fingerprint -> issue url (in-session dedup)
+
+
+def _mcp_version() -> str:
+    try:
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        out = subprocess.run(
+            ["git", "-C", root, "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except Exception:
+        pass
+    return "unknown"
 
 # Structured logging to stderr (stdout is the MCP transport), correlated by run-id.
 logger = logging.getLogger("stm32-gdb-mcp")
@@ -1074,6 +1091,23 @@ async def handle_list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}}
         ),
         Tool(
+            name="report_issue",
+            description="Files a GitHub issue about an MCP problem from THIS session — auto-bundling "
+                        "the session journal, metrics, and MCP version into a structured report (via "
+                        "the gh CLI). Call this when a tool misbehaves or confuses you. Deduplicated "
+                        "per session so retries don't spam. Defaults to the stm32-gdb-mcp repo.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Short issue title, e.g. '[agent] start_debug_session ignores server_args'."},
+                    "description": {"type": "string", "description": "What you were doing and what went wrong."},
+                    "env": {"type": "string", "description": "Agent/IDE + model, e.g. 'Cursor / deepseek-v4-pro'."},
+                    "repo": {"type": "string", "description": "owner/repo to file under (default the MCP repo)."}
+                },
+                "required": ["title", "description"]
+            }
+        ),
+        Tool(
             name="export_debug_report",
             description="Writes a single self-contained JSON report (journal + metrics + profile, "
                         "optionally a state snapshot and a coredump) tied to the run-id, so a bug "
@@ -2025,6 +2059,33 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
         elif name == "get_session_metrics":
             metrics = compute_metrics(session_journal.get())
             return [content_success({"run_id": session_journal.run_id, **metrics})]
+
+        elif name == "report_issue":
+            title = arguments["title"]
+            fp = issue_fingerprint(title)
+            if fp in _reported_issues:
+                return [content_success({
+                    "message": "Already reported this session (deduplicated)",
+                    "url": _reported_issues[fp],
+                })]
+            body = build_issue_body(
+                description=arguments.get("description"),
+                env=arguments.get("env"),
+                version=_mcp_version(),
+                journal=session_journal.get(limit=25),
+                metrics=compute_metrics(session_journal.get()),
+            )
+            repo = arguments.get("repo") or DEFAULT_REPO
+            result = file_issue(repo, title, body)
+            if result["ok"]:
+                _reported_issues[fp] = result["url"]
+                return [content_success({"message": "Issue filed", "url": result["url"], "repo": repo})]
+            return [content_error(
+                f"Could not file the issue automatically: {result['error']}",
+                code="issue_filing_failed",
+                raw_response={"repo": repo, "title": title, "prepared_body": result.get("body")},
+                suggested_next_actions=["get_session_journal"],
+            )]
 
         elif name == "export_debug_report":
             snapshot = None
