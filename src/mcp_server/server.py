@@ -1,4 +1,6 @@
 import asyncio
+import json
+import time
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -36,6 +38,8 @@ from .log_reader import ProcessLogReader, SerialLogReader
 from .memory_guard import MemoryWriteGuard
 from .project_inspector import inspect_project
 from .reset_strategy import resolve_reset_command
+from .scenario import load_scenario, replay_scenario, step_summary
+from .session_journal import SessionJournal
 from .svd_parser import SVDParser
 from .tool_response import content_error, content_success
 from .tracker import VariableTracker
@@ -51,6 +55,7 @@ rtt_log_reader = ProcessLogReader("rtt")
 swo_log_reader = ProcessLogReader("swo")
 uart_log_reader = SerialLogReader()
 memory_guard = MemoryWriteGuard()
+session_journal = SessionJournal()
 
 @server.list_tools()
 async def handle_list_tools() -> list[Tool]:
@@ -808,6 +813,49 @@ async def handle_list_tools() -> list[Tool]:
             description="Retrieves the tracked variable data for plotting or analysis.",
             inputSchema={"type": "object", "properties": {}}
         ),
+        # --- Phase 2: determinism (journal + replayable scenarios) ---
+        Tool(
+            name="get_session_journal",
+            description="Returns the append-only journal of every tool call this session "
+                        "(sequence, timestamp, tool, args, ok, summary, duration) for reproducibility.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Return only the most recent N entries."}
+                }
+            }
+        ),
+        Tool(
+            name="clear_session_journal",
+            description="Clears the session journal (keeps the run-id).",
+            inputSchema={"type": "object", "properties": {}}
+        ),
+        Tool(
+            name="run_scenario",
+            description="Replays a declarative scenario — a list of {tool, args} steps — "
+                        "deterministically and returns a per-step pass/fail report. Provide inline "
+                        "'steps' or a 'path' to a JSON scenario file. The minimal-step way to "
+                        "re-run a complex bug repro.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "steps": {
+                        "type": "array",
+                        "description": "Ordered steps, each {tool, args}.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "tool": {"type": "string"},
+                                "args": {"type": "object"}
+                            },
+                            "required": ["tool"]
+                        }
+                    },
+                    "path": {"type": "string", "description": "Path to a JSON scenario file (alternative to inline steps)."},
+                    "stop_on_failure": {"type": "boolean", "description": "Stop at the first failing step (default true)."}
+                }
+            }
+        ),
         # --- Tier 3: Execution control, symbol discovery, postmortem, timing ---
         Tool(
             name="step_out",
@@ -970,8 +1018,7 @@ def _stop_event_next_actions(event: dict) -> list[str]:
     return []
 
 
-@server.call_tool()
-async def handle_call_tool(name: str, arguments: dict | None) -> list[TextContent]:
+async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
     if arguments is None:
         arguments = {}
 
@@ -1528,6 +1575,14 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
             data = variable_tracker.get_data()
             return [content_success(data)]
 
+        elif name == "get_session_journal":
+            entries = session_journal.get(limit=arguments.get("limit"))
+            return [content_success({"run_id": session_journal.run_id, "count": len(entries), "entries": entries})]
+
+        elif name == "clear_session_journal":
+            session_journal.clear()
+            return [content_success({"message": "Session journal cleared", "run_id": session_journal.run_id})]
+
         elif name == "step_out":
             resp = gdb_client.step_out()
             return [content_success({"message": "Stepped out"}, raw_response=resp)]
@@ -1605,6 +1660,54 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
 
     except Exception as e:
         return [content_error(str(e), code="tool_execution_error", suggested_next_actions=["capture_debug_snapshot"])]
+
+
+# Meta tools that operate on the journal itself are not journaled (avoids noise/recursion).
+_JOURNAL_SKIP = {"get_session_journal", "clear_session_journal", "get_session_timeline"}
+
+
+@server.call_tool()
+async def handle_call_tool(name: str, arguments: dict | None) -> list[TextContent]:
+    if arguments is None:
+        arguments = {}
+
+    if name == "run_scenario":
+        return await _run_scenario(arguments)
+
+    start = time.monotonic()
+    result = await _dispatch_tool(name, arguments)
+    duration_ms = round((time.monotonic() - start) * 1000, 1)
+
+    if name not in _JOURNAL_SKIP:
+        try:
+            payload = json.loads(result[0].text)
+            session_journal.record(
+                name,
+                arguments,
+                ok=payload.get("ok"),
+                summary=step_summary(payload),
+                error=(payload.get("error") if not payload.get("ok") else None),
+                duration_ms=duration_ms,
+            )
+        except (ValueError, IndexError, AttributeError):
+            pass
+
+    return result
+
+
+async def _run_scenario(arguments: dict) -> list[TextContent]:
+    steps = arguments.get("steps")
+    if not steps and arguments.get("path"):
+        steps = load_scenario(arguments["path"])
+    if not steps:
+        return [content_error("run_scenario needs 'steps' or a 'path' to a scenario file.", code="invalid_scenario")]
+
+    async def run_step(tool, args):
+        return json.loads((await handle_call_tool(tool, args))[0].text)
+
+    report = await replay_scenario(steps, run_step, stop_on_failure=arguments.get("stop_on_failure", True))
+    return [content_success(report)]
+
 
 async def main():
     async with stdio_server() as (read_stream, write_stream):

@@ -294,6 +294,42 @@ def test_read_frame_variables_returns_decoded_map(monkeypatch):
     assert payload["raw_response"] is None  # raw is opt-in for token economy
 
 
+def test_server_journals_tool_calls_and_exposes_journal():
+    import mcp_server.server as server_module
+
+    server_module.session_journal.clear()
+    asyncio.run(handle_call_tool("get_debug_profile", {}))
+
+    payload = _payload(asyncio.run(handle_call_tool("get_session_journal", {})))
+
+    tools_recorded = [e["tool"] for e in payload["data"]["entries"]]
+    assert "get_debug_profile" in tools_recorded
+    # the journal-reading tool itself must not be journaled
+    assert "get_session_journal" not in tools_recorded
+    assert payload["data"]["entries"][0]["duration_ms"] is not None
+
+
+def test_run_scenario_replays_steps_and_reports(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeProfile:
+        def get(self):
+            return {"mcu": "STM32L431"}
+
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile())
+
+    steps = [
+        {"tool": "get_debug_profile", "args": {}},
+        {"tool": "get_debug_profile", "args": {}},
+    ]
+    payload = _payload(asyncio.run(handle_call_tool("run_scenario", {"steps": steps})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["ok"] is True
+    assert payload["data"]["passed"] == 2
+    assert payload["data"]["total"] == 2
+
+
 def test_server_exposes_composite_tools():
     tools = asyncio.run(handle_list_tools())
     tool_names = {tool.name for tool in tools}
