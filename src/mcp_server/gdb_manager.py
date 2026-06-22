@@ -1,6 +1,7 @@
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import threading
 import time
@@ -74,12 +75,29 @@ class GdbServerManager:
         self._reader_thread = threading.Thread(target=self._read_output, daemon=True)
         self._reader_thread.start()
 
-        # Allow time for server to start and bind port
-        time.sleep(1.5)
-        if self.process.poll() is not None:
-            raise RuntimeError(f"GDB server failed to start. Logs: {self.get_logs()}")
-            
+        # Wait until the GDB server actually accepts connections (instead of a fixed
+        # sleep), so a fast-binding server returns in ~0.2s instead of always 1.5s.
+        if not self._wait_for_port(self.port, timeout=10.0):
+            if self.process.poll() is not None:
+                raise RuntimeError(f"GDB server failed to start. Logs: {self.get_logs()}")
+            raise RuntimeError(
+                f"GDB server did not open port {self.port} within timeout. Logs: {self.get_logs()}"
+            )
+
         return self.port
+
+    def _wait_for_port(self, port: int, timeout: float = 10.0, poll: float = 0.05) -> bool:
+        """Poll until the GDB server's TCP port accepts a connection (ready)."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.process is not None and self.process.poll() is not None:
+                return False  # server process exited before binding the port
+            try:
+                with socket.create_connection(("localhost", port), timeout=0.2):
+                    return True
+            except OSError:
+                time.sleep(poll)
+        return False
 
     def _extract_port(self, args: list[str], default: int) -> int:
         if not args:
