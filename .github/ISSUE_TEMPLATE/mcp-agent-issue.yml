@@ -1,0 +1,55 @@
+name: "MCP problem from an agent / Agent 使用 MCP 时的问题"
+description: "Report a problem you hit while an AI agent used stm32-gdb-mcp (wrong behavior, confusing result, slow, stuck). / 报告 AI agent 使用本 MCP 时遇到的问题。"
+title: "[agent] "
+labels: ["mcp-agent"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The fastest, most actionable report: in the failing session, call **`export_debug_report`**
+        (bundles the journal + metrics + error) or **`get_session_journal`**, and paste it below.
+        / 最快、最可操作的反馈：在出问题的会话里调用 `export_debug_report` 或 `get_session_journal`，把内容贴到下面。
+  - type: input
+    id: env
+    attributes:
+      label: "Agent / IDE + model / 客户端与模型"
+      placeholder: "Cursor / Trae / VS Code Copilot — model e.g. deepseek-v4-pro, Claude, GPT-..."
+    validations:
+      required: true
+  - type: textarea
+    id: intent
+    attributes:
+      label: "What you asked the agent to do / 你让 agent 做什么"
+      placeholder: "e.g. flash the L431 firmware and find why it crashes on flash write"
+    validations:
+      required: true
+  - type: textarea
+    id: failing_call
+    attributes:
+      label: "The tool call(s) that went wrong / 出问题的工具调用"
+      description: "Tool name + args, and what happened. / 工具名 + 参数,以及现象。"
+      placeholder: "start_debug_session(server_type=openocd, server_args=[]) -> ..."
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: "Error / unexpected result (paste the JSON envelope) / 报错或异常结果(贴 JSON)"
+      render: json
+      placeholder: '{ "ok": false, "error": { "code": "...", "message": "..." }, "suggested_next_actions": [...] }'
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: "Session journal / export_debug_report (optional but ideal) / 会话日志或导出报告(强烈建议)"
+      render: json
+  - type: textarea
+    id: expected
+    attributes:
+      label: "What you expected / 你期望的行为"
+  - type: input
+    id: version
+    attributes:
+      label: "MCP version / commit (git rev-parse --short HEAD) / MCP 版本"
+      placeholder: "e.g. bec8055"
