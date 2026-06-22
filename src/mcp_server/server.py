@@ -4,6 +4,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
+from .composites import capture_state, debug_until, flash_and_run
 from .debug_config import (
     load_debug_config as load_debug_config_file,
 )
@@ -157,6 +158,46 @@ async def handle_list_tools() -> list[Tool]:
                 "properties": {
                     "timeout_sec": {"type": "number", "description": "Max seconds to wait for a stop (default 10)."}
                 }
+            }
+        ),
+        Tool(
+            name="debug_until",
+            description="One-call repro step: set an optional conditional/temporary breakpoint at "
+                        "a location, run, and return the stop event PLUS the decoded backtrace and "
+                        "innermost-frame locals. Collapses set_breakpoint + run + read frame/vars "
+                        "into a single round-trip.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string", "description": "Where to break, e.g. 'trigger_divzero' or 'main.c:21'."},
+                    "condition": {"type": "string", "description": "Optional C condition, e.g. 'g_divisor == 0'."},
+                    "temporary": {"type": "boolean", "description": "Auto-delete the breakpoint after the first hit (default true)."},
+                    "ignore_count": {"type": "integer", "description": "Hits to ignore before stopping."},
+                    "timeout_sec": {"type": "number", "description": "Max seconds to wait (default 10)."}
+                },
+                "required": ["location"]
+            }
+        ),
+        Tool(
+            name="capture_state",
+            description="One-call 'where am I': decoded core registers + a PC/LR/SP summary, the "
+                        "decoded backtrace, and the innermost-frame locals. The fastest way to get "
+                        "full halted context.",
+            inputSchema={"type": "object", "properties": {}}
+        ),
+        Tool(
+            name="flash_and_run",
+            description="One-call bring-up: flash an ELF (loads symbols), reset-halt, set a "
+                        "temporary breakpoint at an entry point (default 'main'), run to it, and "
+                        "return the decoded stop context.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string", "description": "Path to the ELF to flash."},
+                    "run_to": {"type": "string", "description": "Entry point to stop at (default 'main')."},
+                    "timeout_sec": {"type": "number", "description": "Max seconds to wait (default 10)."}
+                },
+                "required": ["file_path"]
             }
         ),
         Tool(
@@ -1018,6 +1059,30 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
         elif name == "halt_execution":
             resp = gdb_client.halt_execution()
             return [content_success({"message": "Execution halted"}, raw_response=resp)]
+
+        elif name == "debug_until":
+            result = debug_until(
+                gdb_client,
+                location=arguments["location"],
+                condition=arguments.get("condition"),
+                temporary=arguments.get("temporary", True),
+                ignore_count=arguments.get("ignore_count"),
+                timeout_sec=arguments.get("timeout_sec", 10.0),
+            )
+            next_actions = ["capture_state", "list_source"] if result["stopped"] else ["halt_execution"]
+            return [content_success(result, suggested_next_actions=next_actions)]
+
+        elif name == "capture_state":
+            return [content_success(capture_state(gdb_client), suggested_next_actions=["list_source", "disassemble"])]
+
+        elif name == "flash_and_run":
+            result = flash_and_run(
+                gdb_client,
+                file_path=arguments["file_path"],
+                run_to=arguments.get("run_to", "main"),
+                timeout_sec=arguments.get("timeout_sec", 10.0),
+            )
+            return [content_success(result, suggested_next_actions=["capture_state", "debug_until"])]
 
         elif name == "run_and_wait":
             event = gdb_client.run_and_wait(timeout_sec=arguments.get("timeout_sec", 10.0))

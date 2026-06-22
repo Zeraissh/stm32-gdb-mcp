@@ -294,6 +294,15 @@ def test_read_frame_variables_returns_decoded_map(monkeypatch):
     assert payload["raw_response"] is None  # raw is opt-in for token economy
 
 
+def test_server_exposes_composite_tools():
+    tools = asyncio.run(handle_list_tools())
+    tool_names = {tool.name for tool in tools}
+
+    assert "debug_until" in tool_names
+    assert "capture_state" in tool_names
+    assert "flash_and_run" in tool_names
+
+
 def test_read_core_registers_returns_decoded_map_and_summary(monkeypatch):
     import mcp_server.server as server_module
 
