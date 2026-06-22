@@ -75,7 +75,28 @@ class GdbClientManager:
 
     def reset_halt(self, command: str = "monitor reset halt"):
         """Resets the MCU and halts it. OpenOCD uses 'monitor reset halt'."""
-        return self.execute_command(command, timeout_sec=5.0)
+        resp = self.execute_command(command, timeout_sec=5.0)
+        self._drain()
+        # The first memory-AP access after a reset was observed on hardware to return
+        # stale data (e.g. CPUID read back as 0x01000000). Issue one throwaway read of
+        # a constant register to prime the AP so the next real read is coherent.
+        try:
+            self.read_memory("0xE000ED00", 4)
+        except Exception:
+            pass
+        return resp
+
+    def _drain(self, rounds: int = 5):
+        """Consume any pending async/stale GDB responses left in the buffer."""
+        if not self.gdb:
+            return
+        for _ in range(rounds):
+            try:
+                extra = self.gdb.get_gdb_response(timeout_sec=0.1, raise_error_on_timeout=False)
+            except TypeError:
+                extra = self.gdb.get_gdb_response(timeout_sec=0.1)
+            if not extra:
+                break
 
     def set_breakpoint(self, location: str, condition=None, temporary=False, ignore_count=None):
         command = build_break_insert_command(location, condition, temporary, ignore_count)

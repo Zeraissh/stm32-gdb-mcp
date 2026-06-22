@@ -9,6 +9,22 @@ class FakeGdb:
         self.commands.append((command, timeout_sec))
         return [{"message": "done"}]
 
+    def get_gdb_response(self, timeout_sec=0.1, raise_error_on_timeout=False):
+        return []
+
+
+def test_reset_halt_primes_the_ap_with_a_throwaway_read():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+
+    client.reset_halt("monitor reset halt")
+
+    commands = [c[0] for c in client.gdb.commands]
+    # the reset command runs first, then a throwaway read of the constant CPUID
+    # register primes the memory-AP so the next real read is coherent.
+    assert commands[0] == "monitor reset halt"
+    assert any("-data-read-memory-bytes 0xE000ED00 4" in c for c in commands)
+
 
 def test_read_core_registers_uses_gdb_cli_info_registers():
     client = GdbClientManager()
