@@ -27,6 +27,16 @@ _RULES = [
         "suggested_next_actions": ["check_session_health", "start_debug_session"],
         "hint": "The link to the GDB server dropped.",
     }),
+    # Config errors must be checked before the generic probe rule below, because the
+    # message also contains "failed to start" — but retrying/recovering won't help here.
+    (("can't find openocd.cfg", "no config files specified", "debug adapter has to be specified",
+      "adapter driver", "unknown config", "invalid command name"), {
+        "code": "invalid_server_args",
+        "retryable": False,
+        "suggested_next_actions": ["load_debug_config", "start_debug_session"],
+        "hint": "OpenOCD has no probe/target config. Pass server_args, e.g. "
+                "['-f','interface/stlink.cfg','-f','target/stm32l4x.cfg'], or load a debug config.",
+    }),
     (("open failed", "failed to start", "unable to open", "libusb", "no device found"), {
         "code": "probe_unavailable",
         "retryable": True,

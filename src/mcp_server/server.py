@@ -109,7 +109,10 @@ async def handle_list_tools() -> list[Tool]:
         # --- Step 4: Basic Control and Flashing ---
         Tool(
             name="start_debug_session",
-            description="Starts the specified GDB Server (openocd, stlink, jlink) and connects the GDB Client to it.",
+            description="Starts the specified GDB Server (openocd, stlink, jlink) and connects the GDB Client to it. "
+                        "openocd REQUIRES server_args naming the probe and target, e.g. "
+                        "['-f','interface/stlink.cfg','-f','target/stm32l4x.cfg'] — without them OpenOCD cannot "
+                        "find a config or adapter. Or call load_debug_config first to supply them.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1141,6 +1144,14 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
         if name == "start_debug_session":
             server_type = arguments["server_type"]
             args = arguments.get("server_args", [])
+            if server_type == "openocd" and not args:
+                return [content_error(
+                    "openocd requires server_args naming the probe interface and target, e.g. "
+                    "['-f','interface/stlink.cfg','-f','target/stm32l4x.cfg']. Pass server_args, or "
+                    "load a debug config (load_debug_config) that defines them.",
+                    code="invalid_server_args",
+                    suggested_next_actions=["load_debug_config", "inspect_project"],
+                )]
             port = gdb_manager.start(server_type, args)
             gdb_client.start_gdb()
             resp = gdb_client.connect("localhost", port)

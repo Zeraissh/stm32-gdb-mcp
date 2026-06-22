@@ -38,6 +38,19 @@ def test_probe_open_failure_is_retryable_with_recover_suggestion():
     assert "recover_session" in c["suggested_next_actions"]
 
 
+def test_openocd_missing_config_is_a_non_retryable_config_error():
+    # The exact field error: openocd started with no -f config args.
+    msg = ("GDB server failed to start. Logs: ... embedded:startup.tcl:72: Error: "
+           "Can't find openocd.cfg ... Error: Debug Adapter has to be specified, "
+           "see \"adapter driver\" command")
+    c = classify_error(msg)
+
+    # Must NOT be misclassified as a retryable probe issue — retrying won't help.
+    assert c["code"] == "invalid_server_args"
+    assert c["retryable"] is False
+    assert "load_debug_config" in c["suggested_next_actions"]
+
+
 def test_unknown_error_falls_back():
     c = classify_error("something totally unexpected")
 

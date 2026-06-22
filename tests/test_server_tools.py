@@ -303,6 +303,25 @@ def test_read_frame_variables_returns_decoded_map(monkeypatch):
     assert payload["raw_response"] is None  # raw is opt-in for token economy
 
 
+def test_start_openocd_without_server_args_gives_clear_error(monkeypatch):
+    import mcp_server.server as server_module
+
+    started = []
+
+    class FakeManager:
+        def start(self, server_type, args):
+            started.append((server_type, args))
+            return 3333
+
+    monkeypatch.setattr(server_module, "gdb_manager", FakeManager())
+    payload = _payload(asyncio.run(handle_call_tool("start_debug_session", {"server_type": "openocd"})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "invalid_server_args"
+    assert started == []  # openocd was never launched with an empty config
+    assert "load_debug_config" in payload["suggested_next_actions"]
+
+
 def test_recover_session_without_prior_session_errors():
     import mcp_server.server as server_module
 
