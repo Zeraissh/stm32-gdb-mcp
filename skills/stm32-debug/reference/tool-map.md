@@ -27,6 +27,7 @@ Quick index of the stm32-gdb-mcp tools. Most results carry `suggested_next_actio
 
 ## Fault & crash triage
 - `reconstruct_fault_context` (recovers faulting PC -> source), `diagnose_fault`
+- `analyze_stack` (used/free/overflow verdict — the key tool for stack overflows)
 - `read_fault_registers`, `capture_debug_snapshot`, `capture_coredump`, `load_coredump`
 
 ## RTOS (FreeRTOS)

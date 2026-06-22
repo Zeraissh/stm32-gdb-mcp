@@ -51,6 +51,7 @@ from .reset_strategy import resolve_reset_command
 from .scenario import load_scenario, replay_scenario, step_summary
 from .self_check import evaluate_self_check
 from .session_journal import SessionJournal
+from .stack_analysis import stack_report
 from .svd_parser import SVDParser
 from .tool_response import content_error, content_success
 from .tracker import VariableTracker
@@ -532,6 +533,22 @@ async def handle_list_tools() -> list[Tool]:
                     "apply": {"type": "boolean", "description": "If false, only return the planned register writes (default true)."}
                 },
                 "required": ["peripherals"]
+            }
+        ),
+        Tool(
+            name="analyze_stack",
+            description="Reports stack used/free bytes and a clear overflow verdict for the halted "
+                        "core. stack_top defaults to the initial MSP (first word of the vector table "
+                        "at vector_table_addr). Give stack_size or stack_limit for the overflow check "
+                        "(else only usage is reported). The key tool for diagnosing stack overflows.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "stack_top": {"type": "string", "description": "Top-of-stack address (hex). Default: initial MSP from the vector table."},
+                    "stack_limit": {"type": "string", "description": "Lowest valid stack address (hex)."},
+                    "stack_size": {"type": "string", "description": "Stack size in bytes (used as stack_top - stack_size if stack_limit omitted)."},
+                    "vector_table_addr": {"type": "string", "description": "Vector table base for the initial MSP (default '0x08000000')."}
+                }
             }
         ),
         Tool(
@@ -1540,6 +1557,24 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
                 "applied": applied,
                 "plans": plans,
             })]
+
+        elif name == "analyze_stack":
+            sp = gdb_client.read_register_value("$sp")
+            if arguments.get("stack_top") is not None:
+                stack_top = int(str(arguments["stack_top"]), 0)
+            else:
+                vt = int(str(arguments.get("vector_table_addr", "0x08000000")), 0)
+                stack_top = gdb_client.read_word(vt)  # initial MSP = first vector
+            stack_limit = None
+            if arguments.get("stack_limit") is not None:
+                stack_limit = int(str(arguments["stack_limit"]), 0)
+            elif arguments.get("stack_size") is not None:
+                stack_limit = stack_top - int(str(arguments["stack_size"]), 0)
+            report = stack_report(sp, stack_top, stack_limit)
+            return [content_success(
+                report,
+                suggested_next_actions=["read_call_stack", "reconstruct_fault_context", "read_freertos_tasks"],
+            )]
 
         elif name == "reconstruct_fault_context":
             context = build_fault_context(gdb_client)

@@ -55,6 +55,31 @@ See `scenarios/hardfault.json`.
    `read_freertos_tasks` to find the blocked/looping task and check queues/mutexes/heap.
 3. For timing/hot-spots, `read_cycle_counter` and `sample_pc`.
 
+## Diagnose a stack overflow (e.g. crash during flash read/write)
+
+Stack overflow is a *technique-specific* hunt — don't single-step blindly. Signature:
+a large local buffer or deep recursion drives SP below the stack limit, corrupting
+whatever is beneath it, which later HardFaults (often a stacking fault).
+
+1. **Orient:** `inspect_project` (get `.map`/`.elf`), `set_debug_profile(elf_path, mcu)`,
+   `list_functions("Flash|Write|Read")` to find the exact function.
+2. **Set the trap** (pick one):
+   - Catch the fault: `set_breakpoint("HardFault_Handler")`, then `run_and_wait`.
+   - Catch the overflow moment: `set_watchpoint(<stack_limit_addr>, "w")` — it triggers
+     the instant the stack grows past the guard, so you catch the deepest call.
+3. **Reproduce:** trigger the flash op (`debug_until(location="Flash_Write")`, then continue
+   / drive it over UART).
+4. **Diagnose:**
+   - `analyze_stack(stack_size=<from .map>)` → `overflow: true` and how far past the limit.
+   - `reconstruct_fault_context` → CFSR `STKERR`/`MSTKERR` confirms a stacking fault.
+   - `read_call_stack` → the deep chain / the function with the huge local that ate the stack.
+   - FreeRTOS: `read_freertos_tasks` → the offending task's stack high-water mark ≈ 0.
+5. **Fix & verify:** move the big buffer off the stack (e.g. `static`/`.bss`) or grow the
+   stack; then `build_firmware` → `flash_and_run` → re-run `scenarios/stack_overflow.json`
+   → `analyze_stack` shows healthy headroom.
+
+See `scenarios/stack_overflow.json`.
+
 ## Reproduce a complex logic bug with minimal steps
 
 - Set a hypothesis trap and run hands-off in one call:

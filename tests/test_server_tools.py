@@ -255,6 +255,25 @@ def test_normal_ram_write_passes_through_guard(monkeypatch):
     assert fake.writes == [("0x20000000", "0x5")]
 
 
+def test_analyze_stack_detects_overflow_with_size(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def read_register_value(self, expr):
+            assert expr == "$sp"
+            return 0x20007F00  # below the limit
+
+        def read_word(self, addr):
+            return 0x2000A000  # initial MSP / stack top
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool("analyze_stack", {"stack_size": "0x2000"})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["overflow"] is True
+    assert "OVERFLOW" in payload["data"]["summary"].upper()
+
+
 def test_server_exposes_reconstruct_fault_context_tool():
     tools = asyncio.run(handle_list_tools())
     tool_names = {tool.name for tool in tools}

@@ -1,0 +1,14 @@
+{
+  "name": "stack_overflow",
+  "description": "Reproduce and confirm a stack overflow during a flash op. Replace FUNC with the flash read/write function and STACK_SIZE with the value from the .map.",
+  "steps": [
+    {"tool": "self_check", "args": {}},
+    {"tool": "reset_target", "args": {"halt": true}},
+    {"tool": "set_breakpoint", "args": {"location": "HardFault_Handler"}},
+    {"tool": "set_breakpoint", "args": {"location": "FUNC"}},
+    {"tool": "run_and_wait", "args": {"timeout_sec": 10.0}},
+    {"tool": "analyze_stack", "args": {"stack_size": "STACK_SIZE"}},
+    {"tool": "read_call_stack", "args": {}},
+    {"tool": "reconstruct_fault_context", "args": {}}
+  ]
+}
