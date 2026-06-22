@@ -97,7 +97,7 @@ Key rules (the target must cooperate):
   start a second OpenOCD/GDB on the same probe (e.g. a verify script's own --reset will
   fail with "ST-Link in use"). Reset via reset_target instead. The ST-Link virtual COM
   port (e.g. COM3) is a SEPARATE USB endpoint and DOES coexist with debugging — read it
-  with start_uart_logging, or let an external serial script use it without resetting.
+  with start_logging(channel="uart"), or let an external serial script use it without resetting.
 
 Determinism & sharing: every call is journaled (get_session_journal / get_session_timeline
 / get_session_metrics). Replay a repro with run_scenario; bundle a full, shareable report
@@ -745,106 +745,54 @@ async def handle_list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}}
         ),
         Tool(
-            name="start_rtt_logging",
-            description="Starts background SEGGER RTT log capture using JLinkRTTClient or a custom command.",
+            name="start_logging",
+            description="Starts background log capture on a channel: 'rtt' (SEGGER RTT, default cmd "
+                        "JLinkRTTClient), 'swo' (ITM decoder, command required), or 'uart' (serial, "
+                        "port required). One tool for all three channels.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "command": {"type": "string", "description": "Executable to launch. Defaults to JLinkRTTClient."},
-                    "args": {"type": "array", "items": {"type": "string"}, "description": "Command arguments."}
-                }
-            }
-        ),
-        Tool(
-            name="stop_rtt_logging",
-            description="Stops the background RTT log capture process.",
-            inputSchema={"type": "object", "properties": {}}
-        ),
-        Tool(
-            name="get_rtt_logs",
-            description="Returns captured RTT log lines.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "limit": {"type": "integer", "description": "Maximum number of recent log entries to return."},
-                    "since_index": {"type": "integer", "description": "Only return entries with an index greater than this value."},
-                    "clear": {"type": "boolean", "description": "Clear returned log entries after reading."}
-                }
-            }
-        ),
-        Tool(
-            name="clear_rtt_logs",
-            description="Clears buffered RTT log lines without stopping capture.",
-            inputSchema={"type": "object", "properties": {}}
-        ),
-        Tool(
-            name="start_swo_logging",
-            description="Starts background SWO/ITM log capture using a caller-provided decoder command.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "command": {"type": "string", "description": "Executable to launch for SWO/ITM decoding."},
-                    "args": {"type": "array", "items": {"type": "string"}, "description": "Command arguments."}
+                    "channel": {"type": "string", "enum": ["rtt", "swo", "uart"], "description": "Log channel."},
+                    "command": {"type": "string", "description": "rtt/swo: executable to launch (rtt defaults to JLinkRTTClient)."},
+                    "args": {"type": "array", "items": {"type": "string"}, "description": "rtt/swo: command arguments."},
+                    "port": {"type": "string", "description": "uart: serial port, e.g. COM3 or /dev/ttyUSB0."},
+                    "baudrate": {"type": "integer", "description": "uart: baudrate (default 115200)."},
+                    "timeout": {"type": "number", "description": "uart: read timeout seconds (default 0.1)."}
                 },
-                "required": ["command"]
+                "required": ["channel"]
             }
         ),
         Tool(
-            name="stop_swo_logging",
-            description="Stops the background SWO/ITM log capture process.",
-            inputSchema={"type": "object", "properties": {}}
-        ),
-        Tool(
-            name="get_swo_logs",
-            description="Returns captured SWO/ITM log lines.",
+            name="stop_logging",
+            description="Stops background log capture on a channel (rtt/swo/uart).",
             inputSchema={
                 "type": "object",
-                "properties": {
-                    "limit": {"type": "integer", "description": "Maximum number of recent log entries to return."},
-                    "since_index": {"type": "integer", "description": "Only return entries with an index greater than this value."},
-                    "clear": {"type": "boolean", "description": "Clear returned log entries after reading."}
-                }
+                "properties": {"channel": {"type": "string", "enum": ["rtt", "swo", "uart"]}},
+                "required": ["channel"]
             }
         ),
         Tool(
-            name="clear_swo_logs",
-            description="Clears buffered SWO/ITM log lines without stopping capture.",
-            inputSchema={"type": "object", "properties": {}}
-        ),
-        Tool(
-            name="start_uart_logging",
-            description="Starts background UART serial log capture.",
+            name="get_logs",
+            description="Returns captured log lines for a channel (rtt/swo/uart).",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "port": {"type": "string", "description": "Serial port name, e.g. COM7 or /dev/ttyUSB0."},
-                    "baudrate": {"type": "integer", "description": "Serial baudrate. Defaults to 115200."},
-                    "timeout": {"type": "number", "description": "Serial read timeout in seconds. Defaults to 0.1."}
+                    "channel": {"type": "string", "enum": ["rtt", "swo", "uart"]},
+                    "limit": {"type": "integer", "description": "Max recent entries to return."},
+                    "since_index": {"type": "integer", "description": "Only entries with index greater than this."},
+                    "clear": {"type": "boolean", "description": "Clear returned entries after reading."}
                 },
-                "required": ["port"]
+                "required": ["channel"]
             }
         ),
         Tool(
-            name="stop_uart_logging",
-            description="Stops background UART serial log capture.",
-            inputSchema={"type": "object", "properties": {}}
-        ),
-        Tool(
-            name="get_uart_logs",
-            description="Returns captured UART log lines.",
+            name="clear_logs",
+            description="Clears the buffered log lines for a channel (rtt/swo/uart) without stopping capture.",
             inputSchema={
                 "type": "object",
-                "properties": {
-                    "limit": {"type": "integer", "description": "Maximum number of recent log entries to return."},
-                    "since_index": {"type": "integer", "description": "Only return entries with an index greater than this value."},
-                    "clear": {"type": "boolean", "description": "Clear returned log entries after reading."}
-                }
+                "properties": {"channel": {"type": "string", "enum": ["rtt", "swo", "uart"]}},
+                "required": ["channel"]
             }
-        ),
-        Tool(
-            name="clear_uart_logs",
-            description="Clears buffered UART log lines without stopping capture.",
-            inputSchema={"type": "object", "properties": {}}
         ),
         Tool(
             name="capture_expressions",
@@ -1301,6 +1249,13 @@ async def handle_list_tools() -> list[Tool]:
             }
         )
     ]
+
+def _log_reader(channel: str):
+    readers = {"rtt": rtt_log_reader, "swo": swo_log_reader, "uart": uart_log_reader}
+    if channel not in readers:
+        raise ValueError(f"Unknown log channel '{channel}'. Use rtt, swo, or uart.")
+    return readers[channel]
+
 
 def _autoload_symbols() -> bool:
     """Load symbols from the profile's elf_path after a connect, if configured."""
@@ -1839,82 +1794,45 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
             result = freertos_inspector.capture_snapshot()
             return [content_success(result)]
 
-        elif name == "start_rtt_logging":
-            command = [arguments.get("command", "JLinkRTTClient")]
-            command.extend(arguments.get("args", []))
-            rtt_log_reader.start(command)
-            return [content_success(rtt_log_reader.status())]
+        elif name == "start_logging":
+            channel = arguments["channel"]
+            reader = _log_reader(channel)
+            if channel == "uart":
+                reader.start(
+                    port=arguments["port"],
+                    baudrate=arguments.get("baudrate", 115200),
+                    timeout=arguments.get("timeout", 0.1),
+                )
+            else:  # rtt / swo: a process whose stdout is captured
+                default_cmd = "JLinkRTTClient" if channel == "rtt" else None
+                command = [arguments.get("command", default_cmd)]
+                if command[0] is None:
+                    return [content_error(f"{channel} logging requires 'command'.", code="missing_command")]
+                command.extend(arguments.get("args", []))
+                reader.start(command)
+            return [content_success({"channel": channel, **reader.status()})]
 
-        elif name == "stop_rtt_logging":
-            rtt_log_reader.stop()
-            return [content_success(rtt_log_reader.status())]
+        elif name == "stop_logging":
+            reader = _log_reader(arguments["channel"])
+            reader.stop()
+            return [content_success({"channel": arguments["channel"], **reader.status()})]
 
-        elif name == "get_rtt_logs":
-            result = {
-                "status": rtt_log_reader.status(),
-                "entries": rtt_log_reader.get_logs(
+        elif name == "get_logs":
+            reader = _log_reader(arguments["channel"])
+            return [content_success({
+                "channel": arguments["channel"],
+                "status": reader.status(),
+                "entries": reader.get_logs(
                     limit=arguments.get("limit"),
                     since_index=arguments.get("since_index"),
                     clear=arguments.get("clear", False),
                 ),
-            }
-            return [content_success(result)]
+            })]
 
-        elif name == "clear_rtt_logs":
-            rtt_log_reader.clear()
-            return [content_success({"message": "RTT log buffer cleared"})]
-
-        elif name == "start_swo_logging":
-            command = [arguments["command"]]
-            command.extend(arguments.get("args", []))
-            swo_log_reader.start(command)
-            return [content_success(swo_log_reader.status())]
-
-        elif name == "stop_swo_logging":
-            swo_log_reader.stop()
-            return [content_success(swo_log_reader.status())]
-
-        elif name == "get_swo_logs":
-            result = {
-                "status": swo_log_reader.status(),
-                "entries": swo_log_reader.get_logs(
-                    limit=arguments.get("limit"),
-                    since_index=arguments.get("since_index"),
-                    clear=arguments.get("clear", False),
-                ),
-            }
-            return [content_success(result)]
-
-        elif name == "clear_swo_logs":
-            swo_log_reader.clear()
-            return [content_success({"message": "SWO log buffer cleared"})]
-
-        elif name == "start_uart_logging":
-            uart_log_reader.start(
-                port=arguments["port"],
-                baudrate=arguments.get("baudrate", 115200),
-                timeout=arguments.get("timeout", 0.1),
-            )
-            return [content_success(uart_log_reader.status())]
-
-        elif name == "stop_uart_logging":
-            uart_log_reader.stop()
-            return [content_success(uart_log_reader.status())]
-
-        elif name == "get_uart_logs":
-            result = {
-                "status": uart_log_reader.status(),
-                "entries": uart_log_reader.get_logs(
-                    limit=arguments.get("limit"),
-                    since_index=arguments.get("since_index"),
-                    clear=arguments.get("clear", False),
-                ),
-            }
-            return [content_success(result)]
-
-        elif name == "clear_uart_logs":
-            uart_log_reader.clear()
-            return [content_success({"message": "UART log buffer cleared"})]
+        elif name == "clear_logs":
+            reader = _log_reader(arguments["channel"])
+            reader.clear()
+            return [content_success({"message": f"{arguments['channel']} log buffer cleared", "channel": arguments["channel"]})]
 
         elif name == "capture_expressions":
             result = run_expression_capture(gdb_client, arguments["expressions"])

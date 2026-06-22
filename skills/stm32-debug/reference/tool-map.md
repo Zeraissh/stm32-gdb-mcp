@@ -35,7 +35,7 @@ Quick index of the stm32-gdb-mcp tools. Most results carry `suggested_next_actio
 - `read_freertos_queue`, `read_freertos_mutex`, `read_freertos_heap`, `capture_rtos_snapshot`
 
 ## Logging & tracing
-- `start_rtt_logging`/`get_rtt_logs`/..., `start_swo_logging`/..., `start_uart_logging`/...
+- `start_logging` / `stop_logging` / `get_logs` / `clear_logs` (channel = rtt | swo | uart)
 
 ## Timing
 - `read_cycle_counter`, `sample_pc`, `configure_debug_freeze`

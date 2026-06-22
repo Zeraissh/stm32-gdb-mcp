@@ -33,7 +33,7 @@ the way a senior embedded engineer would. The model is a loop:
   OpenOCD/GDB on the same probe — a serial verify script's `--reset` (its own OpenOCD)
   fails with "ST-Link in use". Reset via `reset_target`. The ST-Link virtual COM port
   (e.g. COM3) is a SEPARATE USB endpoint that coexists with debugging — read it with
-  `start_uart_logging`, or run the serial script WITHOUT `--reset`.
+  `start_logging(channel="uart")`, or run the serial script WITHOUT `--reset`.
 - **Follow `suggested_next_actions`** on every result — they encode the next loop step.
 - **Hit an MCP bug? Self-report.** If a tool clearly misbehaves or you're stuck on what
   looks like an MCP problem (not a target bug), call `report_issue(title, description)` —

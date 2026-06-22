@@ -33,14 +33,10 @@ def test_server_exposes_debug_closure_tools():
     assert "read_freertos_mutex" in tool_names
     assert "read_freertos_heap" in tool_names
     assert "capture_rtos_snapshot" in tool_names
-    assert "start_rtt_logging" in tool_names
-    assert "stop_rtt_logging" in tool_names
-    assert "get_rtt_logs" in tool_names
-    assert "clear_rtt_logs" in tool_names
-    assert "start_uart_logging" in tool_names
-    assert "stop_uart_logging" in tool_names
-    assert "get_uart_logs" in tool_names
-    assert "clear_uart_logs" in tool_names
+    assert "start_logging" in tool_names
+    assert "stop_logging" in tool_names
+    assert "get_logs" in tool_names
+    assert "clear_logs" in tool_names
     assert "capture_expressions" in tool_names
     assert "assert_expressions" in tool_names
     assert "compare_expressions_after_action" in tool_names
@@ -58,14 +54,16 @@ def test_reset_target_exposes_strategy_and_custom_command_options():
     assert "command" in properties
 
 
-def test_server_exposes_swo_log_tools():
+def test_unified_logging_tools_handle_all_channels():
     tools = asyncio.run(handle_list_tools())
-    tool_names = {tool.name for tool in tools}
+    start = next(t for t in tools if t.name == "start_logging")
+    assert set(start.inputSchema["properties"]["channel"]["enum"]) == {"rtt", "swo", "uart"}
 
-    assert "start_swo_logging" in tool_names
-    assert "stop_swo_logging" in tool_names
-    assert "get_swo_logs" in tool_names
-    assert "clear_swo_logs" in tool_names
+    # the 12 old per-channel logging tools are gone (consolidated)
+    names = {t.name for t in tools}
+    for old in ("start_rtt_logging", "start_swo_logging", "start_uart_logging",
+                "get_uart_logs", "clear_rtt_logs"):
+        assert old not in names
 
 
 def _payload(result):
