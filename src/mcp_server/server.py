@@ -1209,6 +1209,28 @@ async def handle_list_tools() -> list[Tool]:
     return _tools
 
 
+# Tools consolidated in the slim-down: map old name -> new call form for clear errors.
+_RENAMED_TOOLS = {
+    **{f"{a}_{c}_log{s}": f'{a}_log{s}(channel="{c}")'
+       for c in ("rtt", "swo", "uart")
+       for a, s in (("start", "ging"), ("stop", "ging"), ("get", "s"), ("clear", "s"))},
+    "step_over": 'step(kind="over")', "step_into": 'step(kind="into")',
+    "step_out": 'step(kind="out")', "step_instruction": 'step(kind="instruction")',
+    "read_current_task": 'read_freertos(what="current_task")',
+    "read_freertos_tasks": 'read_freertos(what="tasks")',
+    "read_freertos_task_lists": 'read_freertos(what="task_lists")',
+    "read_freertos_queue": 'read_freertos(what="queue", handle=...)',
+    "read_freertos_mutex": 'read_freertos(what="mutex", handle=...)',
+    "read_freertos_heap": 'read_freertos(what="heap")',
+    "start_variable_tracking": 'track_variable(action="start")',
+    "stop_variable_tracking": 'track_variable(action="stop")',
+    "get_tracked_data": 'track_variable(action="get")',
+    "get_session_journal": 'get_session(view="journal")',
+    "get_session_timeline": 'get_session(view="timeline")',
+    "get_session_metrics": 'get_session(view="metrics")',
+}
+
+
 # Core tools kept visible in compact mode; everything else is reached via `call`.
 _CORE_TOOLS = {
     "suggest_server_args", "start_debug_session", "stop_debug_session", "recover_session",
@@ -2069,8 +2091,18 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
             })]
 
         else:
-            raise ValueError(f"Unknown tool: {name}")
+            hint = _RENAMED_TOOLS.get(name)
+            msg = f"Unknown tool: {name}." + (f" It was renamed — use {hint}." if hint
+                                              else " Reach any tool via call(tool=..., args=...).")
+            return [content_error(msg, code="unknown_tool",
+                                  suggested_next_actions=["call"])]
 
+    except KeyError as e:
+        # A handler indexed a required argument that the caller omitted.
+        return [content_error(
+            f"Missing required argument: {e}. Provide it and retry.",
+            code="missing_argument",
+        )]
     except Exception as e:
         classification = classify_error(str(e))
         message = str(e)

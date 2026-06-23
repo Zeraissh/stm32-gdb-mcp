@@ -77,8 +77,24 @@ def test_unknown_tool_returns_stable_json_error_envelope():
     payload = _payload(asyncio.run(handle_call_tool("does_not_exist", {})))
 
     assert payload["ok"] is False
-    assert payload["error"]["code"] == "tool_execution_error"
+    assert payload["error"]["code"] == "unknown_tool"
     assert "Unknown tool" in payload["error"]["message"]
+    assert "call" in payload["suggested_next_actions"]
+
+
+def test_renamed_tool_error_points_to_new_name():
+    # issue #5: agent called the old logging name after consolidation.
+    payload = _payload(asyncio.run(handle_call_tool("start_uart_logging", {"port": "COM3"})))
+    assert payload["error"]["code"] == "unknown_tool"
+    assert 'start_logging(channel="uart")' in payload["error"]["message"]
+
+
+def test_missing_required_argument_gives_clear_error():
+    # issue #5: read_variable without 'name' produced a cryptic KeyError.
+    payload = _payload(asyncio.run(handle_call_tool("read_variable", {})))
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "missing_argument"
+    assert "name" in payload["error"]["message"]
 
 
 def test_server_exposes_run_and_wait_tools():

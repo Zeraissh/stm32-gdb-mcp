@@ -26,6 +26,16 @@ def test_byte_reversed_cpuid_is_flagged_by_byte_order_check():
     assert byte_order["ok"] is False
 
 
+def test_stm32l151_dev_id_0x427_is_recognized():
+    # issue #5: STM32L151CCUx (Cortex-M3) has dev_id 0x427; must not be flagged unknown.
+    result = evaluate_self_check(0x410FC231, 0x10010427, expected_family="STM32L151CCUx")
+    assert result["ok"] is True
+    assert result["core"] == "Cortex-M3"
+    assert "L151" in result["device"]
+    dev = next(c for c in result["checks"] if c["name"] == "dbgmcu_dev_id")
+    assert dev["ok"] is True
+
+
 def test_expected_family_mismatch_is_flagged():
     result = evaluate_self_check(L431_CPUID, L431_IDCODE, expected_family="STM32F407")
 
