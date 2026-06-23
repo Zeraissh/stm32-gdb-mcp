@@ -4,9 +4,9 @@
   "steps": [
     {"tool": "self_check", "args": {}},
     {"tool": "read_freertos", "args": {"what": "heap"}},
-    {"tool": "start_variable_tracking", "args": {"variable": "HEAP_FREE_SYMBOL", "interval_ms": 500}},
+    {"tool": "track_variable", "args": {"action": "start", "variable": "HEAP_FREE_SYMBOL", "interval_ms": 500}},
     {"tool": "continue_execution", "args": {}},
-    {"tool": "get_tracked_data", "args": {}},
+    {"tool": "track_variable", "args": {"action": "get"}},
     {"tool": "read_freertos_heap", "args": {}}
   ]
 }

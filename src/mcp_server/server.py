@@ -99,8 +99,8 @@ Key rules (the target must cooperate):
   port (e.g. COM3) is a SEPARATE USB endpoint and DOES coexist with debugging — read it
   with start_logging(channel="uart"), or let an external serial script use it without resetting.
 
-Determinism & sharing: every call is journaled (get_session_journal / get_session_timeline
-/ get_session_metrics). Replay a repro with run_scenario; bundle a full, shareable report
+Determinism & sharing: every call is journaled — review it with get_session(view=journal|
+timeline|metrics). Replay a repro with run_scenario; bundle a full, shareable report
 with export_debug_report. Most results carry suggested_next_actions — follow them.
 
 Self-reporting: if a tool behaves wrongly, gives a confusing result, or you get stuck on
@@ -937,36 +937,30 @@ async def handle_list_tools() -> list[Tool]:
         ),
         # --- Step 7: Tracing ---
         Tool(
-            name="start_variable_tracking",
-            description="Starts background tracking of a variable at a specified interval.",
+            name="track_variable",
+            description="Background variable tracking: action='start' (needs variable + interval_ms), "
+                        "'stop', or 'get' (returns the sampled data for trend/leak analysis).",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "variable": {"type": "string", "description": "Variable to track."},
-                    "interval_ms": {"type": "integer", "description": "Polling interval in milliseconds."}
+                    "action": {"type": "string", "enum": ["start", "stop", "get"], "description": "What to do."},
+                    "variable": {"type": "string", "description": "For 'start': the variable/expression to sample."},
+                    "interval_ms": {"type": "integer", "description": "For 'start': polling interval in ms."}
                 },
-                "required": ["variable", "interval_ms"]
+                "required": ["action"]
             }
-        ),
-        Tool(
-            name="stop_variable_tracking",
-            description="Stops background variable tracking.",
-            inputSchema={"type": "object", "properties": {}}
-        ),
-        Tool(
-            name="get_tracked_data",
-            description="Retrieves the tracked variable data for plotting or analysis.",
-            inputSchema={"type": "object", "properties": {}}
         ),
         # --- Phase 2: determinism (journal + replayable scenarios) ---
         Tool(
-            name="get_session_journal",
-            description="Returns the append-only journal of every tool call this session "
-                        "(sequence, timestamp, tool, args, ok, summary, duration) for reproducibility.",
+            name="get_session",
+            description="Returns this session's record by view: 'journal' (every tool call with "
+                        "args/ok/summary/duration; supports limit), 'timeline' (compact human-readable "
+                        "replay), or 'metrics' (per-tool call counts, success/failure, durations).",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "limit": {"type": "integer", "description": "Return only the most recent N entries."}
+                    "view": {"type": "string", "enum": ["journal", "timeline", "metrics"], "description": "Which view (default journal)."},
+                    "limit": {"type": "integer", "description": "journal: return only the most recent N entries."}
                 }
             }
         ),
@@ -995,18 +989,6 @@ async def handle_list_tools() -> list[Tool]:
                 },
                 "required": ["overrides"]
             }
-        ),
-        Tool(
-            name="get_session_timeline",
-            description="Returns a compact, human-readable timeline of every tool call this session "
-                        "(built on the journal) for a quick replay of what happened.",
-            inputSchema={"type": "object", "properties": {}}
-        ),
-        Tool(
-            name="get_session_metrics",
-            description="Returns per-tool metrics for this session: call counts, success/failure, "
-                        "and average/total duration, plus totals.",
-            inputSchema={"type": "object", "properties": {}}
         ),
         Tool(
             name="report_issue",
@@ -1374,7 +1356,7 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
                 f"Build failed (exit {result['returncode']})",
                 code="build_failed",
                 raw_response=payload,
-                suggested_next_actions=["get_session_journal"],
+                suggested_next_actions=["get_session"],
             )]
 
         elif name == "load_symbols":
@@ -1893,27 +1875,32 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
             result = validate_debug_config_data(arguments["config"])
             return [content_success(result)]
 
-        elif name == "start_variable_tracking":
-            variable_tracker.start(arguments["variable"], arguments["interval_ms"])
-            return [content_success(
-                {
+        elif name == "track_variable":
+            action = arguments["action"]
+            if action == "start":
+                variable_tracker.start(arguments["variable"], arguments["interval_ms"])
+                return [content_success({
                     "message": "Variable tracking started",
                     "variable": arguments["variable"],
                     "interval_ms": arguments["interval_ms"],
-                }
-            )]
+                })]
+            if action == "stop":
+                variable_tracker.stop()
+                return [content_success({"message": "Tracking stopped"})]
+            if action == "get":
+                return [content_success({"data": variable_tracker.get_data()})]
+            raise ValueError(f"Unknown track_variable action '{action}'. Use start, stop, or get.")
 
-        elif name == "stop_variable_tracking":
-            variable_tracker.stop()
-            return [content_success({"message": "Tracking stopped"})]
-
-        elif name == "get_tracked_data":
-            data = variable_tracker.get_data()
-            return [content_success(data)]
-
-        elif name == "get_session_journal":
-            entries = session_journal.get(limit=arguments.get("limit"))
-            return [content_success({"run_id": session_journal.run_id, "count": len(entries), "entries": entries})]
+        elif name == "get_session":
+            view = arguments.get("view", "journal")
+            if view == "timeline":
+                return [content_success({"run_id": session_journal.run_id, "timeline": session_journal.timeline()})]
+            if view == "metrics":
+                return [content_success({"run_id": session_journal.run_id, **compute_metrics(session_journal.get())})]
+            if view == "journal":
+                entries = session_journal.get(limit=arguments.get("limit"))
+                return [content_success({"run_id": session_journal.run_id, "count": len(entries), "entries": entries})]
+            raise ValueError(f"Unknown session view '{view}'. Use journal, timeline, or metrics.")
 
         elif name == "clear_session_journal":
             session_journal.clear()
@@ -1925,13 +1912,6 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
         elif name == "set_timeouts":
             updated = gdb_client.timeouts.set(arguments["overrides"])
             return [content_success({"message": "Timeouts updated", "timeouts": updated})]
-
-        elif name == "get_session_timeline":
-            return [content_success({"run_id": session_journal.run_id, "timeline": session_journal.timeline()})]
-
-        elif name == "get_session_metrics":
-            metrics = compute_metrics(session_journal.get())
-            return [content_success({"run_id": session_journal.run_id, **metrics})]
 
         elif name == "report_issue":
             title = arguments["title"]
@@ -1957,7 +1937,7 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
                 f"Could not file the issue automatically: {result['error']}",
                 code="issue_filing_failed",
                 raw_response={"repo": repo, "title": title, "prepared_body": result.get("body")},
-                suggested_next_actions=["get_session_journal"],
+                suggested_next_actions=["get_session"],
             )]
 
         elif name == "export_debug_report":
@@ -2065,7 +2045,7 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
 
 
 # Meta tools that operate on the journal itself are not journaled (avoids noise/recursion).
-_JOURNAL_SKIP = {"get_session_journal", "clear_session_journal", "get_session_timeline", "get_session_metrics"}
+_JOURNAL_SKIP = {"get_session", "clear_session_journal"}
 
 
 @server.call_tool()

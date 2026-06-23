@@ -43,11 +43,11 @@ Quick index of the stm32-gdb-mcp tools. Most results carry `suggested_next_actio
 ## Hypothesis & verify
 - `debug_until` (trap + run + decoded context), `capture_expressions`,
   `assert_expressions`, `compare_expressions_after_action`
-- `start_variable_tracking`, `stop_variable_tracking`, `get_tracked_data`, `set_watchpoint`
+- `track_variable` (action = start | stop | get), `set_watchpoint`
 
 ## Safety
 - `set_write_policy`, `get_write_audit_log`
 
 ## Determinism & observability
-- `run_scenario`, `get_session_journal`, `clear_session_journal`
-- `get_session_timeline`, `get_session_metrics`, `export_debug_report`
+- `run_scenario`, `batch`, `get_session` (view = journal | timeline | metrics), `clear_session_journal`
+- `export_debug_report`, `report_issue` (file a GitHub issue with the journal)

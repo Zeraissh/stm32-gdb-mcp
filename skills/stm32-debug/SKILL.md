@@ -116,8 +116,8 @@ See `scenarios/peripheral_check.json`.
 
 1. **FreeRTOS:** `read_freertos(what="heap")` → free bytes and minimum-ever-free. If min-ever-free
    is near zero, the heap is (or was) exhausted.
-2. **Trend it:** `start_variable_tracking` on the free-heap metric (e.g. `xFreeBytesRemaining`),
-   run the workload, `get_tracked_data` → a monotonic decline is a leak.
+2. **Trend it:** `track_variable(action="start")` on the free-heap metric (e.g. `xFreeBytesRemaining`),
+   run the workload, `track_variable(action="get")` → a monotonic decline is a leak.
 3. **Pin the leak:** breakpoint the allocator (`pvPortMalloc`/`malloc`) and the matching free,
    or `set_watchpoint` on the free-heap counter, to find allocations that are never released.
 
@@ -149,7 +149,7 @@ See `scenarios/assert_check.json`.
 
 ## Determinism & observability
 
-Every tool call is journaled. Use `get_session_timeline` / `get_session_metrics` to review
+Every tool call is journaled. Use `get_session(view="timeline")` / `get_session(view="metrics")` to review
 what happened, and `export_debug_report` to hand someone a fully reproducible record.
 
 ## Reference

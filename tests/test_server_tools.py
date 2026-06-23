@@ -650,12 +650,12 @@ def test_server_journals_tool_calls_and_exposes_journal():
     server_module.session_journal.clear()
     asyncio.run(handle_call_tool("get_debug_profile", {}))
 
-    payload = _payload(asyncio.run(handle_call_tool("get_session_journal", {})))
+    payload = _payload(asyncio.run(handle_call_tool("get_session", {"view": "journal"})))
 
     tools_recorded = [e["tool"] for e in payload["data"]["entries"]]
     assert "get_debug_profile" in tools_recorded
     # the journal-reading tool itself must not be journaled
-    assert "get_session_journal" not in tools_recorded
+    assert "get_session" not in tools_recorded
     assert payload["data"]["entries"][0]["duration_ms"] is not None
 
 
@@ -727,11 +727,11 @@ def test_session_metrics_and_timeline_reflect_calls():
     asyncio.run(handle_call_tool("get_debug_profile", {}))
     asyncio.run(handle_call_tool("get_debug_profile", {}))
 
-    metrics = _payload(asyncio.run(handle_call_tool("get_session_metrics", {})))
+    metrics = _payload(asyncio.run(handle_call_tool("get_session", {"view": "metrics"})))
     assert metrics["data"]["by_tool"]["get_debug_profile"]["calls"] == 2
     assert metrics["data"]["totals"]["calls"] == 2
 
-    timeline = _payload(asyncio.run(handle_call_tool("get_session_timeline", {})))
+    timeline = _payload(asyncio.run(handle_call_tool("get_session", {"view": "timeline"})))
     assert any("get_debug_profile" in line for line in timeline["data"]["timeline"])
 
 
