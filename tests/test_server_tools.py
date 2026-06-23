@@ -565,6 +565,9 @@ def test_start_debug_session_autoloads_symbols_from_profile(monkeypatch):
     loaded = []
 
     class FakeManager:
+        def is_alive(self):
+            return False
+
         def start(self, server_type, args):
             return 3333
 
@@ -593,6 +596,46 @@ def test_start_debug_session_autoloads_symbols_from_profile(monkeypatch):
     assert payload["ok"] is True
     assert payload["data"]["symbols_loaded"] is True
     assert loaded == ["build/fw.elf"]
+
+
+def test_start_debug_session_retries_a_transient_probe_busy(monkeypatch):
+    import mcp_server.server as server_module
+
+    calls = {"n": 0}
+
+    class FakeManager:
+        def is_alive(self):
+            return False
+
+        def start(self, server_type, args):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("GDB server failed to start. Logs: ... Error: open failed")
+            return 3333
+
+    class FakeClient:
+        def start_gdb(self):
+            pass
+
+        def connect(self, host, port):
+            return [{"m": "ok"}]
+
+        def load_symbols(self, path):
+            pass
+
+    class FakeProfile:
+        def get(self):
+            return {}
+
+    monkeypatch.setattr(server_module, "gdb_manager", FakeManager())
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile())
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "start_debug_session", {"server_type": "openocd", "server_args": ["-f", "x.cfg"]})))
+
+    assert payload["ok"] is True
+    assert calls["n"] == 2  # retried once past the transient "open failed"
 
 
 def test_recover_session_without_prior_session_errors():

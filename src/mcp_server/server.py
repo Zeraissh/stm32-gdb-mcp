@@ -1295,7 +1295,16 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
                     code="invalid_server_args",
                     suggested_next_actions=["load_debug_config", "inspect_project"],
                 )]
-            port = gdb_manager.start(server_type, args)
+            # A previous session may not have fully released the probe/port yet, so the
+            # restart can transiently fail with "open failed". retry_call backs off and
+            # retries those, so stop -> start (and CI loops) work without a manual restart.
+            if gdb_manager.is_alive():
+                try:
+                    gdb_client.stop_gdb()
+                except Exception:
+                    pass
+                gdb_manager.stop()
+            port = retry_call(lambda: gdb_manager.start(server_type, args), attempts=3, backoff_base=0.8)
             gdb_client.start_gdb()
             resp = gdb_client.connect("localhost", port)
             _last_session["server_type"] = server_type

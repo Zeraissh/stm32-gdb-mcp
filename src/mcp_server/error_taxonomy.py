@@ -18,8 +18,10 @@ _RULES = [
     (("gdb is not running", "no gdb", "not connected"), {
         "code": "no_session",
         "retryable": False,
-        "suggested_next_actions": ["start_debug_session"],
-        "hint": "No active debug session.",
+        "suggested_next_actions": ["start_debug_session", "recover_session"],
+        "hint": "No active debug session — start_debug_session (it auto-retries a busy probe), "
+                "or recover_session to restart from the last config. If start_debug_session isn't "
+                "in your tool list, invoke it via call(tool='start_debug_session', args={...}).",
     }),
     (("remote communication error", "remote connection closed", "connection reset"), {
         "code": "connection_lost",
