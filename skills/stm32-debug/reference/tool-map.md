@@ -1,52 +1,57 @@
 # Tool map (by purpose)
 
 Quick index of the stm32-gdb-mcp tools. Most results carry `suggested_next_actions`.
+The surface is lean: related ops are **action-dispatched families** — pass the discriminator
+(`action=…` or `what=…`). The old standalone names still work if you call them.
 
 ## Session & link
-- `start_debug_session`, `stop_debug_session`, `recover_session`
-- `self_check` (run right after connecting), `check_session_health`
-- `get_timeouts`, `set_timeouts`
+- `start_debug_session` (pass `session="name"` for multi-board, `serial=` to pick a probe),
+  `stop_debug_session`, `recover_session`, `list_sessions`, `close_session`
+- `self_check` (run right after connecting)
+- `session_diagnostics` (what = health | events | server_logs)
+- `timeouts` (action = get | set)
 
 ## Build & bring-up & flashing
 - `build_firmware` (Keil UV4 / CMake / make / custom — Keil .axf debugs like a .elf)
 - `flash_firmware`, `flash_and_run`, `verify_flash`, `reset_target`
-- `inspect_project`, `set_debug_profile`, `get_debug_profile`
-- `load_debug_config`, `save_debug_config`, `validate_debug_config`
+- `inspect_project`, `debug_profile` (action = get | set)
+- `debug_config` (action = load | save | validate)
 
 ## Execution control
 - `continue_execution`, `halt_execution`, `run_and_wait`, `wait_for_stop`
 - `step` (kind = over | into | out | instruction), `run_to_line`
-- `set_breakpoint` (condition/temporary/ignore_count), `delete_breakpoint`, `set_watchpoint`
+- `breakpoint` (action = set | delete | list | watch; set takes condition/temporary/ignore_count)
 
 ## Observe state (core must be halted)
-- `capture_state` (one-shot), `read_core_registers`, `read_call_stack`
-- `select_frame`, `read_frame_variables`, `read_variable`, `list_source`, `resolve_address`
-- `read_memory`, `write_memory` (guarded), `read_typed_memory`, `write_typed_memory`
+- `capture_state` (one-shot), `read_call_stack`, `read_variable`
+- `read_registers` (what = core | fault | cycle)
+- `frame` (action = select | source | variables)
+- `read_memory`, `write_memory` (guarded), `typed_memory` (action = read | write)
 - `read_peripheral_register`, `decode_peripheral_register`, `load_svd`
-- `disassemble`, `list_functions`, `list_variables`, `lookup_type`, `sizeof`, `address_of`
+- `disassemble`, `inspect_symbol` (what = size | type | address | resolve | functions | variables)
 
 ## Fault & crash triage
 - `reconstruct_fault_context` (recovers faulting PC -> source), `diagnose_fault`
 - `analyze_stack` (used/free/overflow verdict — the key tool for stack overflows)
-- `read_fault_registers`, `capture_debug_snapshot`, `capture_coredump`, `load_coredump`
+- `read_registers` (what = fault), `snapshot` (scope = full | rtos), `coredump` (action = capture | load)
 
 ## RTOS (FreeRTOS)
-- `detect_rtos`, `capture_rtos_snapshot`
+- `detect_rtos`, `snapshot` (scope = rtos)
 - `read_freertos` (what = current_task | tasks | task_lists | queue | mutex | heap)
 
 ## Logging & tracing
-- `start_logging` / `stop_logging` / `get_logs` / `clear_logs` (channel = rtt | swo | uart)
+- `logging` (action = start | stop | get | clear; channel = rtt | swo | uart)
 
 ## Timing
-- `read_cycle_counter`, `sample_pc`, `configure_debug_freeze`
+- `read_registers` (what = cycle), `sample_pc`, `configure_debug_freeze`
 
 ## Hypothesis & verify
-- `debug_until` (trap + run + decoded context), `capture_expressions`,
-  `assert_expressions`, `compare_expressions_after_action`
-- `track_variable` (action = start | stop | get), `set_watchpoint`
+- `debug_until` (trap + run + decoded context)
+- `expressions` (action = capture | assert | compare)
+- `track_variable` (action = start | stop | get), `breakpoint` (action = watch)
 
 ## Safety
-- `set_write_policy`, `get_write_audit_log`
+- `write_guard` (action = policy | audit)
 
 ## Determinism & observability
 - `run_scenario`, `batch`, `get_session` (view = journal | timeline | metrics), `clear_session_journal`

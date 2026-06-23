@@ -68,13 +68,21 @@ Tool not in your list? Some clients cap how many tools they expose, so a tool yo
 (e.g. start_debug_session) may be hidden. Reach ANY tool via call(tool="<name>", args={...}),
 or run several with batch — these always work even when the tool isn't directly listed.
 
+The surface is lean: related ops are action-dispatched families — pass the discriminator.
+breakpoint(action=set|delete|list|watch), logging(action=start|stop|get|clear, channel=…),
+expressions(action=assert|capture|compare), debug_profile(action=get|set),
+debug_config(action=load|save|validate), read_registers(what=core|fault|cycle),
+inspect_symbol(what=size|type|address|resolve|functions|variables), frame(action=select|source|
+variables), write_guard(action=policy|audit), coredump, timeouts, typed_memory, snapshot,
+session_diagnostics. (Old standalone names still work if you call them.)
+
 Core workflow:
 0. Need OpenOCD server_args? Call suggest_server_args(mcu, probe) — it returns the
    right -f interface/target cfgs (validated against OpenOCD's bundled scripts).
    NEVER search the disk for .cfg files; OpenOCD resolves them from its scripts dir.
 1. start_debug_session, then ALWAYS run self_check first — it validates byte order,
    the Cortex-M core, and the device family, catching link/config faults early.
-2. Set set_debug_profile (mcu, elf_path, svd_path) — symbols then auto-load on every
+2. Set debug_profile(action=set, mcu, elf_path, svd_path) — symbols then auto-load on every
    connect/recover_session (symbols are per-session). To load symbols mid-session without
    flashing, call load_symbols. Without symbols, breakpoints on function names won't resolve.
 3. Reproduce with the fewest calls: prefer the composites over manual sequences —
@@ -82,7 +90,7 @@ Core workflow:
    decoded backtrace/locals in one call), capture_state ("where am I" in one call).
 4. Diagnose a crash with reconstruct_fault_context: it unwinds the stacked exception
    frame and resolves the true faulting PC to source file:line.
-5. Verify a fix with compare_expressions_after_action / assert_expressions.
+5. Verify a fix with expressions(action=compare) / expressions(action=assert).
 
 Key rules (the target must cooperate):
 - Reads (registers/memory/frames) require a HALTED core. If a read fails with
@@ -90,20 +98,20 @@ Key rules (the target must cooperate):
 - run_and_wait returns a structured stop event; on timeout it leaves the core RUNNING.
 - A breakpoint TIMEOUT means the code path was NOT reached — do NOT just retry run_and_wait.
   The location is usually gated by a flag/state/stimulus. Instead: halt_execution, then
-  capture_state + list_breakpoints (hit_count=0 confirms it was never reached); read the
+  capture_state + breakpoint(action=list) (hit_count=0 confirms it was never reached); read the
   gating flag; then either set a breakpoint EARLIER on the path (or where the flag is set),
   drive the precondition (write the flag/variable, send the UART/input stimulus), or use a
   conditional breakpoint. Forcing a flag via write_memory changes behavior — note it.
 - Memory writes are guarded: option bytes, IWDG, and WWDG are blocked by default;
-  use set_write_policy to allow, or dry_run to simulate. Every write is audited.
+  use write_guard(action=policy) to allow, or dry_run to simulate. Every write is audited.
 - If halting causes mysterious resets, configure_debug_freeze (freeze IWDG/WWDG/timers).
 - On probe_unavailable / connection_lost, call recover_session; tune flaky probes with
-  set_timeouts.
+  timeouts(action=set).
 - The ST-Link SWD/debug interface is EXCLUSIVE: while this MCP session is active, never
   start a second OpenOCD/GDB on the same probe (e.g. a verify script's own --reset will
   fail with "ST-Link in use"). Reset via reset_target instead. The ST-Link virtual COM
   port (e.g. COM3) is a SEPARATE USB endpoint and DOES coexist with debugging — read it
-  with start_logging(channel="uart"), or let an external serial script use it without resetting.
+  with logging(action=start, channel="uart"), or let an external serial script use it without resetting.
 
 Determinism & sharing: every call is journaled — review it with get_session(view=journal|
 timeline|metrics). Replay a repro with run_scenario; bundle a full, shareable report
@@ -1249,9 +1257,10 @@ async def handle_list_tools() -> list[Tool]:
     # Compact mode (STM32_GDB_MCP_COMPACT=1): expose only a small core so nothing gets
     # truncated under tight client tool-count caps. Every other tool is still reachable
     # via call(tool, args).
+    advertised = _advertised_tools(_tools)
     if os.environ.get("STM32_GDB_MCP_COMPACT"):
-        return [t for t in _tools if t.name in _CORE_TOOLS]
-    return _tools
+        return [t for t in advertised if t.name in _CORE_TOOLS]
+    return advertised
 
 
 # Tools consolidated in the slim-down: map old name -> new call form for clear errors.
@@ -1279,16 +1288,101 @@ _RENAMED_TOOLS = {
 # Core tools kept visible in compact mode; everything else is reached via `call`.
 _CORE_TOOLS = {
     "suggest_server_args", "start_debug_session", "stop_debug_session", "recover_session",
-    "self_check", "set_debug_profile", "load_symbols",
+    "self_check", "debug_profile", "load_symbols",
     "build_firmware", "flash_firmware", "flash_and_run",
-    "reset_target", "halt_execution", "run_and_wait", "set_breakpoint",
+    "reset_target", "halt_execution", "run_and_wait", "breakpoint",
     "debug_until", "capture_state",
     "read_memory", "write_memory", "read_variable", "read_call_stack",
     "reconstruct_fault_context", "analyze_stack",
-    "start_logging", "get_logs", "read_peripheral_register",
+    "logging", "read_peripheral_register",
     "batch", "call", "run_scenario", "get_session", "report_issue",
     "list_sessions", "close_session",
 }
+
+
+# Tool-surface consolidation: a dozen single-purpose tools collapse into action-dispatched
+# families (superpowers-style lean surface). Each merged tool routes to the existing,
+# already-tested handler, so every old name still works when called via `call` or directly.
+# Spec: merged_name -> (discriminator, {value: underlying_tool}, summary, arg_help).
+_MERGED = {
+    "logging": ("action",
+        {"start": "start_logging", "stop": "stop_logging", "get": "get_logs", "clear": "clear_logs"},
+        "Firmware log capture over a channel.",
+        "action=start|stop|get|clear; channel=rtt|swo|uart (start also takes the channel's config args)."),
+    "breakpoint": ("action",
+        {"set": "set_breakpoint", "delete": "delete_breakpoint", "list": "list_breakpoints", "watch": "set_watchpoint"},
+        "Breakpoint / watchpoint management.",
+        "action=set(location[,condition,temporary,commands]) | delete(number) | list | watch(expression)."),
+    "expressions": ("action",
+        {"assert": "assert_expressions", "capture": "capture_expressions", "compare": "compare_expressions_after_action"},
+        "Evaluate C/GDB expressions.",
+        "action=assert(expressions) | capture(expressions) | compare(expressions, action_to_run_between)."),
+    "coredump": ("action",
+        {"capture": "capture_coredump", "load": "load_coredump"},
+        "Core-dump capture / load.",
+        "action=capture(path) | load(path)."),
+    "timeouts": ("action",
+        {"get": "get_timeouts", "set": "set_timeouts"},
+        "GDB operation timeouts.",
+        "action=get | set(connect,reset,memory,...)."),
+    "debug_config": ("action",
+        {"load": "load_debug_config", "save": "save_debug_config", "validate": "validate_debug_config"},
+        "Debug-config file (.json) management.",
+        "action=load(path) | save(path) | validate(path)."),
+    "debug_profile": ("action",
+        {"get": "get_debug_profile", "set": "set_debug_profile"},
+        "Active debug profile (mcu/elf/svd/probe).",
+        "action=get | set(mcu,elf_path,svd_path,...)."),
+    "read_registers": ("what",
+        {"core": "read_core_registers", "fault": "read_fault_registers", "cycle": "read_cycle_counter"},
+        "Read CPU register groups.",
+        "what=core | fault(CFSR/HFSR decode) | cycle(DWT cycle counter)."),
+    "inspect_symbol": ("what",
+        {"size": "sizeof", "type": "lookup_type", "address": "address_of",
+         "resolve": "resolve_address", "functions": "list_functions", "variables": "list_variables"},
+        "Symbol / type introspection.",
+        "what=size(type) | type(name) | address(symbol) | resolve(address) | functions(regex) | variables."),
+    "typed_memory": ("action",
+        {"read": "read_typed_memory", "write": "write_typed_memory"},
+        "Typed (struct-aware) memory access.",
+        "action=read(address,type) | write(address,type,value)."),
+    "write_guard": ("action",
+        {"policy": "set_write_policy", "audit": "get_write_audit_log"},
+        "Memory-write guardrail.",
+        "action=policy(mode,allow) | audit."),
+    "snapshot": ("scope",
+        {"full": "capture_debug_snapshot", "rtos": "capture_rtos_snapshot"},
+        "One-shot diagnostic snapshot.",
+        "scope=full(regs+stack+faults) | rtos(task/queue state)."),
+    "frame": ("action",
+        {"select": "select_frame", "source": "list_source", "variables": "read_frame_variables"},
+        "Stack-frame navigation.",
+        "action=select(number) | source(around a frame) | variables(of selected frame)."),
+    "session_diagnostics": ("what",
+        {"health": "check_session_health", "events": "get_gdb_events", "server_logs": "get_gdb_server_logs"},
+        "Session/transport diagnostics.",
+        "what=health | events(recent GDB/MI) | server_logs(GDB-server stderr)."),
+}
+_MERGED_AWAY = {old for _, mapping, *_ in _MERGED.values() for old in mapping.values()}
+_MERGED_TOOLS = [
+    Tool(
+        name=mname,
+        description=f"{summary} {arg_help}",
+        inputSchema={
+            "type": "object",
+            "properties": {disc: {"type": "string", "enum": list(mapping),
+                                  "description": "Which operation to perform."}},
+            "required": [disc],
+            "additionalProperties": True,
+        },
+    )
+    for mname, (disc, mapping, summary, arg_help) in _MERGED.items()
+]
+
+
+def _advertised_tools(base: list) -> list:
+    """The lean public surface: drop merged-away singles, add the action-dispatched families."""
+    return [t for t in base if t.name not in _MERGED_AWAY] + _MERGED_TOOLS
 
 
 def _log_reader(sess, channel: str):
@@ -1347,6 +1441,20 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
     _last_session = _sess.last_session
 
     try:
+        # Action-dispatched families: translate to the underlying tool and reuse its handler.
+        if name in _MERGED:
+            disc, mapping, _, _ = _MERGED[name]
+            choice = arguments.get(disc)
+            if choice not in mapping:
+                return [content_error(
+                    f"{name} requires '{disc}' to be one of {list(mapping)}.",
+                    code="missing_argument",
+                    suggested_next_actions=[f"call {name} with {disc}=<one of {list(mapping)}>"],
+                )]
+            forwarded = {k: v for k, v in arguments.items() if k != disc}
+            forwarded["session"] = _sess.id  # preserve session across the internal hop
+            return await _dispatch_tool(mapping[choice], forwarded)
+
         if name == "start_debug_session":
             server_type = arguments["server_type"]
             args = list(arguments.get("server_args", []))

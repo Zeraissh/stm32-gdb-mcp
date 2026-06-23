@@ -25,15 +25,15 @@ the way a senior embedded engineer would. The model is a loop:
 - **Prefer composites over manual sequences** (fewest round-trips): `flash_and_run`,
   `debug_until`, `capture_state`.
 - **Writes are guarded.** Option bytes, IWDG, WWDG are blocked by default. Use
-  `set_write_policy` to allow specific regions, or `dry_run` to simulate. All writes
-  are audited (`get_write_audit_log`).
+  `write_guard(action=policy)` to allow specific regions, or `dry_run` to simulate. All
+  writes are audited (`write_guard(action=audit)`).
 - **On a wedged/dropped probe** (`probe_unavailable`, `connection_lost`) call
   `recover_session`. Never hard-kill the GDB server — it can wedge the probe's USB.
 - **ST-Link SWD is exclusive.** While a debug session is active, never start a second
   OpenOCD/GDB on the same probe — a serial verify script's `--reset` (its own OpenOCD)
   fails with "ST-Link in use". Reset via `reset_target`. The ST-Link virtual COM port
   (e.g. COM3) is a SEPARATE USB endpoint that coexists with debugging — read it with
-  `start_logging(channel="uart")`, or run the serial script WITHOUT `--reset`.
+  `logging(action=start, channel="uart")`, or run the serial script WITHOUT `--reset`.
 - **Follow `suggested_next_actions`** on every result — they encode the next loop step.
 - **Hit an MCP bug? Self-report.** If a tool clearly misbehaves or you're stuck on what
   looks like an MCP problem (not a target bug), call `report_issue(title, description)` —
@@ -44,7 +44,7 @@ the way a senior embedded engineer would. The model is a loop:
 ```
 start_debug_session(server_type="openocd", server_args=[...])
 self_check(expected_family="STM32L4...")
-set_debug_profile(mcu=..., elf_path=..., svd_path=...)   # so symbols/peripherals resolve
+debug_profile(action=set, mcu=..., elf_path=..., svd_path=...)   # so symbols/peripherals resolve
 flash_and_run(file_path="fw.elf", run_to="main")          # flash + reset + break at main, one call
 ```
 
@@ -57,16 +57,16 @@ See `scenarios/bringup.json` for a replayable template.
 2. `reconstruct_fault_context` — it decodes the fault registers, unwinds the auto-stacked
    exception frame from MSP/PSP via EXC_RETURN, recovers the **true faulting PC**, and
    resolves it to `file:line`.
-3. `list_source` and `read_frame_variables` around that PC to see the offending code/state.
+3. `frame(action=source)` and `frame(action=variables)` around that PC to see the offending code/state.
 
 See `scenarios/hardfault.json`.
 
 ## Find a hang / livelock
 
 1. If the core is running, `halt_execution`, then `capture_state` to see where it stopped.
-2. `read_call_stack` to see who is spinning; for RTOS, `capture_rtos_snapshot` /
+2. `read_call_stack` to see who is spinning; for RTOS, `snapshot(scope=rtos)` /
    `read_freertos(what="tasks")` to find the blocked/looping task and check queues/mutexes/heap.
-3. For timing/hot-spots, `read_cycle_counter` and `sample_pc`.
+3. For timing/hot-spots, `read_registers(what=cycle)` and `sample_pc`.
 
 ## Diagnose a stack overflow (e.g. crash during flash read/write)
 
@@ -74,11 +74,11 @@ Stack overflow is a *technique-specific* hunt — don't single-step blindly. Sig
 a large local buffer or deep recursion drives SP below the stack limit, corrupting
 whatever is beneath it, which later HardFaults (often a stacking fault).
 
-1. **Orient:** `inspect_project` (get `.map`/`.elf`), `set_debug_profile(elf_path, mcu)`,
-   `list_functions("Flash|Write|Read")` to find the exact function.
+1. **Orient:** `inspect_project` (get `.map`/`.elf`), `debug_profile(action=set, elf_path, mcu)`,
+   `inspect_symbol(what=functions, regex="Flash|Write|Read")` to find the exact function.
 2. **Set the trap** (pick one):
-   - Catch the fault: `set_breakpoint("HardFault_Handler")`, then `run_and_wait`.
-   - Catch the overflow moment: `set_watchpoint(<stack_limit_addr>, "w")` — it triggers
+   - Catch the fault: `breakpoint(action=set, location="HardFault_Handler")`, then `run_and_wait`.
+   - Catch the overflow moment: `breakpoint(action=watch, <stack_limit_addr>, "w")` — it triggers
      the instant the stack grows past the guard, so you catch the deepest call.
 3. **Reproduce:** trigger the flash op (`debug_until(location="Flash_Write")`, then continue
    / drive it over UART).
@@ -127,9 +127,9 @@ See `scenarios/heap_check.json`.
 
 Asserts usually park in an infinite loop in the handler. Catch it and read the context.
 
-1. `set_breakpoint` on the assert handler (`assert_failed`, `__aeabi_assert`,
+1. `breakpoint(action=set)` on the assert handler (`assert_failed`, `__aeabi_assert`,
    `vAssertCalled`, or the project's `configASSERT` target), then `run_and_wait`.
-2. `read_frame_variables` → the failing file/line/expression arguments.
+2. `frame(action=variables)` → the failing file/line/expression arguments.
 3. `read_call_stack` → who triggered it. Fix the offending condition.
 
 See `scenarios/assert_check.json`.
@@ -144,7 +144,7 @@ See `scenarios/assert_check.json`.
 
 ## Verify a fix
 
-- Use `compare_expressions_after_action` / `assert_expressions` to prove the fix changed
+- Use `expressions(action=compare)` / `expressions(action=assert)` to prove the fix changed
   behavior, rather than eyeballing. Re-run the saved scenario to confirm green.
 
 ## Determinism & observability

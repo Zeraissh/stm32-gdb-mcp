@@ -17,27 +17,44 @@ def test_server_exposes_debug_closure_tools():
     tools = asyncio.run(handle_list_tools())
     tool_names = {tool.name for tool in tools}
 
-    assert "capture_debug_snapshot" in tool_names
+    # First-class tools that survive consolidation.
     assert "diagnose_fault" in tool_names
-    assert "read_core_registers" in tool_names
-    assert "get_gdb_server_logs" in tool_names
     assert "decode_peripheral_register" in tool_names
-    assert "set_debug_profile" in tool_names
-    assert "get_debug_profile" in tool_names
     assert "inspect_project" in tool_names
     assert "detect_rtos" in tool_names
     assert "read_freertos" in tool_names
-    assert "capture_rtos_snapshot" in tool_names
-    assert "start_logging" in tool_names
-    assert "stop_logging" in tool_names
-    assert "get_logs" in tool_names
-    assert "clear_logs" in tool_names
-    assert "capture_expressions" in tool_names
-    assert "assert_expressions" in tool_names
-    assert "compare_expressions_after_action" in tool_names
-    assert "load_debug_config" in tool_names
-    assert "save_debug_config" in tool_names
-    assert "validate_debug_config" in tool_names
+
+    # Action-dispatched families replace their single-purpose tools.
+    assert "logging" in tool_names
+    assert "expressions" in tool_names
+    assert "debug_config" in tool_names
+    assert "debug_profile" in tool_names
+    assert "read_registers" in tool_names
+    assert "snapshot" in tool_names
+    assert "session_diagnostics" in tool_names
+
+    # The merged-away singles are no longer advertised (still reachable via `call`).
+    for gone in ("start_logging", "stop_logging", "get_logs", "clear_logs",
+                 "capture_expressions", "assert_expressions", "compare_expressions_after_action",
+                 "load_debug_config", "save_debug_config", "validate_debug_config",
+                 "get_debug_profile", "set_debug_profile", "read_core_registers",
+                 "capture_debug_snapshot", "capture_rtos_snapshot", "get_gdb_server_logs"):
+        assert gone not in tool_names
+
+
+def test_merged_family_routes_to_underlying_handler():
+    # debug_profile(action=set|get) must behave exactly like the old tools.
+    asyncio.run(handle_call_tool("debug_profile", {"action": "set", "mcu": "STM32F411"}))
+    got = _payload(asyncio.run(handle_call_tool("debug_profile", {"action": "get"})))
+    assert got["ok"] is True and got["data"]["mcu"] == "STM32F411"
+
+    # missing discriminator -> clear error, not a crash.
+    err = _payload(asyncio.run(handle_call_tool("debug_profile", {})))
+    assert err["ok"] is False and err["error"]["code"] == "missing_argument"
+
+    # the underlying name still works directly (back-compat for `call` / older agents).
+    direct = _payload(asyncio.run(handle_call_tool("get_debug_profile", {})))
+    assert direct["ok"] is True
 
 
 def test_reset_target_exposes_strategy_and_custom_command_options():
@@ -49,15 +66,18 @@ def test_reset_target_exposes_strategy_and_custom_command_options():
     assert "command" in properties
 
 
-def test_unified_logging_tools_handle_all_channels():
+def test_unified_logging_tool_dispatches_by_action_and_channel():
     tools = asyncio.run(handle_list_tools())
-    start = next(t for t in tools if t.name == "start_logging")
-    assert set(start.inputSchema["properties"]["channel"]["enum"]) == {"rtt", "swo", "uart"}
-
-    # the 12 old per-channel logging tools are gone (consolidated)
     names = {t.name for t in tools}
+
+    # one 'logging' tool with an action discriminator replaces start/stop/get/clear_logs
+    log = next(t for t in tools if t.name == "logging")
+    assert set(log.inputSchema["properties"]["action"]["enum"]) == {"start", "stop", "get", "clear"}
+
+    # the 12 old per-channel logging tools and the 4 per-verb ones are gone (consolidated)
     for old in ("start_rtt_logging", "start_swo_logging", "start_uart_logging",
-                "get_uart_logs", "clear_rtt_logs"):
+                "get_uart_logs", "clear_rtt_logs",
+                "start_logging", "stop_logging", "get_logs", "clear_logs"):
         assert old not in names
 
 
@@ -181,14 +201,17 @@ def test_server_exposes_tier3_depth_tools():
     tool_names = {tool.name for tool in tools}
 
     for expected in (
-        "step", "run_to_line", "disassemble",
-        "list_functions", "list_variables", "lookup_type", "sizeof", "address_of",
-        "capture_coredump", "load_coredump", "verify_flash",
-        "read_cycle_counter", "sample_pc",
+        "step", "run_to_line", "disassemble", "verify_flash", "sample_pc",
+        # depth ops now live behind action-dispatched families:
+        "inspect_symbol",   # sizeof / lookup_type / address_of / resolve_address / list_*
+        "coredump",         # capture / load
+        "read_registers",   # core / fault / cycle
     ):
         assert expected in tool_names
-    # old per-kind step tools merged into `step`
+    # old per-kind step tools merged into `step`; depth singles merged into families
     assert "step_out" not in tool_names and "step_into" not in tool_names
+    for gone in ("sizeof", "lookup_type", "address_of", "capture_coredump", "read_cycle_counter"):
+        assert gone not in tool_names
 
 
 def test_read_cycle_counter_enables_then_reads(monkeypatch):
@@ -218,7 +241,9 @@ def test_server_exposes_check_session_health_tool():
     tools = asyncio.run(handle_list_tools())
     tool_names = {tool.name for tool in tools}
 
-    assert "check_session_health" in tool_names
+    # check_session_health is now session_diagnostics(what="health")
+    assert "session_diagnostics" in tool_names
+    assert "check_session_health" not in tool_names
 
 
 def test_check_session_health_reports_status(monkeypatch):
@@ -288,8 +313,10 @@ def test_server_exposes_write_guard_tools():
     tools = asyncio.run(handle_list_tools())
     tool_names = {tool.name for tool in tools}
 
-    assert "set_write_policy" in tool_names
-    assert "get_write_audit_log" in tool_names
+    # set_write_policy / get_write_audit_log merged into write_guard(action=policy|audit)
+    assert "write_guard" in tool_names
+    assert "set_write_policy" not in tool_names
+    assert "get_write_audit_log" not in tool_names
 
 
 def test_write_to_protected_region_is_blocked_without_touching_client(monkeypatch):
@@ -396,24 +423,27 @@ def test_run_and_wait_timeout_suggests_investigation_not_retry(monkeypatch):
     assert "run_and_wait" not in actions  # do not nudge a blind retry
 
 
-def test_set_breakpoint_exposes_condition_and_temporary_options():
+def test_breakpoint_family_exposes_actions_and_honors_options():
     tools = asyncio.run(handle_list_tools())
-    bp_tool = next(tool for tool in tools if tool.name == "set_breakpoint")
-    properties = bp_tool.inputSchema["properties"]
+    bp_tool = next(tool for tool in tools if tool.name == "breakpoint")
+    assert set(bp_tool.inputSchema["properties"]["action"]["enum"]) == {"set", "delete", "list", "watch"}
+    assert "set_breakpoint" not in {t.name for t in tools}
 
-    assert "condition" in properties
-    assert "temporary" in properties
-    assert "ignore_count" in properties
+    # condition/temporary still flow through the family to the underlying handler.
+    payload = _payload(asyncio.run(handle_call_tool(
+        "breakpoint", {"action": "list"})))  # list works without a live session shape
+    assert "ok" in payload
 
 
 def test_server_exposes_frame_navigation_tools():
     tools = asyncio.run(handle_list_tools())
     tool_names = {tool.name for tool in tools}
 
-    assert "select_frame" in tool_names
-    assert "read_frame_variables" in tool_names
-    assert "list_source" in tool_names
-    assert "resolve_address" in tool_names
+    # select_frame / list_source / read_frame_variables merged into frame(action=...)
+    assert "frame" in tool_names
+    assert "inspect_symbol" in tool_names  # resolve_address lives here now
+    for gone in ("select_frame", "read_frame_variables", "list_source", "resolve_address"):
+        assert gone not in tool_names
 
 
 def test_read_frame_variables_returns_decoded_map(monkeypatch):
@@ -525,9 +555,10 @@ def test_compact_mode_exposes_small_core_with_call(monkeypatch):
     assert "start_debug_session" in names and "call" in names and "batch" in names
     assert len(names) < 35                     # small enough to never be truncated
     assert "read_freertos" not in names        # reachable via call, not listed in compact
-    # full mode still exposes everything
+    # full mode exposes the consolidated surface (well under the old 87, lean like superpowers)
     monkeypatch.delenv("STM32_GDB_MCP_COMPACT")
-    assert len(asyncio.run(handle_list_tools())) > 80
+    full = len(asyncio.run(handle_list_tools()))
+    assert 50 <= full <= 70
 
 
 def test_batch_runs_steps_in_one_call_returning_full_results():
