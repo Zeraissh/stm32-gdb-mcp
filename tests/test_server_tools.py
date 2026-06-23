@@ -97,6 +97,31 @@ def test_missing_required_argument_gives_clear_error():
     assert "name" in payload["error"]["message"]
 
 
+def test_named_sessions_have_isolated_state():
+    # set_debug_profile on a named session must not touch the default session.
+    asyncio.run(handle_call_tool("set_debug_profile", {"mcu": "STM32F407"}))  # default
+    asyncio.run(handle_call_tool("set_debug_profile", {"session": "rackA", "mcu": "STM32L431"}))
+
+    default = _payload(asyncio.run(handle_call_tool("get_debug_profile", {})))
+    racka = _payload(asyncio.run(handle_call_tool("get_debug_profile", {"session": "rackA"})))
+
+    assert default["data"]["mcu"] == "STM32F407"
+    assert racka["data"]["mcu"] == "STM32L431"  # isolated, not overwritten
+
+
+def test_list_and_close_sessions():
+    import mcp_server.server as server_module
+
+    asyncio.run(handle_call_tool("self_check", {"session": "rackB"}))  # lazily creates rackB (will error on hw, but creates the session)
+    sessions = _payload(asyncio.run(handle_call_tool("list_sessions", {})))
+    ids = {row["session"] for row in sessions["data"]["sessions"]}
+    assert "default" in ids and "rackB" in ids
+
+    closed = _payload(asyncio.run(handle_call_tool("close_session", {"session_id": "rackB"})))
+    assert closed["data"]["closed"] is True
+    assert "rackB" not in server_module.session_manager.sessions
+
+
 def test_server_exposes_run_and_wait_tools():
     tools = asyncio.run(handle_list_tools())
     tool_names = {tool.name for tool in tools}

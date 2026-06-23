@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -34,6 +35,7 @@ from .debug_experiments import (
 from .debug_freeze import plan_freeze_writes, resolve_freeze_targets, supported_families
 from .debug_profile import DebugProfileStore
 from .debug_report import build_report, write_report
+from .debug_session import SessionManager
 from .debug_snapshot import collect_debug_snapshot
 from .error_taxonomy import classify_error
 from .exception_frame import build_fault_context
@@ -110,6 +112,11 @@ with export_debug_report. Most results carry suggested_next_actions — follow t
 Self-reporting: if a tool behaves wrongly, gives a confusing result, or you get stuck on
 what looks like an MCP bug (not a target bug), call report_issue(title, description) — it
 files a structured GitHub issue auto-bundling this session's journal so the MCP can be fixed.
+
+Multiple boards: pass session="<name>" to ANY tool to target an isolated debug session
+(its own connection, profile, breakpoints, logs). Omit it for the single 'default' session.
+list_sessions / close_session manage them. For truly concurrent OpenOCD instances, give each
+session distinct server_args (gdb_port and adapter serial).
 """
 
 server = Server("stm32-gdb-mcp", instructions=SERVER_INSTRUCTIONS)
@@ -126,6 +133,24 @@ memory_guard = MemoryWriteGuard()
 session_journal = SessionJournal()
 _last_session = {"server_type": None, "server_args": []}
 _reported_issues = {}  # fingerprint -> issue url (in-session dedup)
+
+# Phase 3: named per-target sessions for multi-board / CI. The "default" session reuses
+# the module globals above (single-target back-compat + existing tests); named sessions get
+# fully isolated objects from the SessionManager.
+session_manager = SessionManager()
+_SESSION_ATTRS = ("gdb_manager", "gdb_client", "svd_parser", "variable_tracker",
+                  "debug_profile", "freertos_inspector", "rtt_log_reader", "swo_log_reader",
+                  "uart_log_reader", "memory_guard", "last_session")
+
+
+def _resolve_session(arguments: dict):
+    """Return the per-target object bundle for arguments['session'] (default 'default')."""
+    sid = arguments.get("session") or "default"
+    if sid == "default":
+        g = globals()
+        return types.SimpleNamespace(id="default", **{a: g[a if a != "last_session" else "_last_session"]
+                                                       for a in _SESSION_ATTRS})
+    return session_manager.get(sid)
 
 
 def _mcp_version() -> str:
@@ -989,6 +1014,25 @@ async def handle_list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}}
         ),
         Tool(
+            name="list_sessions",
+            description="Lists all debug target sessions (the 'default' one plus any named) with "
+                        "their liveness and port. To debug MULTIPLE boards at once, pass a 'session' "
+                        "argument (any string) to any tool — e.g. start_debug_session(session='rackA', "
+                        "...) — and each gets fully isolated state.",
+            inputSchema={"type": "object", "properties": {}}
+        ),
+        Tool(
+            name="close_session",
+            description="Closes a named debug session, tearing down its GDB client and server.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string", "description": "Name of the session to close, e.g. 'rackA'."}
+                },
+                "required": ["session_id"]
+            }
+        ),
+        Tool(
             name="get_timeouts",
             description="Returns the current named GDB operation timeouts (connect, reset, memory, "
                         "registers, source, run, download).",
@@ -1242,23 +1286,24 @@ _CORE_TOOLS = {
     "reconstruct_fault_context", "analyze_stack",
     "start_logging", "get_logs", "read_peripheral_register",
     "batch", "call", "run_scenario", "get_session", "report_issue",
+    "list_sessions", "close_session",
 }
 
 
-def _log_reader(channel: str):
-    readers = {"rtt": rtt_log_reader, "swo": swo_log_reader, "uart": uart_log_reader}
+def _log_reader(sess, channel: str):
+    readers = {"rtt": sess.rtt_log_reader, "swo": sess.swo_log_reader, "uart": sess.uart_log_reader}
     if channel not in readers:
         raise ValueError(f"Unknown log channel '{channel}'. Use rtt, swo, or uart.")
     return readers[channel]
 
 
-def _autoload_symbols() -> bool:
+def _autoload_symbols(sess) -> bool:
     """Load symbols from the profile's elf_path after a connect, if configured."""
-    elf_path = debug_profile.get().get("elf_path")
+    elf_path = sess.debug_profile.get().get("elf_path")
     if not elf_path:
         return False
     try:
-        gdb_client.load_symbols(elf_path)
+        sess.gdb_client.load_symbols(elf_path)
         return True
     except Exception:
         return False
@@ -1282,6 +1327,23 @@ def _stop_event_next_actions(event: dict) -> list[str]:
 async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
     if arguments is None:
         arguments = {}
+
+    # Resolve the per-target session and bind its objects as locals; handlers below use
+    # these names. The "default" session reads the module globals (back-compat).
+    _sess = _resolve_session(arguments)
+    if "session" in arguments:
+        arguments = {k: v for k, v in arguments.items() if k != "session"}  # handlers don't see the selector
+    gdb_manager = _sess.gdb_manager
+    gdb_client = _sess.gdb_client
+    svd_parser = _sess.svd_parser
+    variable_tracker = _sess.variable_tracker
+    debug_profile = _sess.debug_profile
+    freertos_inspector = _sess.freertos_inspector
+    memory_guard = _sess.memory_guard
+    rtt_log_reader = _sess.rtt_log_reader
+    swo_log_reader = _sess.swo_log_reader
+    uart_log_reader = _sess.uart_log_reader
+    _last_session = _sess.last_session
 
     try:
         if name == "start_debug_session":
@@ -1309,7 +1371,7 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
             resp = gdb_client.connect("localhost", port)
             _last_session["server_type"] = server_type
             _last_session["server_args"] = args
-            symbols = _autoload_symbols()
+            symbols = _autoload_symbols(_sess)
             return [content_success(
                 {"message": "Debug session started", "server_type": server_type, "port": port, "symbols_loaded": symbols},
                 raw_response=resp,
@@ -1343,7 +1405,7 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
             port = retry_call(_restart, attempts=3, backoff_base=0.8)
             gdb_client.start_gdb()
             resp = gdb_client.connect("localhost", port)
-            symbols = _autoload_symbols()
+            symbols = _autoload_symbols(_sess)
             return [content_success(
                 {"message": "Session recovered", "server_type": _last_session["server_type"], "port": port, "symbols_loaded": symbols},
                 raw_response=resp,
@@ -1800,7 +1862,7 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
 
         elif name == "start_logging":
             channel = arguments["channel"]
-            reader = _log_reader(channel)
+            reader = _log_reader(_sess, channel)
             if channel == "uart":
                 reader.start(
                     port=arguments["port"],
@@ -1817,12 +1879,12 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
             return [content_success({"channel": channel, **reader.status()})]
 
         elif name == "stop_logging":
-            reader = _log_reader(arguments["channel"])
+            reader = _log_reader(_sess, arguments["channel"])
             reader.stop()
             return [content_success({"channel": arguments["channel"], **reader.status()})]
 
         elif name == "get_logs":
-            reader = _log_reader(arguments["channel"])
+            reader = _log_reader(_sess, arguments["channel"])
             return [content_success({
                 "channel": arguments["channel"],
                 "status": reader.status(),
@@ -1834,7 +1896,7 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
             })]
 
         elif name == "clear_logs":
-            reader = _log_reader(arguments["channel"])
+            reader = _log_reader(_sess, arguments["channel"])
             reader.clear()
             return [content_success({"message": f"{arguments['channel']} log buffer cleared", "channel": arguments["channel"]})]
 
@@ -1976,6 +2038,33 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
         elif name == "clear_session_journal":
             session_journal.clear()
             return [content_success({"message": "Session journal cleared", "run_id": session_journal.run_id})]
+
+        elif name == "list_sessions":
+            g = globals()
+            default_row = {
+                "session": "default",
+                "server_alive": g["gdb_manager"].is_alive(),
+                "gdb_alive": g["gdb_client"].is_alive(),
+                "server_type": g["gdb_manager"].server_type,
+                "port": g["gdb_manager"].port,
+            }
+            return [content_success({"sessions": [default_row] + session_manager.list()})]
+
+        elif name == "close_session":
+            sid = arguments["session_id"]
+            if sid == "default":
+                g = globals()
+                for stop in (g["gdb_client"].stop_gdb, g["gdb_manager"].stop):
+                    try:
+                        stop()
+                    except Exception:
+                        pass
+                return [content_success({"message": "Default session stopped", "session_id": "default"})]
+            closed = session_manager.close(sid)
+            return [content_success({
+                "message": "Session closed" if closed else "No such session",
+                "closed": closed, "session_id": sid,
+            })]
 
         elif name == "get_timeouts":
             return [content_success({"timeouts": gdb_client.timeouts.as_dict()})]
