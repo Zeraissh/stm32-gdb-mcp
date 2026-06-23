@@ -26,6 +26,7 @@ class DebugSession:
     def __init__(self, session_id: str = "default", gdb_port: int | None = None):
         self.id = session_id
         self.gdb_port = gdb_port
+        self.serial = None  # ST-Link/probe serial, for selecting a specific board
         self.gdb_manager = GdbServerManager()
         self.gdb_client = GdbClientManager()
         self.svd_parser = SVDParser()
@@ -39,9 +40,10 @@ class DebugSession:
         self.last_session = {"server_type": None, "server_args": []}
 
     def teardown(self):
-        for stop in (self.gdb_client.stop_gdb, self.gdb_manager.stop, self.variable_tracker.stop):
+        for obj, method in ((self.gdb_client, "stop_gdb"), (self.gdb_manager, "stop"),
+                            (self.variable_tracker, "stop")):
             try:
-                stop()
+                getattr(obj, method)()
             except Exception:
                 pass
 

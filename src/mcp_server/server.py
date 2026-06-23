@@ -188,7 +188,8 @@ async def handle_list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "server_type": {"type": "string", "enum": ["openocd", "stlink", "jlink"], "description": "Type of debug server backend."},
-                    "server_args": {"type": "array", "items": {"type": "string"}, "description": "Optional args for the server e.g. ['-f', 'interface/stlink.cfg', '-f', 'target/stm32f4x.cfg']"}
+                    "server_args": {"type": "array", "items": {"type": "string"}, "description": "Optional args for the server e.g. ['-f', 'interface/stlink.cfg', '-f', 'target/stm32f4x.cfg']"},
+                    "serial": {"type": "string", "description": "Probe/ST-Link serial to select a specific board (for concurrent multi-target). Auto-added as 'adapter serial <serial>'."}
                 },
                 "required": ["server_type"]
             }
@@ -1348,7 +1349,7 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
     try:
         if name == "start_debug_session":
             server_type = arguments["server_type"]
-            args = arguments.get("server_args", [])
+            args = list(arguments.get("server_args", []))
             if server_type == "openocd" and not args:
                 return [content_error(
                     "openocd requires server_args naming the probe interface and target, e.g. "
@@ -1357,6 +1358,22 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
                     code="invalid_server_args",
                     suggested_next_actions=["load_debug_config", "inspect_project"],
                 )]
+            if server_type == "openocd":
+                # Concurrency: a named session gets a distinct gdb_port, and a per-board
+                # probe is selected by 'serial', so multiple OpenOCD instances coexist.
+                _argstr = " ".join(a for a in args if isinstance(a, str))
+                if _sess.id != "default" and "gdb_port" not in _argstr:
+                    args += ["-c", f"gdb_port {_sess.gdb_port}"]
+                    # We never use OpenOCD's telnet/tcl ports; disable them so a second
+                    # instance doesn't collide on the default 4444/6666.
+                    if "telnet_port" not in _argstr:
+                        args += ["-c", "telnet_port disabled"]
+                    if "tcl_port" not in _argstr:
+                        args += ["-c", "tcl_port disabled"]
+                serial = arguments.get("serial") or getattr(_sess, "serial", None)
+                if serial and "adapter serial" not in _argstr:
+                    args += ["-c", f"adapter serial {serial}"]
+                    _sess.serial = serial
             # A previous session may not have fully released the probe/port yet, so the
             # restart can transiently fail with "open failed". retry_call backs off and
             # retries those, so stop -> start (and CI loops) work without a manual restart.

@@ -25,6 +25,12 @@ def test_wait_for_port_times_out_for_closed_port():
     assert time.monotonic() - start >= 0.4
 
 
+def test_extract_openocd_gdb_port_from_args():
+    mgr = GdbServerManager()
+    assert mgr._extract_openocd_gdb_port(["-f", "x.cfg", "-c", "gdb_port 3343"], default=3333) == 3343
+    assert mgr._extract_openocd_gdb_port(["-f", "x.cfg"], default=3333) == 3333
+
+
 def test_wait_for_port_returns_false_if_process_died():
     class DeadProc:
         def poll(self):

@@ -109,6 +109,52 @@ def test_named_sessions_have_isolated_state():
     assert racka["data"]["mcu"] == "STM32L431"  # isolated, not overwritten
 
 
+def test_named_session_gets_distinct_port_and_serial(monkeypatch):
+    import mcp_server.server as server_module
+
+    started = {}
+
+    class FakeManager:
+        port = 3343
+
+        def is_alive(self):
+            return False
+
+        def start(self, server_type, args):
+            started["args"] = args
+            return 3343
+
+    class FakeClient:
+        def start_gdb(self):
+            pass
+
+        def connect(self, host, port):
+            started["connect_port"] = port
+            return [{"m": "ok"}]
+
+        def load_symbols(self, path):
+            pass
+
+    # the named session must get its objects; patch the SessionManager's session
+    sess = server_module.session_manager.get("rackC")
+    monkeypatch.setattr(sess, "gdb_manager", FakeManager())
+    monkeypatch.setattr(sess, "gdb_client", FakeClient())
+
+    _payload(asyncio.run(handle_call_tool("start_debug_session", {
+        "session": "rackC", "server_type": "openocd",
+        "server_args": ["-f", "interface/stlink.cfg", "-f", "target/stm32l4x.cfg"],
+        "serial": "066BFF",
+    })))
+
+    flat = " ".join(started["args"])
+    assert f"gdb_port {sess.gdb_port}" in flat   # distinct port for the named session
+    assert "telnet_port disabled" in flat        # avoid 4444 collision with another instance
+    assert "tcl_port disabled" in flat           # avoid 6666 collision
+    assert "adapter serial 066BFF" in flat       # selects this board's probe
+    assert started["connect_port"] == 3343
+    server_module.session_manager.close("rackC")
+
+
 def test_list_and_close_sessions():
     import mcp_server.server as server_module
 

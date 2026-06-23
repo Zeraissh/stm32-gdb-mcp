@@ -34,7 +34,9 @@ class GdbServerManager:
         self.server_type = server_type.lower()
         if self.server_type == "openocd":
             cmd = ["openocd"] + args
-            self.port = 3333
+            # Honor a custom 'gdb_port N' in the args so concurrent OpenOCD instances
+            # (one per session) can each bind a distinct port.
+            self.port = self._extract_openocd_gdb_port(args, default=3333)
         elif self.server_type == "stlink":
             st_util = shutil.which("st-util")
             if st_util:
@@ -102,6 +104,15 @@ class GdbServerManager:
             except OSError:
                 time.sleep(poll)
         return False
+
+    def _extract_openocd_gdb_port(self, args: list[str], default: int) -> int:
+        """Find the gdb port from an OpenOCD '-c gdb_port N' command, else the default."""
+        for token in args or []:
+            if isinstance(token, str) and "gdb_port" in token:
+                parts = token.split()
+                if len(parts) >= 2 and parts[-1].isdigit():
+                    return int(parts[-1])
+        return default
 
     def _extract_port(self, args: list[str], default: int) -> int:
         if not args:
