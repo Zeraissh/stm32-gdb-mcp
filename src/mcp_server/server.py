@@ -62,6 +62,10 @@ SERVER_INSTRUCTIONS = """\
 STM32 on-chip debugging over GDB + OpenOCD/ST-Link/J-Link. Drive it as a loop:
 observe -> orient (symbolize) -> hypothesize -> act safely -> verify.
 
+Tool not in your list? Some clients cap how many tools they expose, so a tool you need
+(e.g. start_debug_session) may be hidden. Reach ANY tool via call(tool="<name>", args={...}),
+or run several with batch — these always work even when the tool isn't directly listed.
+
 Core workflow:
 0. Need OpenOCD server_args? Call suggest_server_args(mcu, probe) — it returns the
    right -f interface/target cfgs (validated against OpenOCD's bundled scripts).
@@ -147,7 +151,7 @@ if not logger.handlers:
 
 @server.list_tools()
 async def handle_list_tools() -> list[Tool]:
-    return [
+    _tools = [
         # --- Step 4: Basic Control and Flashing ---
         Tool(
             name="start_debug_session",
@@ -235,6 +239,21 @@ async def handle_list_tools() -> list[Tool]:
                     "stop_on_error": {"type": "boolean", "description": "Stop at the first failing step (default false)."}
                 },
                 "required": ["steps"]
+            }
+        ),
+        Tool(
+            name="call",
+            description="Invoke ANY stm32-gdb-mcp tool by name — including one that is NOT in your "
+                        "current tool list (clients with tool-count limits may hide some). Use this to "
+                        "reach e.g. start_debug_session when it isn't directly listed: "
+                        "call(tool='start_debug_session', args={...}). Returns that tool's result.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "tool": {"type": "string", "description": "Name of the tool to invoke."},
+                    "args": {"type": "object", "description": "Arguments for that tool."}
+                },
+                "required": ["tool"]
             }
         ),
         Tool(
@@ -1182,6 +1201,27 @@ async def handle_list_tools() -> list[Tool]:
             }
         )
     ]
+    # Compact mode (STM32_GDB_MCP_COMPACT=1): expose only a small core so nothing gets
+    # truncated under tight client tool-count caps. Every other tool is still reachable
+    # via call(tool, args).
+    if os.environ.get("STM32_GDB_MCP_COMPACT"):
+        return [t for t in _tools if t.name in _CORE_TOOLS]
+    return _tools
+
+
+# Core tools kept visible in compact mode; everything else is reached via `call`.
+_CORE_TOOLS = {
+    "suggest_server_args", "start_debug_session", "stop_debug_session", "recover_session",
+    "self_check", "set_debug_profile", "load_symbols",
+    "build_firmware", "flash_firmware", "flash_and_run",
+    "reset_target", "halt_execution", "run_and_wait", "set_breakpoint",
+    "debug_until", "capture_state",
+    "read_memory", "write_memory", "read_variable", "read_call_stack",
+    "reconstruct_fault_context", "analyze_stack",
+    "start_logging", "get_logs", "read_peripheral_register",
+    "batch", "call", "run_scenario", "get_session", "report_issue",
+}
+
 
 def _log_reader(channel: str):
     readers = {"rtt": rtt_log_reader, "swo": swo_log_reader, "uart": uart_log_reader}
@@ -2058,6 +2098,13 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
 
     if name == "batch":
         return await _run_batch(arguments)
+
+    if name == "call":
+        inner = arguments.get("tool")
+        if inner in (None, "call", "batch", "run_scenario"):
+            return [content_error(
+                "call needs a 'tool' name (not call/batch/run_scenario).", code="invalid_call")]
+        return await handle_call_tool(inner, arguments.get("args", {}))
 
     start = time.monotonic()
     result = await _dispatch_tool(name, arguments)

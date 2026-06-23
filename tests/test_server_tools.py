@@ -418,6 +418,31 @@ def test_suggest_server_args_returns_validated_openocd_args_with_fast_clock():
     assert "start_debug_session" in payload["suggested_next_actions"]
 
 
+def test_call_invokes_any_tool_by_name():
+    # the escape hatch: reach a tool even if a client truncated it from the list
+    payload = _payload(asyncio.run(handle_call_tool(
+        "call", {"tool": "suggest_server_args", "args": {"mcu": "STM32L431", "probe": "stlink"}})))
+    assert payload["ok"] is True
+    assert payload["data"]["server_args"][0] == "-f"
+
+
+def test_call_rejects_recursion():
+    payload = _payload(asyncio.run(handle_call_tool("call", {"tool": "call", "args": {}})))
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "invalid_call"
+
+
+def test_compact_mode_exposes_small_core_with_call(monkeypatch):
+    monkeypatch.setenv("STM32_GDB_MCP_COMPACT", "1")
+    names = {t.name for t in asyncio.run(handle_list_tools())}
+    assert "start_debug_session" in names and "call" in names and "batch" in names
+    assert len(names) < 35                     # small enough to never be truncated
+    assert "read_freertos" not in names        # reachable via call, not listed in compact
+    # full mode still exposes everything
+    monkeypatch.delenv("STM32_GDB_MCP_COMPACT")
+    assert len(asyncio.run(handle_list_tools())) > 80
+
+
 def test_batch_runs_steps_in_one_call_returning_full_results():
     steps = [
         {"tool": "get_debug_profile", "args": {}},
