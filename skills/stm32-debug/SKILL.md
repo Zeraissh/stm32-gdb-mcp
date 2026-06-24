@@ -71,6 +71,8 @@ See `scenarios/hardfault.json`.
    histogram** ("78% in busy_loop"). A high `unsampleable` count means the core is halted/asleep.
 4. For `printf` over the SWO pin: `setup_swo(hclk_hz=<core clock>)` once, then
    `logging(action=start, channel="swo", file="swo_itm.log")` — no external decoder needed.
+   To add the trace points themselves at write-time, see the **stm32-instrument** skill
+   (gated `swo_trace.h` macros placed at state transitions / error paths / ISR boundaries).
 
 ## Diagnose a stack overflow (e.g. crash during flash read/write)
 
