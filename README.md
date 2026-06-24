@@ -58,6 +58,19 @@ to an absolute interpreter path.
 个工具;其余经 `call(tool, args)` 调用)。若 GUI 客户端 PATH 中无 `python`,把 `.mcp.json` 的
 `command` 改为绝对解释器路径即可。
 
+### Other IDEs (Cursor / VSCode / Codex / Windsurf / Trae) / 其他 IDE
+
+The MCP server is portable to any MCP client; the guidance travels as a rules file. One-command
+install per client plus copy-paste configs and a rules template are in
+[`docs/install-ides.md`](docs/install-ides.md):
+
+MCP 服务器可移植到任意 MCP 客户端,引导以规则文件随行。每个客户端的一键安装、可复制配置和规则
+模板见 [`docs/install-ides.md`](docs/install-ides.md):
+
+```bash
+python scripts/install_mcp.py cursor              # or: vscode --project . | codex | windsurf | trae | claude-desktop
+```
+
 For development and tests / 开发与测试：
 
 ```bash
