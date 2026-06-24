@@ -16,6 +16,20 @@ Claude-Code-only. Everywhere else you wire up the **MCP server** for the tools, 
 > 插件(市场 / 自动加载技能 / 会话钩子)仅限 Claude Code。其他 IDE 里:用各自的 MCP 配置接上
 > **服务器**(拿到工具),再在你的**固件项目**放一个**规则文件**(拿到常驻引导)。
 
+## 0. One-command deploy (does steps 1 + 2 for you)
+
+```bash
+python scripts/deploy.py --project "D:/path/to/firmware" --ide vscode,cursor
+```
+
+This: (1) installs the server if missing (`pip install -e .`), (2) writes the MCP config into
+each IDE you list, and (3) drops a **project-aware** `AGENTS.md` + `.github/copilot-instructions.md`
+into the firmware project — auto-detecting the MCU, OpenOCD args, debug-config yaml, and ELF.
+Existing rules files are kept (use `--force` to overwrite, with a backup). Flags: `--no-install`,
+`--no-rules`, `--ide codex` (prints the TOML to paste). Review the safety note it writes for your board.
+
+The rest of this doc is the manual breakdown if you'd rather wire it up by hand.
+
 ## 1. Install the MCP server
 
 One command per client (safe merge — it backs up and keeps your other servers):

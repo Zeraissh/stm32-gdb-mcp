@@ -64,8 +64,17 @@ The MCP server is portable to any MCP client; the guidance travels as a rules fi
 install per client plus copy-paste configs and a rules template are in
 [`docs/install-ides.md`](docs/install-ides.md):
 
-MCP 服务器可移植到任意 MCP 客户端,引导以规则文件随行。每个客户端的一键安装、可复制配置和规则
-模板见 [`docs/install-ides.md`](docs/install-ides.md):
+MCP 服务器可移植到任意 MCP 客户端,引导以规则文件随行。详见 [`docs/install-ides.md`](docs/install-ides.md)。
+
+**One-command deploy / 一键部署** — installs the server, wires the IDE(s), and drops a
+project-aware rules file into your firmware project, all at once / 一条命令完成:装服务器 +
+配 IDE + 在固件项目里生成项目感知的规则文件:
+
+```bash
+python scripts/deploy.py --project "D:/path/to/firmware" --ide vscode,cursor
+```
+
+Just the MCP config for one client / 只配某个客户端的 MCP:
 
 ```bash
 python scripts/install_mcp.py cursor              # or: vscode --project . | codex | windsurf | trae | claude-desktop
