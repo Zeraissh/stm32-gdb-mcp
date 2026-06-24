@@ -18,7 +18,7 @@ the way a senior embedded engineer would. The model is a loop:
   `target_unresponsive`, the core is running — call `halt_execution` first.
 - **`run_and_wait` leaves the core running on timeout.** Halt before reading state.
 - **A breakpoint timeout means the path was NOT reached — don't just retry.** The location
-  is gated by a flag/state/stimulus. Halt, then `capture_state` + `list_breakpoints`
+  is gated by a flag/state/stimulus. Halt, then `capture_state` + `breakpoint(action=list)`
   (`hit_count=0` confirms it was never reached), read the gating flag, and then: set a
   breakpoint *earlier* on the path (or where the flag is set), *drive* the precondition
   (write the flag/variable, send the UART/input stimulus), or use a *conditional* breakpoint.
@@ -125,7 +125,7 @@ See `scenarios/peripheral_check.json`.
 2. **Trend it:** `track_variable(action="start")` on the free-heap metric (e.g. `xFreeBytesRemaining`),
    run the workload, `track_variable(action="get")` → a monotonic decline is a leak.
 3. **Pin the leak:** breakpoint the allocator (`pvPortMalloc`/`malloc`) and the matching free,
-   or `set_watchpoint` on the free-heap counter, to find allocations that are never released.
+   or `breakpoint(action=watch)` on the free-heap counter, to find allocations that are never released.
 
 See `scenarios/heap_check.json`.
 
