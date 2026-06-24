@@ -66,7 +66,11 @@ See `scenarios/hardfault.json`.
 1. If the core is running, `halt_execution`, then `capture_state` to see where it stopped.
 2. `read_call_stack` to see who is spinning; for RTOS, `snapshot(scope=rtos)` /
    `read_freertos(what="tasks")` to find the blocked/looping task and check queues/mutexes/heap.
-3. For timing/hot-spots, `read_registers(what=cycle)` and `sample_pc`.
+3. For timing/hot-spots, `read_registers(what=cycle)` and `sample_pc` — the latter is a
+   non-intrusive PC profiler over SWD (no SWO pin) that returns a **symbolized hot-spot
+   histogram** ("78% in busy_loop"). A high `unsampleable` count means the core is halted/asleep.
+4. For `printf` over the SWO pin: `setup_swo(hclk_hz=<core clock>)` once, then
+   `logging(action=start, channel="swo", file="swo_itm.log")` — no external decoder needed.
 
 ## Diagnose a stack overflow (e.g. crash during flash read/write)
 

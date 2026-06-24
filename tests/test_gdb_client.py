@@ -22,6 +22,30 @@ def test_load_symbols_uses_file_exec_and_symbols_without_download():
     assert client.gdb.commands == [("-file-exec-and-symbols fw.axf", 2.0)]
 
 
+def test_symbolize_pc_reads_console_output_not_the_command_echo():
+    # info symbol returns a 'log' echo of the command plus the real 'console' answer.
+    class SymGdb:
+        def write(self, command, timeout_sec=1.0):
+            return [
+                {"type": "log", "payload": command},  # echo — must be ignored
+                {"type": "console", "payload": "vTaskDelay + 4 in section .text\n"},
+            ]
+
+    client = GdbClientManager()
+    client.gdb = SymGdb()
+    assert client.symbolize_pc(0x08000400) == "vTaskDelay"
+
+
+def test_symbolize_pc_returns_empty_when_no_symbol_matches():
+    class SymGdb:
+        def write(self, command, timeout_sec=1.0):
+            return [{"type": "console", "payload": "No symbol matches 0x20000000.\n"}]
+
+    client = GdbClientManager()
+    client.gdb = SymGdb()
+    assert client.symbolize_pc(0x20000000) == ""
+
+
 def test_reset_halt_primes_the_ap_with_a_throwaway_read():
     client = GdbClientManager()
     client.gdb = FakeGdb()

@@ -237,6 +237,80 @@ def test_read_cycle_counter_enables_then_reads(monkeypatch):
     assert fake.enabled is True
 
 
+def test_setup_swo_configures_target_and_returns_capture_recipe(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def __init__(self):
+            self.writes = []
+
+        def write_typed_memory(self, address, value, width_bits=32):
+            self.writes.append((int(address, 16), int(value, 16)))
+
+    fake = FakeClient()
+    monkeypatch.setattr(server_module, "gdb_client", fake)
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "setup_swo", {"hclk_hz": 80_000_000, "swo_hz": 2_000_000, "output": "swo_itm.log"})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["prescaler"] == 39
+    assert payload["data"]["swo_hz"] == 2_000_000
+    # target was configured from the debugger (DEMCR TRCENA among the writes)
+    assert (0xE000EDFC, 1 << 24) in fake.writes
+    # the agent is handed the OpenOCD command and the printf retarget
+    assert any("itm port 0 on" in c for c in payload["data"]["openocd_commands"])
+    assert "ITM_SendChar" in payload["data"]["firmware_retarget"]
+
+
+def test_logging_swo_with_file_uses_the_file_tailer(monkeypatch, tmp_path):
+    import mcp_server.server as server_module
+
+    path = tmp_path / "swo_itm.log"
+    payload = _payload(asyncio.run(handle_call_tool(
+        "logging", {"action": "start", "channel": "swo", "file": str(path)})))
+    try:
+        assert payload["ok"] is True
+        assert payload["data"]["path"] == str(path)        # FileLogReader status, not a process
+        assert server_module.swo_file_reader.is_running() is True
+    finally:
+        asyncio.run(handle_call_tool("logging", {"action": "stop", "channel": "swo"}))
+
+
+def test_sample_pc_returns_symbolized_hotspots(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def profile_pc(self, count, enable):
+            assert enable is True
+            return {"total_samples": count, "sampled": count, "unsampleable": 0,
+                    "hotspots": [{"function": "busy_loop", "samples": count, "percent": 100.0}],
+                    "hot_addresses": [{"address": "0x08000400", "samples": count, "function": "busy_loop"}]}
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool("sample_pc", {"count": 50})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["hotspots"][0]["function"] == "busy_loop"
+    assert "busy_loop" in payload["data"]["message"]
+
+
+def test_sample_pc_flags_a_halted_or_sleeping_core(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def profile_pc(self, count, enable):
+            return {"total_samples": count, "sampled": 0, "unsampleable": count,
+                    "hotspots": [], "hot_addresses": []}
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool("sample_pc", {})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["sampled"] == 0
+    assert "continue_execution" in payload["suggested_next_actions"]
+
+
 def test_server_exposes_check_session_health_tool():
     tools = asyncio.run(handle_list_tools())
     tool_names = {tool.name for tool in tools}

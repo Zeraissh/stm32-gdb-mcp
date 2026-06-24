@@ -11,7 +11,7 @@ from .debug_profile import DebugProfileStore
 from .freertos_inspector import FreeRTOSInspector
 from .gdb_client import GdbClientManager
 from .gdb_manager import GdbServerManager
-from .log_reader import ProcessLogReader, SerialLogReader
+from .log_reader import FileLogReader, ProcessLogReader, SerialLogReader
 from .memory_guard import MemoryWriteGuard
 from .svd_parser import SVDParser
 from .tracker import VariableTracker
@@ -35,6 +35,7 @@ class DebugSession:
         self.freertos_inspector = FreeRTOSInspector(self.gdb_client)
         self.rtt_log_reader = ProcessLogReader("rtt")
         self.swo_log_reader = ProcessLogReader("swo")
+        self.swo_file_reader = FileLogReader("swo")  # OpenOCD-internal ITM decode (no external tool)
         self.uart_log_reader = SerialLogReader()
         self.memory_guard = MemoryWriteGuard()
         self.last_session = {"server_type": None, "server_args": []}

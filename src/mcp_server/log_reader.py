@@ -110,6 +110,72 @@ class ProcessLogReader:
                 self.buffer.append(self.source, line)
 
 
+class FileLogReader:
+    """Tails a growing text file — e.g. OpenOCD's decoded ITM/SWO output.
+
+    Lets SWO printf be captured with no external decoder: OpenOCD writes ITM port 0 to a
+    file, this follows it. New lines are appended to the ring buffer as they appear.
+    """
+
+    def __init__(self, source: str = "swo", max_entries: int = 2000, poll_interval: float = 0.2):
+        self.source = source
+        self.buffer = LogRingBuffer(max_entries=max_entries)
+        self.poll_interval = poll_interval
+        self.path = None
+        self._handle = None
+        self._reader_thread = None
+        self._stop_event = threading.Event()
+
+    def start(self, path: str):
+        if self.is_running():
+            raise RuntimeError(f"{self.source} log reader is already running")
+        if not path:
+            raise ValueError("path must not be empty")
+        self.path = path
+        self._stop_event.clear()
+        # Create the file if needed so the producer (OpenOCD) and we agree on it.
+        if not os.path.exists(path):
+            open(path, "a").close()
+        self._handle = open(path, errors="replace")
+        self._handle.seek(0, os.SEEK_END)  # only new output
+        self._reader_thread = threading.Thread(target=self._read_loop, daemon=True)
+        self._reader_thread.start()
+
+    def stop(self):
+        self._stop_event.set()
+        if self._handle is not None:
+            try:
+                self._handle.close()
+            finally:
+                self._handle = None
+        self._reader_thread = None
+
+    def get_logs(self, limit: int | None = None, since_index: int | None = None, clear: bool = False):
+        return self.buffer.get(limit=limit, since_index=since_index, clear=clear)
+
+    def clear(self):
+        self.buffer.clear()
+
+    def status(self):
+        return {
+            "source": self.source,
+            "running": self.is_running(),
+            "path": self.path,
+            "entry_count": len(self.buffer.get()),
+        }
+
+    def is_running(self):
+        return self._handle is not None and not self._stop_event.is_set()
+
+    def _read_loop(self):
+        while not self._stop_event.is_set() and self._handle is not None:
+            line = self._handle.readline()
+            if line:
+                self.buffer.append(self.source, line)
+            else:
+                self._stop_event.wait(self.poll_interval)
+
+
 class SerialLogReader:
     def __init__(self, source: str = "uart", serial_factory=None, max_entries: int = 2000, encoding: str = "utf-8"):
         self.source = source

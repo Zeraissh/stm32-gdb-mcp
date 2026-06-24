@@ -1,6 +1,29 @@
 import time
 
-from mcp_server.log_reader import LogRingBuffer, ProcessLogReader, SerialLogReader
+from mcp_server.log_reader import FileLogReader, LogRingBuffer, ProcessLogReader, SerialLogReader
+
+
+def test_file_log_reader_tails_appended_lines(tmp_path):
+    path = tmp_path / "swo_itm.log"
+    path.write_text("preexisting\n")  # should be skipped (seek to end on start)
+
+    reader = FileLogReader("swo", poll_interval=0.01)
+    reader.start(str(path))
+    try:
+        with open(path, "a") as f:
+            f.write("hello over SWO\n")
+            f.write("second line\n")
+            f.flush()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and len(reader.get_logs()) < 2:
+            time.sleep(0.02)
+        lines = [e["line"] for e in reader.get_logs()]
+        assert "hello over SWO" in lines
+        assert "second line" in lines
+        assert "preexisting" not in lines  # only new output after start
+    finally:
+        reader.stop()
+    assert reader.is_running() is False
 
 
 class FakeStdout:

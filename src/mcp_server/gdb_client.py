@@ -243,6 +243,38 @@ class GdbClientManager:
     def sample_pc(self, count: int = 64):
         return dwt.sample_pc(self.read_word, count)
 
+    def enable_pc_sampling(self):
+        for address, value in dwt.enable_pc_sampling_writes():
+            self.write_typed_memory(hex(address), hex(value), width_bits=32)
+
+    def symbolize_pc(self, pc: int) -> str:
+        """Best-effort function name for a PC via `info symbol` (e.g. 'vTaskDelay')."""
+        try:
+            responses = self.execute_cli_command(
+                f"info symbol 0x{pc & 0xFFFFFFFF:08x}", timeout_sec=2.0)
+        except Exception:
+            return ""
+        # The real answer comes as 'console' stream records; 'log' records are just the
+        # command echo (e.g. "info symbol 0x...") — skip those.
+        for record in responses:
+            if record.get("type") != "console":
+                continue
+            payload = record.get("payload")
+            if isinstance(payload, str) and payload.strip():
+                text = payload.strip()
+                if text.startswith("No symbol"):
+                    return ""
+                # "vTaskDelay + 4 in section .text" -> "vTaskDelay"
+                return text.split(" + ")[0].split(" in section")[0].strip()
+        return ""
+
+    def profile_pc(self, count: int = 128, enable: bool = True):
+        """Statistical PC-sample profiler -> symbolized hot-spot histogram."""
+        if enable:
+            self.enable_pc_sampling()
+        samples = dwt.sample_pc(self.read_word, count)
+        return dwt.build_pc_profile(samples, self.symbolize_pc)
+
     def read_register_value(self, expr: str) -> int:
         """Evaluate a register/convenience expression (e.g. '$lr', '$msp') to an int."""
         response = self.execute_command(f"-data-evaluate-expression {expr}", timeout_sec=2.0)

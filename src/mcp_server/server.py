@@ -13,6 +13,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
 from . import build as build_mod
+from . import swo_config
 from .composites import capture_state, debug_until, flash_and_run
 from .debug_config import (
     load_debug_config as load_debug_config_file,
@@ -45,7 +46,7 @@ from .gdb_client import GdbClientManager
 from .gdb_decode import registers_summary
 from .gdb_manager import GdbServerManager
 from .issue_reporter import DEFAULT_REPO, build_issue_body, file_issue, issue_fingerprint
-from .log_reader import ProcessLogReader, SerialLogReader
+from .log_reader import FileLogReader, ProcessLogReader, SerialLogReader
 from .memory_guard import MemoryWriteGuard
 from .metrics import compute_metrics
 from .openocd_config import find_openocd_scripts, suggest_server_args
@@ -113,6 +114,12 @@ Key rules (the target must cooperate):
   port (e.g. COM3) is a SEPARATE USB endpoint and DOES coexist with debugging — read it
   with logging(action=start, channel="uart"), or let an external serial script use it without resetting.
 
+Observability: to find where firmware spends time or what loop it is stuck in, use
+sample_pc — a non-intrusive statistical profiler that runs over SWD (no SWO pin / firmware
+change) and returns a symbolized hot-spot histogram. For printf-over-SWO, call
+setup_swo(hclk_hz, swo_hz) once (it configures TPIU+ITM from the debugger), then capture with
+logging(action=start, channel="swo", file=<output>) — no external decoder needed.
+
 Determinism & sharing: every call is journaled — review it with get_session(view=journal|
 timeline|metrics). Replay a repro with run_scenario; bundle a full, shareable report
 with export_debug_report. Most results carry suggested_next_actions — follow them.
@@ -136,6 +143,7 @@ debug_profile = DebugProfileStore()
 freertos_inspector = FreeRTOSInspector(gdb_client)
 rtt_log_reader = ProcessLogReader("rtt")
 swo_log_reader = ProcessLogReader("swo")
+swo_file_reader = FileLogReader("swo")
 uart_log_reader = SerialLogReader()
 memory_guard = MemoryWriteGuard()
 session_journal = SessionJournal()
@@ -148,7 +156,7 @@ _reported_issues = {}  # fingerprint -> issue url (in-session dedup)
 session_manager = SessionManager()
 _SESSION_ATTRS = ("gdb_manager", "gdb_client", "svd_parser", "variable_tracker",
                   "debug_profile", "freertos_inspector", "rtt_log_reader", "swo_log_reader",
-                  "uart_log_reader", "memory_guard", "last_session")
+                  "swo_file_reader", "uart_log_reader", "memory_guard", "last_session")
 
 
 def _resolve_session(arguments: dict):
@@ -766,14 +774,16 @@ async def handle_list_tools() -> list[Tool]:
         Tool(
             name="start_logging",
             description="Starts background log capture on a channel: 'rtt' (SEGGER RTT, default cmd "
-                        "JLinkRTTClient), 'swo' (ITM decoder, command required), or 'uart' (serial, "
-                        "port required). One tool for all three channels.",
+                        "JLinkRTTClient), 'swo' (ITM printf — run setup_swo then pass file=<output>; "
+                        "or command=<external decoder>), or 'uart' (serial, port required). "
+                        "One tool for all three channels.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "channel": {"type": "string", "enum": ["rtt", "swo", "uart"], "description": "Log channel."},
                     "command": {"type": "string", "description": "rtt/swo: executable to launch (rtt defaults to JLinkRTTClient)."},
                     "args": {"type": "array", "items": {"type": "string"}, "description": "rtt/swo: command arguments."},
+                    "file": {"type": "string", "description": "swo: tail OpenOCD's ITM decode file (run setup_swo first) — no external decoder needed."},
                     "port": {"type": "string", "description": "uart: serial port, e.g. COM3 or /dev/ttyUSB0."},
                     "baudrate": {"type": "integer", "description": "uart: baudrate (default 115200)."},
                     "timeout": {"type": "number", "description": "uart: read timeout seconds (default 0.1)."}
@@ -1243,13 +1253,37 @@ async def handle_list_tools() -> list[Tool]:
             }
         ),
         Tool(
-            name="sample_pc",
-            description="Statistically samples the program counter via DWT_PCSR to locate hangs or "
-                        "hot spots. Returns the raw PC samples.",
+            name="setup_swo",
+            description="One-call SWO/ITM printf setup. Configures the target's TPIU+ITM from the "
+                        "debugger (no firmware ITM-init needed) for the given core clock (hclk_hz) and "
+                        "SWO baud, and returns the OpenOCD capture commands + the firmware printf "
+                        "retarget snippet. Then capture with logging(action=start, channel='swo', "
+                        "file=<output>). Requires the SWO pin (e.g. PB3) wired to the probe.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "count": {"type": "integer", "description": "Number of samples (default 64)."}
+                    "hclk_hz": {"type": "integer", "description": "Core clock (HCLK) in Hz, e.g. 80000000 for an L4 at 80 MHz."},
+                    "swo_hz": {"type": "integer", "description": "Desired SWO baud (default 2000000; ST-Link V2 max ~2 MHz)."},
+                    "port": {"type": "integer", "description": "ITM stimulus port for printf (default 0)."},
+                    "output": {"type": "string", "description": "OpenOCD ITM decode output file to tail (default 'swo_itm.log')."},
+                    "tpiu_name": {"type": "string", "description": "OpenOCD tpiu object name if not the default '$_CHIPNAME.tpiu'."},
+                    "apply_openocd": {"type": "boolean", "description": "Also run the OpenOCD capture commands via monitor now (default false)."}
+                },
+                "required": ["hclk_hz"]
+            }
+        ),
+        Tool(
+            name="sample_pc",
+            description="Statistical PC profiler: enables DWT and samples the program counter while "
+                        "the core RUNS (non-intrusive, over SWD — no SWO pin or firmware change). "
+                        "Returns a symbolized hot-spot histogram (top functions by %), not raw hex — "
+                        "the fast way to find where firmware spends time or what loop it is stuck in. "
+                        "A high 'unsampleable' count means the core is halted/asleep.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "count": {"type": "integer", "description": "Number of samples (default 128; more = better statistics, slower)."},
+                    "enable": {"type": "boolean", "description": "Enable DWT trace before sampling (default true)."}
                 }
             }
         )
@@ -1385,8 +1419,13 @@ def _advertised_tools(base: list) -> list:
     return [t for t in base if t.name not in _MERGED_AWAY] + _MERGED_TOOLS
 
 
+def _swo_reader(sess):
+    """The active SWO reader: the OpenOCD-file tailer if it's running, else the process one."""
+    return sess.swo_file_reader if sess.swo_file_reader.is_running() else sess.swo_log_reader
+
+
 def _log_reader(sess, channel: str):
-    readers = {"rtt": sess.rtt_log_reader, "swo": sess.swo_log_reader, "uart": sess.uart_log_reader}
+    readers = {"rtt": sess.rtt_log_reader, "swo": _swo_reader(sess), "uart": sess.uart_log_reader}
     if channel not in readers:
         raise ValueError(f"Unknown log channel '{channel}'. Use rtt, swo, or uart.")
     return readers[channel]
@@ -1437,6 +1476,7 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
     memory_guard = _sess.memory_guard
     rtt_log_reader = _sess.rtt_log_reader
     swo_log_reader = _sess.swo_log_reader
+    swo_file_reader = _sess.swo_file_reader
     uart_log_reader = _sess.uart_log_reader
     _last_session = _sess.last_session
 
@@ -1987,18 +2027,26 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
 
         elif name == "start_logging":
             channel = arguments["channel"]
-            reader = _log_reader(_sess, channel)
             if channel == "uart":
+                reader = uart_log_reader
                 reader.start(
                     port=arguments["port"],
                     baudrate=arguments.get("baudrate", 115200),
                     timeout=arguments.get("timeout", 0.1),
                 )
-            else:  # rtt / swo: a process whose stdout is captured
+            elif channel == "swo" and arguments.get("file"):
+                # Out-of-the-box SWO printf: tail OpenOCD's internal ITM decode file,
+                # no external decoder needed. Pair with setup_swo + '-output <file>'.
+                reader = swo_file_reader
+                reader.start(arguments["file"])
+            else:  # rtt / swo: a process whose stdout is captured (e.g. JLinkRTTClient)
+                reader = rtt_log_reader if channel == "rtt" else swo_log_reader
                 default_cmd = "JLinkRTTClient" if channel == "rtt" else None
                 command = [arguments.get("command", default_cmd)]
                 if command[0] is None:
-                    return [content_error(f"{channel} logging requires 'command'.", code="missing_command")]
+                    return [content_error(
+                        "swo logging needs either file=<OpenOCD ITM output file> (use setup_swo "
+                        "first) or command=<external decoder>.", code="missing_command")]
                 command.extend(arguments.get("args", []))
                 reader.start(command)
             return [content_success({"channel": channel, **reader.status()})]
@@ -2305,13 +2353,61 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
             cycles = gdb_client.read_cycle_counter()
             return [content_success({"message": "Cycle counter read", "cycles": cycles})]
 
-        elif name == "sample_pc":
-            samples = gdb_client.sample_pc(arguments.get("count", 64))
+        elif name == "setup_swo":
+            hclk_hz = int(arguments["hclk_hz"])
+            swo_hz = int(arguments.get("swo_hz", 2_000_000))
+            port = int(arguments.get("port", 0))
+            output = arguments.get("output", "swo_itm.log")
+            prescaler, achieved, exact = swo_config.swo_prescaler(hclk_hz, swo_hz)
+
+            # Configure TPIU+ITM straight from the debugger (version-independent, no fw init).
+            writes = swo_config.itm_tpiu_setup_writes(hclk_hz, swo_hz, port)
+            for address, value in writes:
+                gdb_client.write_typed_memory(hex(address), hex(value), width_bits=32)
+
+            openocd_cmds = swo_config.openocd_swo_capture_commands(
+                hclk_hz, swo_hz, output, port,
+                tpiu_name=arguments.get("tpiu_name", "$_CHIPNAME.tpiu"))
+            applied = []
+            if arguments.get("apply_openocd"):
+                for cmd in openocd_cmds:
+                    try:
+                        gdb_client.execute_cli_command(f"monitor {cmd}", timeout_sec=3.0)
+                        applied.append({"command": cmd, "ok": True})
+                    except Exception as exc:  # version/target-name variance — report, don't fail
+                        applied.append({"command": cmd, "ok": False, "error": str(exc)})
+
             return [content_success({
-                "message": "PC sampled",
-                "count": len(samples),
-                "samples": [f"0x{s & 0xFFFFFFFF:08x}" for s in samples],
-            })]
+                "message": f"ITM/TPIU configured for SWO printf on port {port}; "
+                           f"SWO baud {achieved} Hz" + ("" if exact else f" (requested {swo_hz}, nearest divisor)"),
+                "hclk_hz": hclk_hz, "swo_hz": achieved, "prescaler": prescaler, "exact_baud": exact,
+                "target_writes": [{"address": f"0x{a:08x}", "value": f"0x{v:08x}"} for a, v in writes],
+                "openocd_commands": openocd_cmds,
+                "openocd_applied": applied,
+                "output_file": output,
+                "firmware_retarget": swo_config.printf_retarget_snippet(),
+                "note": "SWO needs the trace pin (e.g. PB3) wired to the probe's SWO. printf "
+                        "still requires the firmware to send chars to the ITM stimulus port.",
+            }, suggested_next_actions=[f"logging (action=start, channel=swo, file={output})", "get_logs"])]
+
+        elif name == "sample_pc":
+            profile = gdb_client.profile_pc(
+                count=arguments.get("count", 128),
+                enable=arguments.get("enable", True),
+            )
+            top = profile["hotspots"][0]["function"] if profile["hotspots"] else None
+            if profile["sampled"] == 0:
+                # Nothing sampled: the core was halted or asleep the whole time, not running.
+                msg = ("No PC samples hit running code — the core is halted, in WFI/sleep, or "
+                       "stuck in a low-power state. Resume it (continue_execution) or check why "
+                       "it is not running before profiling.")
+                actions = ["continue_execution", "capture_state"]
+            else:
+                msg = (f"Profiled {profile['total_samples']} PC samples while running; "
+                       f"hottest: {top} ({profile['hotspots'][0]['percent']}%).")
+                actions = ["frame", "disassemble"]
+            return [content_success({"message": msg, **profile},
+                                    suggested_next_actions=actions)]
 
         else:
             hint = _RENAMED_TOOLS.get(name)

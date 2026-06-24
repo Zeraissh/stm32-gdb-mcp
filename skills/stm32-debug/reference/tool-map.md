@@ -41,9 +41,15 @@ The surface is lean: related ops are **action-dispatched families** — pass the
 
 ## Logging & tracing
 - `logging` (action = start | stop | get | clear; channel = rtt | swo | uart)
+- **SWO printf out-of-the-box**: `setup_swo(hclk_hz, swo_hz)` configures TPIU+ITM from the
+  debugger (no firmware init), then `logging(action=start, channel=swo, file=<output>)` tails
+  OpenOCD's ITM decode — no external decoder. Needs the SWO pin wired to the probe.
 
-## Timing
-- `read_registers` (what = cycle), `sample_pc`, `configure_debug_freeze`
+## Timing & profiling
+- `read_registers` (what = cycle) — DWT cycle counter for "how long did this take"
+- `sample_pc` — non-intrusive statistical profiler over SWD (no SWO pin); returns a
+  **symbolized hot-spot histogram** (top functions by %). The fast way to find hangs/hot loops.
+- `configure_debug_freeze`
 
 ## Hypothesis & verify
 - `debug_until` (trap + run + decoded context)
