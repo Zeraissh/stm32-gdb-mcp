@@ -32,6 +32,32 @@ python setup_env.py
 pip install -e .
 ```
 
+### As a Claude Code plugin / 作为 Claude Code 插件
+
+This repo is also a Claude Code **plugin + marketplace**: one install bundles the MCP server,
+the `stm32-debug` and `stm32-instrument` skills, and a SessionStart hook that locks the golden
+rules into context at conversation start (the "always-on" feel) — so an agent gets the tools
+**and** the guidance with no per-project setup.
+
+本仓库同时是一个 Claude Code **插件 + 市场**：一次安装即捆绑 MCP 服务器、两个技能，以及一个
+会话启动钩子(在对话开始时把黄金法则注入上下文)——agent 既拿到工具又拿到引导,无需逐项目配置。
+
+```text
+/plugin marketplace add Zeraissh/stm32-gdb-mcp
+/plugin install stm32-debug-kit@zeraissh-stm32
+```
+
+The plugin launches the server with `python -m mcp_server.server` from its bundled `src/`, so
+its Python dependencies must be importable — either `pip install -e .` once in that environment,
+or `pip install mcp pygdbmi pyserial`. It runs in compact mode (~31 tools; reach any other via
+`call(tool, args)`). On GUI clients where `python` isn't on PATH, edit `.mcp.json`'s `command`
+to an absolute interpreter path.
+
+插件用捆绑的 `src/` 通过 `python -m mcp_server.server` 启动,因此其 Python 依赖需可导入(在该
+环境里 `pip install -e .` 一次,或 `pip install mcp pygdbmi pyserial`)。默认 compact 模式(约 31
+个工具;其余经 `call(tool, args)` 调用)。若 GUI 客户端 PATH 中无 `python`,把 `.mcp.json` 的
+`command` 改为绝对解释器路径即可。
+
 For development and tests / 开发与测试：
 
 ```bash
