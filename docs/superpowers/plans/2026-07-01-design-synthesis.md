@@ -103,8 +103,11 @@ anything unresolvable is surfaced, never guessed.
 
 - Clock-tree solver (`SystemClock_Config` stays an honest TODO stub).
 - Register-level (non-HAL) codegen back-ends.
-- Peripheral-enable / GPIO-MODER acceptance checks (family-specific register
-  layouts; deferred from Tier 3 to keep the deterministic judge correct).
+- Peripheral-enable acceptance checks (USART `UE` / SPI `SPE` / I2C `PE` / ...):
+  not architecture-standard and HAL's post-`Init` state is non-uniform, so a
+  derived check could falsely fail -- kept out to keep the judge honest. (GPIO
+  MODER checks, previously deferred here, are now derived via a resolver + F1
+  exclusion; see the acceptance-deepening Status entry below.)
 
 ## Status / 状态
 - [x] **Tier 1** — `framework_solver.py` + `framework_render.py` + tests. (16 + 12 tests)
@@ -117,6 +120,7 @@ anything unresolvable is surfaced, never guessed.
 - [x] **Tier 3 (cont.)** — deterministic NVIC interrupt backbone (`interrupt_solver.py`; interrupts captured through `design_framework`): resolved IRQn + priority + `HAL_NVIC_EnableIRQ` + one dispatching ISR per vector, with honest `nvic_unresolved` / `TODO` for irregular or unknown vectors instead of a guessed IRQn (see `2026-07-01-nvic-backbone.md`; 12 + 6 + 6 + 2 tests; suite 439 passed / 1 skipped)
 - [x] **Tier 3 (cont.)** — deterministic DMA association (`dma_solver.py`; DMA captured through `design_framework`): a peripheral opts in (`dma: true`/`"rx"`/`"tx"`) and the render emits the `DMA_HandleTypeDef` wiring + `HAL_DMA_Init` + `__HAL_LINKDMA` + the DMA stream/channel `HAL_NVIC_*` and an ISR into `HAL_DMA_IRQHandler` (reusing the NVIC backbone). Verified F4 (stream+channel) / L4 (channel+CSELR request) table for USART1/SPI1/I2C1/ADC1; unmapped peripherals or a stream collision surface as `dma_unresolved` / `dma_conflict`, never a guessed stream (see `2026-07-01-dma-association.md`; 15 + 6 + 4 + 2 tests; suite 465 passed / 1 skipped)
 - [x] **Upstream product-spec guard** — deterministic controlled-vocabulary spec reducer (`spec_model.py`; `import_spec` tool + `design_framework(from_spec=true)`): human/product intent (UART framing `8N1`, SPI `spi_mode` 0..3, I2C `speed`/`addressing`, ADC `resolution`/`conversion`, timer `update_hz`, plus dma/interrupt/priority opt-ins) is expanded to HAL design params deterministically (8E1 → UART_WORDLENGTH_9B + UART_PARITY_EVEN by HAL's parity-bit rule) and cross-checked against the netlist — a peripheral absent from the board is a `conflict`, an unmodelled key/value is `unresolved`, and the I2C bus-timing register is recorded but never guessed. This closes the pipeline's last hand-written link that had no machine guard, and the most upstream one (see `2026-07-01-spec-model.md`; 26 + 4 tests; suite 495 passed / 1 skipped)
+- [x] **Tier 3 (cont.)** — deepened auto-derived acceptance: on top of no_fault + RCC clock enables, `synthesize_acceptance` now also derives **NVIC ISER** checks for every interrupt the plan enables (peripheral + DMA-stream vectors; arch-standard `0xE000E100 + 4*(irq//32)`, bit `irq%32`, with the IRQ *number* resolved from the SVD or an `irq_map`) and **GPIO MODER** checks for every configured pin (masked-eq AF=`0b10`/analog=`0b11`, MODER base from the SVD or a `gpio_map`, F1's CRL/CRH skipped honestly). Peripheral-enable bits stay out of scope (not arch-standard; non-uniform HAL post-Init state). Adds `svd_parser.interrupt_numbers()` (see `2026-07-01-acceptance-deepening.md`; 16 + 3 tests; suite 514 passed / 1 skipped)
 
 ## Tier 3 (cont.) — complete peripheral .Init structs
 

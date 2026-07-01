@@ -18,7 +18,15 @@ from . import build as build_mod
 from . import swo_config
 from .acceptance_eval import GdbAcceptanceReader, evaluate_acceptance
 from .acceptance_model import summarize_acceptance, validate_acceptance_spec
-from .acceptance_synth import derive_acceptance_spec, dict_clock_resolver, svd_clock_resolver
+from .acceptance_synth import (
+    derive_acceptance_spec,
+    dict_clock_resolver,
+    dict_gpio_resolver,
+    dict_irq_resolver,
+    svd_clock_resolver,
+    svd_gpio_resolver,
+    svd_irq_resolver,
+)
 from .board_model import board_view, summarize_board
 from .board_validation import load_capability_db, validate_board
 from .clock_solver import resolve_profile, solve_clock_tree, summarize_clock_solution
@@ -1542,16 +1550,23 @@ async def handle_list_tools() -> list[Tool]:
             description="Auto-derive a machine-checked AcceptanceSpec from the synthesized FrameworkPlan "
                         "(Pillar D Tier 3) and load it as the session's acceptance judge — welding design "
                         "synthesis to the acceptance loop. Always emits a no_fault check (init must not "
-                        "HardFault); adds a memory_u32 bits_set check per clock the plan enables, using RCC "
-                        "enable-bit placements resolved from the session's loaded SVD (or an explicit "
-                        "register_map). Unresolvable clocks are surfaced, never guessed. Run "
-                        "design_framework first; load an SVD (start_debug_session/set svd) for clock checks.",
+                        "HardFault); adds a memory_u32 bits_set check per clock the plan enables (RCC "
+                        "enable bit), a memory_u32 bits_set check per interrupt the plan enables (arch-standard "
+                        "NVIC ISER bit, from the resolved IRQ number), and a masked memory_u32 eq check per "
+                        "configured pin (GPIO MODER = AF/analog; F1's CRL/CRH is skipped). Register/IRQ/port "
+                        "placements come from the session's loaded SVD or explicit register_map/irq_map/gpio_map; "
+                        "anything unresolvable is surfaced, never guessed. Run design_framework first; load an "
+                        "SVD (start_debug_session/set svd) for clock/NVIC/GPIO checks.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "register_map": {"type": "object", "description": "Optional explicit RCC placements {line_or_family: {clock: {address, bit}}}; overrides the SVD."},
+                    "irq_map": {"type": "object", "description": "Optional explicit IRQ numbers {line_or_family: {irq_name: number}} (name with or without _IRQn); overrides the SVD."},
+                    "gpio_map": {"type": "object", "description": "Optional explicit GPIO port bases {line_or_family: {port_letter: MODER_address}}; overrides the SVD."},
                     "stopped_at": {"type": "string", "description": "Optional symbol to also assert the PC reached after init (e.g. 'main')."},
                     "include_no_fault": {"type": "boolean", "description": "Emit the no_fault check (default true)."},
+                    "include_nvic": {"type": "boolean", "description": "Emit NVIC ISER checks for enabled interrupts (default true)."},
+                    "include_gpio": {"type": "boolean", "description": "Emit GPIO MODER checks for configured pins (default true)."},
                     "load": {"type": "boolean", "description": "Load the derived spec as the session acceptance judge (default true)."},
                     "name": {"type": "string", "description": "Optional spec name."},
                     "session": {"type": "string", "description": "Target session id (default 'default')."}
@@ -3018,22 +3033,46 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                 return [content_error(
                     "register_map must be an object {line_or_family: {clock: {address, bit}}}.",
                     code="invalid_argument", suggested_next_actions=["synthesize_acceptance"])]
+            irq_map = arguments.get("irq_map")
+            if irq_map is not None and not isinstance(irq_map, dict):
+                return [content_error(
+                    "irq_map must be an object {line_or_family: {irq_name: number}}.",
+                    code="invalid_argument", suggested_next_actions=["synthesize_acceptance"])]
+            gpio_map = arguments.get("gpio_map")
+            if gpio_map is not None and not isinstance(gpio_map, dict):
+                return [content_error(
+                    "gpio_map must be an object {line_or_family: {port_letter: base_address}}.",
+                    code="invalid_argument", suggested_next_actions=["synthesize_acceptance"])]
             mcu = plan.get("mcu") or {}
+            line, family = mcu.get("line"), mcu.get("family")
+            svd_loaded = getattr(svd_parser, "svd_root", None) is not None
             if register_map:
-                resolver = dict_clock_resolver(register_map, mcu.get("line"), mcu.get("family"))
-                source = "register_map"
-            elif getattr(svd_parser, "svd_root", None) is not None:
-                resolver = svd_clock_resolver(svd_parser)
-                source = "svd"
+                clock_resolver, clock_source = dict_clock_resolver(register_map, line, family), "register_map"
+            elif svd_loaded:
+                clock_resolver, clock_source = svd_clock_resolver(svd_parser), "svd"
             else:
-                resolver = None
-                source = "none"
+                clock_resolver, clock_source = None, "none"
+            if irq_map:
+                irq_resolver, irq_source = dict_irq_resolver(irq_map, line, family), "irq_map"
+            elif svd_loaded:
+                irq_resolver, irq_source = svd_irq_resolver(svd_parser), "svd"
+            else:
+                irq_resolver, irq_source = None, "none"
+            if gpio_map:
+                gpio_resolver, gpio_source = dict_gpio_resolver(gpio_map, line, family), "gpio_map"
+            elif svd_loaded:
+                gpio_resolver, gpio_source = svd_gpio_resolver(svd_parser), "svd"
+            else:
+                gpio_resolver, gpio_source = None, "none"
             options = {
                 "include_no_fault": arguments.get("include_no_fault", True),
+                "include_nvic": arguments.get("include_nvic", True),
+                "include_gpio": arguments.get("include_gpio", True),
                 "stopped_at": arguments.get("stopped_at"),
                 "name": arguments.get("name"),
             }
-            derived = derive_acceptance_spec(plan, clock_resolver=resolver, options=options)
+            derived = derive_acceptance_spec(plan, clock_resolver=clock_resolver, options=options,
+                                             irq_resolver=irq_resolver, gpio_resolver=gpio_resolver)
             try:
                 validated = validate_acceptance_spec(derived["spec"])
             except ValueError as exc:
@@ -3052,7 +3091,8 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                 "unresolved": derived["unresolved"],
                 "notes": derived["notes"],
                 "stats": derived["stats"],
-                "placement_source": source,
+                "placement_source": clock_source,
+                "resolver_sources": {"clock": clock_source, "nvic": irq_source, "gpio": gpio_source},
                 "loaded": loaded,
             }, suggested_next_actions=next_actions)]
 

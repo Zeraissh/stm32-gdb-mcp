@@ -28,6 +28,29 @@ class SVDParser:
             "fields": self._parse_fields(resolved_register),
         }
 
+    def interrupt_numbers(self) -> dict:
+        """Return ``{interrupt_name: irq_number}`` for every ``<interrupt>`` in the SVD.
+
+        The SVD lists each device IRQ under its owning peripheral as
+        ``<interrupt><name>..</name><value>..</value></interrupt>``. This exposes that
+        table so a derived AcceptanceSpec can place NVIC ISER bits from a resolved IRQ
+        name. Returns ``{}`` when no SVD is loaded; skips any malformed entry.
+        """
+        numbers: dict = {}
+        if self.svd_root is None:
+            return numbers
+        for periph in self._children_by_path(self.svd_root, ["peripherals", "peripheral"]):
+            for interrupt in self._children_by_path(periph, ["interrupt"]):
+                name = self._child_text(interrupt, "name")
+                raw = self._child_text(interrupt, "value")
+                if name is None or raw is None:
+                    continue
+                try:
+                    numbers[name] = int(raw, 0)
+                except (TypeError, ValueError):
+                    continue
+        return numbers
+
     def decode_register_value(self, peripheral_name: str, register_name: str, value: int):
         register = self.get_register(peripheral_name, register_name)
         fields = []

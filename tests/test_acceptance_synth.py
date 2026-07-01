@@ -3,7 +3,11 @@ from mcp_server.acceptance_model import validate_acceptance_spec
 from mcp_server.acceptance_synth import (
     derive_acceptance_spec,
     dict_clock_resolver,
+    dict_gpio_resolver,
+    dict_irq_resolver,
     svd_clock_resolver,
+    svd_gpio_resolver,
+    svd_irq_resolver,
 )
 from mcp_server.framework_solver import build_framework_plan
 
@@ -192,3 +196,200 @@ def test_derived_spec_fails_when_clock_bit_clear():
     report = evaluate_acceptance(spec, reader)
     usart = next(r for r in report["results"] if r["id"] == "clk_USART1_enabled")
     assert usart["status"] == "fail"
+
+
+# --- NVIC ISER checks: arch-standard placement from a resolved IRQ number -----
+
+
+class _FakeIRQSVD:
+    """Minimal stand-in exposing interrupt_numbers() like svd_parser.SVDParser."""
+
+    def __init__(self, numbers):
+        self._numbers = numbers
+
+    def interrupt_numbers(self):
+        return dict(self._numbers)
+
+
+def _nvic_plan(design):
+    board = {"mcu": {"part_normalized": "STM32L431CBT6", "family": "STM32L4", "line": "STM32L431", "pins": [
+        _pin("PA9", "/USART1_TX", _fn("USART1", "TX")),
+        _pin("PA10", "/USART1_RX", _fn("USART1", "RX")),
+    ]}}
+    return build_framework_plan(board, design=design)
+
+
+def test_nvic_iser_check_from_dict_irq_resolver():
+    plan = _nvic_plan({"USART1": {"nvic": True}})
+    resolver = dict_irq_resolver({"STM32L431": {"USART1_IRQn": 37}}, "STM32L431", "STM32L4")
+    result = derive_acceptance_spec(plan, irq_resolver=resolver)
+
+    nvic = next(c for c in result["spec"]["checks"] if c["id"] == "nvic_USART1_IRQn_enabled")
+    assert nvic["kind"] == "memory_u32"
+    assert nvic["address"] == "0xe000e104"   # ISER[1] = 0xE000E100 + 4*(37 // 32)
+    assert nvic["expect"] == "0x00000020"    # bit 37 % 32 = 5
+    assert nvic["op"] == "bits_set"
+    assert result["stats"]["nvic_checks"] == 1
+
+
+def test_nvic_low_irq_lands_in_iser0_and_strips_suffix():
+    plan = _nvic_plan({"USART1": {"nvic": True}})
+    # key without _IRQn suffix, resolved via family fallback (line absent)
+    resolver = dict_irq_resolver({"STM32L4": {"USART1": 6}}, "STM32L431", "STM32L4")
+    result = derive_acceptance_spec(plan, irq_resolver=resolver)
+
+    nvic = next(c for c in result["spec"]["checks"] if c["kind"] == "memory_u32")
+    assert nvic["address"] == "0xe000e100"   # ISER[0]
+    assert nvic["expect"] == "0x00000040"    # 1 << 6
+
+
+def test_nvic_unresolved_number_is_surfaced_not_faked():
+    plan = _nvic_plan({"USART1": {"nvic": True}})
+    result = derive_acceptance_spec(plan, irq_resolver=lambda name: None)
+
+    assert all(c["kind"] != "memory_u32" for c in result["spec"]["checks"])
+    assert any(u["type"] == "irq_number_unknown" and u["irq"] == "USART1_IRQn"
+               for u in result["unresolved"])
+
+
+def test_no_irq_resolver_notes_but_does_not_spam_unresolved():
+    plan = _nvic_plan({"USART1": {"nvic": True}})
+    result = derive_acceptance_spec(plan, irq_resolver=None)
+
+    assert result["stats"]["nvic_checks"] == 0
+    assert not any(u["type"] == "irq_number_unknown" for u in result["unresolved"])
+    assert any("irq resolver" in n.lower() for n in result["notes"])
+
+
+def test_nvic_dma_stream_interrupt_is_verified():
+    plan = _nvic_plan({"USART1": {"dma": "rx"}})
+    block = next(b for b in plan["peripherals"] if b["name"] == "USART1")
+    stream_irq = block["dma"]["streams"][0]["nvic"]["irqn"]
+    resolver = dict_irq_resolver({"STM32L431": {stream_irq: 11}}, "STM32L431", "STM32L4")
+    result = derive_acceptance_spec(plan, irq_resolver=resolver)
+
+    nvic = next(c for c in result["spec"]["checks"] if c["id"] == f"nvic_{stream_irq}_enabled")
+    assert nvic["address"] == "0xe000e100"   # IRQ 11 -> ISER[0]
+    assert nvic["expect"] == "0x00000800"    # 1 << 11
+
+
+def test_nvic_svd_irq_resolver_reads_interrupt_numbers():
+    plan = _nvic_plan({"USART1": {"nvic": True}})
+    resolver = svd_irq_resolver(_FakeIRQSVD({"USART1": 37}))
+    result = derive_acceptance_spec(plan, irq_resolver=resolver)
+
+    nvic = next(c for c in result["spec"]["checks"] if c["id"] == "nvic_USART1_IRQn_enabled")
+    assert nvic["address"] == "0xe000e104"
+
+
+def test_nvic_can_be_disabled():
+    plan = _nvic_plan({"USART1": {"nvic": True}})
+    resolver = dict_irq_resolver({"STM32L431": {"USART1_IRQn": 37}}, "STM32L431", "STM32L4")
+    result = derive_acceptance_spec(plan, irq_resolver=resolver, options={"include_nvic": False})
+
+    assert all(not c["id"].startswith("nvic_") for c in result["spec"]["checks"])
+
+
+# --- GPIO MODER checks: masked equality, F1 excluded, base resolved -----------
+
+
+def test_gpio_moder_check_masked_eq_for_af_pin():
+    plan = _plan()   # PA9/PA10 af_pp, PB6 af_od -> all AF (0b10)
+    resolver = dict_gpio_resolver({"STM32L431": {"A": 0x48000000, "B": 0x48000400}},
+                                  "STM32L431", "STM32L4")
+    result = derive_acceptance_spec(plan, gpio_resolver=resolver)
+
+    pa9 = next(c for c in result["spec"]["checks"] if c["id"] == "gpio_PA9_mode")
+    assert pa9["kind"] == "memory_u32"
+    assert pa9["address"] == "0x48000000"
+    assert pa9["mask"] == "0x000c0000"     # pin 9 -> shift 18, 0b11 << 18
+    assert pa9["expect"] == "0x00080000"   # AF = 0b10 << 18
+    assert pa9["op"] == "eq"
+    assert result["stats"]["gpio_checks"] == 3
+
+
+def test_gpio_moder_analog_role_is_0b11():
+    board = {"mcu": {"part_normalized": "STM32L431CBT6", "family": "STM32L4", "line": "STM32L431", "pins": [
+        _pin("PA0", "/ADC1_IN5", _fn("ADC1", "IN5")),
+    ]}}
+    plan = build_framework_plan(board)
+    resolver = dict_gpio_resolver({"STM32L4": {"A": 0x48000000}}, "STM32L431", "STM32L4")
+    result = derive_acceptance_spec(plan, gpio_resolver=resolver)
+
+    pa0 = next(c for c in result["spec"]["checks"] if c["id"] == "gpio_PA0_mode")
+    assert pa0["mask"] == "0x00000003"     # pin 0 -> shift 0
+    assert pa0["expect"] == "0x00000003"   # analog = 0b11
+
+
+def test_gpio_moder_skipped_on_f1_family():
+    board = {"mcu": {"part_normalized": "STM32F103C8T6", "family": "STM32F1", "line": "STM32F103", "pins": [
+        _pin("PA9", "/USART1_TX", _fn("USART1", "TX")),
+    ]}}
+    plan = build_framework_plan(board)
+    resolver = dict_gpio_resolver({"STM32F103": {"A": 0x40010800}}, "STM32F103", "STM32F1")
+    result = derive_acceptance_spec(plan, gpio_resolver=resolver)
+
+    assert all(not c["id"].startswith("gpio_") for c in result["spec"]["checks"])
+    assert any(u["type"] == "gpio_moder_unsupported" for u in result["unresolved"])
+    assert result["stats"]["gpio_checks"] == 0
+
+
+def test_gpio_base_unknown_is_surfaced_not_faked():
+    plan = _plan()
+    result = derive_acceptance_spec(plan, gpio_resolver=lambda port: None)
+
+    assert all(not c["id"].startswith("gpio_") for c in result["spec"]["checks"])
+    assert any(u["type"] == "gpio_base_unknown" for u in result["unresolved"])
+
+
+def test_no_gpio_resolver_notes_but_no_unresolved_spam():
+    plan = _plan()
+    result = derive_acceptance_spec(plan, gpio_resolver=None)
+
+    assert result["stats"]["gpio_checks"] == 0
+    assert not any(u["type"] == "gpio_base_unknown" for u in result["unresolved"])
+    assert any("gpio resolver" in n.lower() for n in result["notes"])
+
+
+def test_gpio_svd_resolver_uses_moder_register_address():
+    plan = _plan()
+    svd = _FakeSVD({("GPIOA", "MODER"): {"address_int": 0x48000000, "fields": []},
+                    ("GPIOB", "MODER"): {"address_int": 0x48000400, "fields": []}})
+    resolver = svd_gpio_resolver(svd)
+    result = derive_acceptance_spec(plan, gpio_resolver=resolver)
+
+    pa9 = next(c for c in result["spec"]["checks"] if c["id"] == "gpio_PA9_mode")
+    assert pa9["address"] == "0x48000000"
+
+
+def test_gpio_can_be_disabled():
+    plan = _plan()
+    resolver = dict_gpio_resolver({"STM32L431": {"A": 0x48000000, "B": 0x48000400}},
+                                  "STM32L431", "STM32L4")
+    result = derive_acceptance_spec(plan, gpio_resolver=resolver, options={"include_gpio": False})
+
+    assert all(not c["id"].startswith("gpio_") for c in result["spec"]["checks"])
+
+
+def test_derived_gpio_check_passes_when_moder_matches():
+    plan = _plan()
+    resolver = dict_gpio_resolver({"STM32L431": {"A": 0x48000000, "B": 0x48000400}},
+                                  "STM32L431", "STM32L4")
+    spec = validate_acceptance_spec(derive_acceptance_spec(plan, gpio_resolver=resolver)["spec"])
+    reader = _FakeReader(memory={0x48000000: (0b10 << 18), 0x48000400: (0b10 << 12)})
+
+    report = evaluate_acceptance(spec, reader)
+    pa9 = next(r for r in report["results"] if r["id"] == "gpio_PA9_mode")
+    assert pa9["status"] == "pass"
+
+
+def test_derived_gpio_check_fails_when_pin_left_as_input():
+    plan = _plan()
+    resolver = dict_gpio_resolver({"STM32L431": {"A": 0x48000000, "B": 0x48000400}},
+                                  "STM32L431", "STM32L4")
+    spec = validate_acceptance_spec(derive_acceptance_spec(plan, gpio_resolver=resolver)["spec"])
+    reader = _FakeReader(memory={0x48000000: 0x0, 0x48000400: 0x0})  # MODER still reset (input)
+
+    report = evaluate_acceptance(spec, reader)
+    pa9 = next(r for r in report["results"] if r["id"] == "gpio_PA9_mode")
+    assert pa9["status"] == "fail"

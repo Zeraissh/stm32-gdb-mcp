@@ -1637,6 +1637,58 @@ def test_synthesize_acceptance_no_load_leaves_session_untouched():
     assert describe["ok"] is False
 
 
+def _seed_design_nvic(sid):
+    asyncio.run(handle_call_tool("import_netlist", {"text": _KICAD_NETLIST, "session": sid}))
+    design = {"USART1": {"baud": 115200, "nvic": True}}
+    af_map = {"STM32L431": {"PA9": {"USART1_TX": 7}}}
+    asyncio.run(handle_call_tool(
+        "design_framework", {"design": design, "af_map": af_map, "session": sid}))
+
+
+def test_synthesize_acceptance_irq_map_emits_nvic_iser_check():
+    sid = "synth-irqmap"
+    _seed_design_nvic(sid)
+    irq_map = {"STM32L431": {"USART1_IRQn": 37}}
+    result = json.loads(asyncio.run(handle_call_tool(
+        "synthesize_acceptance", {"irq_map": irq_map, "session": sid}))[0].text)
+
+    assert result["ok"] is True
+    data = result["data"]
+    assert data["resolver_sources"]["nvic"] == "irq_map"
+    nvic = next(c for c in data["checks"] if c["id"] == "nvic_USART1_IRQn_enabled")
+    assert nvic["kind"] == "memory_u32"
+    assert nvic["address"] == "0xe000e104"   # ISER[1], IRQ 37
+    assert nvic["expect"] == "0x00000020"    # bit 5
+    assert data["stats"]["nvic_checks"] == 1
+
+
+def test_synthesize_acceptance_gpio_map_emits_moder_check():
+    sid = "synth-gpiomap"
+    _seed_design(sid)
+    gpio_map = {"STM32L431": {"A": "0x48000000", "B": "0x48000400"}}
+    result = json.loads(asyncio.run(handle_call_tool(
+        "synthesize_acceptance", {"gpio_map": gpio_map, "session": sid}))[0].text)
+
+    assert result["ok"] is True
+    data = result["data"]
+    assert data["resolver_sources"]["gpio"] == "gpio_map"
+    pa9 = next(c for c in data["checks"] if c["id"] == "gpio_PA9_mode")
+    assert pa9["op"] == "eq"
+    assert pa9["mask"] == "0x000c0000"     # pin 9 -> shift 18
+    assert pa9["expect"] == "0x00080000"   # AF = 0b10
+    assert data["stats"]["gpio_checks"] >= 1
+
+
+def test_synthesize_acceptance_reports_all_sources_none_without_maps_or_svd():
+    sid = "synth-nosrc"
+    _seed_design(sid)
+    result = json.loads(asyncio.run(handle_call_tool(
+        "synthesize_acceptance", {"session": sid}))[0].text)
+
+    assert result["ok"] is True
+    assert result["data"]["resolver_sources"] == {"clock": "none", "nvic": "none", "gpio": "none"}
+
+
 # --- solve_clock_tree (Pillar D Tier 3: SystemClock_Config synthesis) --------
 
 _H7_NETLIST = (
