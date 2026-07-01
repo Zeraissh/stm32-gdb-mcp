@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -70,6 +71,7 @@ from .self_check import evaluate_self_check
 from .session_journal import SessionJournal
 from .stack_analysis import stack_report
 from .svd_parser import SVDParser
+from .timer_solver import solve_timers_in_plan
 from .tool_response import content_error, content_success
 from .tracker import VariableTracker
 
@@ -1553,6 +1555,30 @@ async def handle_list_tools() -> list[Tool]:
                     "session": {"type": "string", "description": "Target session id (default 'default')."}
                 }
             }
+        ),
+        Tool(
+            name="solve_timer",
+            description="Solve a timer's Prescaler/Period (PSC/ARR) for a target update frequency "
+                        "(Pillar D Tier 3). Turns intent ('TIM3 at 1 kHz') into concrete register values "
+                        "using the timer input clock (TIMxCLK) derived from the solved clock tree. Record a "
+                        "target via design_framework(design={'TIM3': {'update_hz': 1000}}) then run "
+                        "solve_clock_tree first, or pass timer_clock_hz directly for a what-if. Deterministic "
+                        "and honest: an exact target yields zero-error PSC/ARR, an inexact one yields the "
+                        "closest pair plus the achieved frequency and ppm error, and an unrepresentable target "
+                        "or an unknown timer bus is surfaced, never guessed. Injects the result into the plan "
+                        "so render_framework emits concrete values instead of a TODO.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "timer": {"type": "string", "description": "Timer to solve, e.g. 'TIM3'. Omit to solve every timer that has a recorded target."},
+                    "target_hz": {"type": "number", "description": "Target update frequency in Hz; overrides the recorded design target (requires timer)."},
+                    "timer_clock_hz": {"type": "integer", "description": "Explicit TIMxCLK in Hz; bypasses the clock-solution + bus derivation (pure what-if)."},
+                    "bus": {"type": "string", "description": "Override the timer's APB bus: 'apb1' or 'apb2'."},
+                    "arr_bits": {"type": "integer", "description": "ARR width override: 16 or 32 (for 32-bit timers TIM2/TIM5)."},
+                    "load": {"type": "boolean", "description": "Persist the solved PSC/ARR into the plan (default true)."},
+                    "session": {"type": "string", "description": "Target session id (default 'default')."}
+                }
+            }
         )
     ]
     # Compact mode (STM32_GDB_MCP_COMPACT=1): expose only a small core so nothing gets
@@ -3018,6 +3044,50 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                 "notes": result["notes"],
                 "loaded": loaded,
             }, suggested_next_actions=["render_framework", "synthesize_acceptance"])]
+
+        elif name == "solve_timer":
+            plan = session_design.get("current")
+            if not plan:
+                return [content_error(
+                    "No framework plan for this session. Run design_framework first.", code="no_design",
+                    suggested_next_actions=["design_framework"])]
+            timer = arguments.get("timer")
+            target_hz = arguments.get("target_hz")
+            if target_hz is not None and not timer:
+                return [content_error(
+                    "target_hz requires a specific timer=; omit target_hz to use recorded design targets.",
+                    code="invalid_argument", suggested_next_actions=["solve_timer(timer='TIM3', target_hz=1000)"])]
+            bus = arguments.get("bus")
+            if bus is not None and bus not in ("apb1", "apb2"):
+                return [content_error(
+                    "bus must be 'apb1' or 'apb2'.", code="invalid_argument",
+                    suggested_next_actions=["solve_timer(timer='TIM3', bus='apb1')"])]
+            arr_bits = arguments.get("arr_bits")
+            if arr_bits is not None and arr_bits not in (16, 32):
+                return [content_error(
+                    "arr_bits must be 16 or 32.", code="invalid_argument",
+                    suggested_next_actions=["solve_timer(arr_bits=32)"])]
+            loaded = arguments.get("load", True)
+            target_plan = plan if loaded else copy.deepcopy(plan)
+            overrides = {timer: target_hz} if (timer and target_hz is not None) else None
+            report = solve_timers_in_plan(
+                target_plan, only=timer, target_overrides=overrides,
+                timer_clock_hz=arguments.get("timer_clock_hz"), bus_override=bus, arr_bits_override=arr_bits)
+            if not report["results"]:
+                detail = (f"{timer} has no recorded target; pass target_hz=." if timer
+                          else "No timer had a recorded target (design update_hz) to solve.")
+                return [content_success({
+                    "solved_count": 0, "timer_count": report["timer_count"], "results": [], "detail": detail,
+                }, suggested_next_actions=["design_framework(design={'TIM3': {'update_hz': 1000}})"])]
+            if loaded:
+                session_design["current"] = target_plan
+                session_design["last_render"] = None
+            return [content_success({
+                "solved_count": report["solved_count"],
+                "timer_count": report["timer_count"],
+                "results": report["results"],
+                "loaded": loaded,
+            }, suggested_next_actions=["render_framework", "describe_framework (what=unresolved)"])]
 
         else:
             hint = _RENAMED_TOOLS.get(name)

@@ -288,6 +288,11 @@ def _derive_spi_params(pins: list[dict]) -> dict:
 
 _DERIVERS = {"uart": _derive_uart_params, "spi": _derive_spi_params}
 
+# Design keys that express a timer's desired update/overflow frequency. Recorded as
+# intent on the block so solve_timer can turn it into concrete PSC/ARR once the clock
+# tree is solved (Prescaler/Period need TIMxCLK, unknown at build time).
+_TIMER_TARGET_KEYS = ("update_hz", "frequency_hz", "freq_hz", "target_hz")
+
 
 def _count_sources(config_fields: list[dict]) -> dict:
     counts = {"explicit": 0, "derived": 0, "default": 0}
@@ -467,12 +472,21 @@ def _build_peripheral_block(name: str, info: dict, config: dict | None) -> dict:
     kind = info["kind"]
     meta = _kind_meta(kind)
     handle = f"{meta['handle_prefix']}{_peripheral_index(name).lower() or name.lower()}"
-    config = config or {}
+    config = dict(config or {})
     fields_map = meta.get("fields", {})
     params = _KIND_PARAMS.get(kind, {})
     order = params.get("order", [])
     defaults = params.get("defaults", {})
     required = params.get("required", [])
+
+    # A timer's target frequency is intent, not a HAL field: record it and keep it out
+    # of the unmapped pass-through so solve_timer can resolve PSC/ARR post clock-solve.
+    timer_target = None
+    if kind == "timer":
+        for key in _TIMER_TARGET_KEYS:
+            if key in config:
+                timer_target = config.pop(key)
+                break
 
     # Explicit engineer values: map each design key to its HAL .Init field, or keep
     # it as an unmapped pass-through comment when there is no known mapping.
@@ -488,9 +502,17 @@ def _build_peripheral_block(name: str, info: dict, config: dict | None) -> dict:
     deriver = _DERIVERS.get(kind)
     derived = deriver(info["pins"]) if deriver else {}
 
-    # Required design decisions the engineer must still make (no safe default).
-    param_todos = [{"field": req["field"], "hint": req["hint"]}
-                   for req in required if not any(k in config for k in req["keys"])]
+    # Required design decisions the engineer must still make (no safe default). When a
+    # timer target is recorded, point the Prescaler/Period TODOs at solve_timer.
+    param_todos = []
+    for req in required:
+        if any(k in config for k in req["keys"]):
+            continue
+        hint = req["hint"]
+        if timer_target is not None and req["field"] in ("Prescaler", "Period"):
+            hint = (f"target {timer_target} Hz recorded; run solve_clock_tree then "
+                    "solve_timer to fill this from TIMxCLK")
+        param_todos.append({"field": req["field"], "hint": hint})
 
     # Assemble ordered, deduped fields with precedence explicit > derived > default.
     config_fields: list[dict] = []
@@ -530,6 +552,7 @@ def _build_peripheral_block(name: str, info: dict, config: dict | None) -> dict:
         "param_todos": param_todos,
         "config_sources": _count_sources(config_fields),
         "has_config": bool(config_fields),
+        "timer_target_hz": timer_target,
     }
 
 

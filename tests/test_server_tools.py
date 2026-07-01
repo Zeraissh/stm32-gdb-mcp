@@ -1717,6 +1717,100 @@ def test_solve_clock_tree_no_load_leaves_stub():
     source = next(f["content"] for f in rendered["data"]["files"] if f["path"] == "bsp_init.c")
     assert "TODO: configure the clock tree" in source
 
+# --- solve_timer (Pillar D Tier 3: timer base-frequency synthesis) -----------
+
+_TIMER_NETLIST = (
+    '(export (version "E")'
+    '  (components'
+    '    (comp (ref "U1") (value "STM32L431CBT6") (footprint "LQFP-48")))'
+    '  (nets'
+    '    (net (code "1") (name "/TIM3_CH1")'
+    '      (node (ref "U1") (pin "10") (pinfunction "PA6")))'
+    '    (net (code "2") (name "GND") (node (ref "U1") (pin "8")))))'
+)
+
+
+def _seed_timer_design(sid, target=1000):
+    asyncio.run(handle_call_tool("import_netlist", {"text": _TIMER_NETLIST, "session": sid}))
+    asyncio.run(handle_call_tool(
+        "design_framework", {"design": {"TIM3": {"update_hz": target}}, "session": sid}))
+
+
+def test_solve_timer_requires_design():
+    result = json.loads(asyncio.run(handle_call_tool(
+        "solve_timer", {"timer": "TIM3", "session": "tim-nodesign"}))[0].text)
+    assert result["ok"] is False
+    assert result["error"]["code"] == "no_design"
+
+
+def test_solve_timer_needs_clock_first_is_honest():
+    sid = "tim-noclock"
+    _seed_timer_design(sid)
+    result = json.loads(asyncio.run(handle_call_tool("solve_timer", {"session": sid}))[0].text)
+    assert result["ok"] is True
+    assert result["data"]["solved_count"] == 0
+    assert result["data"]["results"][0]["unresolved"][0]["type"] == "no_clock_solution"
+
+    # The rendered timer init still carries the honest Prescaler/Period TODO.
+    rendered = json.loads(asyncio.run(handle_call_tool("render_framework", {"session": sid}))[0].text)
+    source = next(f["content"] for f in rendered["data"]["files"] if f["path"] == "bsp_init.c")
+    assert "TODO: set htim3.Init.Prescaler" in source
+
+
+def test_solve_timer_fills_prescaler_period_and_renders():
+    sid = "tim-happy"
+    _seed_timer_design(sid, target=1000)
+    asyncio.run(handle_call_tool(
+        "solve_clock_tree", {"source": "HSI", "sysclk_hz": 80_000_000, "session": sid}))
+
+    solved = json.loads(asyncio.run(handle_call_tool("solve_timer", {"timer": "TIM3", "session": sid}))[0].text)
+    assert solved["ok"] is True
+    assert solved["data"]["solved_count"] == 1
+    res = solved["data"]["results"][0]
+    assert res["feasible"] and res["exact"] and res["bus"] == "apb1"
+    assert (res["psc"] + 1) * (res["arr"] + 1) == 80_000  # 80 MHz TIMxCLK / 1 kHz
+
+    # render_framework now emits concrete PSC/ARR instead of a TODO.
+    rendered = json.loads(asyncio.run(handle_call_tool("render_framework", {"session": sid}))[0].text)
+    source = next(f["content"] for f in rendered["data"]["files"] if f["path"] == "bsp_init.c")
+    assert f"htim3.Init.Prescaler = {res['psc']};" in source
+    assert f"htim3.Init.Period = {res['arr']};" in source
+    assert "TODO: set htim3.Init.Prescaler" not in source
+
+    # And the plan's unresolved list no longer flags TIM3 Prescaler/Period.
+    unresolved = json.loads(asyncio.run(handle_call_tool(
+        "describe_framework", {"what": "unresolved", "session": sid}))[0].text)
+    tim_params = [u for u in unresolved["data"]["unresolved"]
+                  if u.get("peripheral") == "TIM3" and u.get("type") == "param_unresolved"]
+    assert tim_params == []
+
+
+def test_solve_timer_explicit_clock_whatif_without_loading():
+    sid = "tim-whatif"
+    _seed_timer_design(sid, target=1000)
+    # No clock solved, but an explicit TIMxCLK enables a pure what-if; load=False keeps the plan clean.
+    solved = json.loads(asyncio.run(handle_call_tool(
+        "solve_timer", {"timer": "TIM3", "timer_clock_hz": 84_000_000, "load": False, "session": sid}))[0].text)
+    assert solved["data"]["solved_count"] == 1
+    assert solved["data"]["loaded"] is False
+    res = solved["data"]["results"][0]
+    assert (res["psc"] + 1) * (res["arr"] + 1) == 84_000
+
+    # Because load=False, the persisted plan still shows the TODO.
+    rendered = json.loads(asyncio.run(handle_call_tool("render_framework", {"session": sid}))[0].text)
+    source = next(f["content"] for f in rendered["data"]["files"] if f["path"] == "bsp_init.c")
+    assert "TODO: set htim3.Init.Prescaler" in source
+
+
+def test_solve_timer_no_recorded_target_is_reported():
+    sid = "tim-notarget"
+    asyncio.run(handle_call_tool("import_netlist", {"text": _TIMER_NETLIST, "session": sid}))
+    asyncio.run(handle_call_tool("design_framework", {"session": sid}))  # no timer target recorded
+    result = json.loads(asyncio.run(handle_call_tool("solve_timer", {"timer": "TIM3", "session": sid}))[0].text)
+    assert result["ok"] is True
+    assert result["data"]["solved_count"] == 0
+    assert "no recorded target" in result["data"]["detail"]
+
 # --- DB-derived GPIO alternate-function resolution (Pillar D Tier 3) ---------
 
 
