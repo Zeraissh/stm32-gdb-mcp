@@ -114,6 +114,7 @@ anything unresolvable is surfaced, never guessed.
 - [x] **Tier 3 (cont.)** — DB-derived GPIO alternate-function resolution (see below; 2 + 2 + 4 tests; suite 390 passed / 1 skipped)
 - [x] **Tier 3 (cont.)** — complete peripheral `.Init` structs: HAL-standard defaults + netlist-derived values (UART flow control, SPI NSS) + honest required-decision TODOs (see below; suite 395 passed / 1 skipped)
 - [x] **Tier 3 (cont.)** — deterministic timer base-frequency solver (`timer_solver.py` + `solve_timer`): a recorded update frequency becomes concrete PSC/ARR via TIMxCLK from the solved clock tree (see `2026-07-01-timer-solver.md`; 15 + 5 tests; suite 415 passed / 1 skipped)
+- [x] **Tier 3 (cont.)** — deterministic NVIC interrupt backbone (`interrupt_solver.py`; interrupts captured through `design_framework`): resolved IRQn + priority + `HAL_NVIC_EnableIRQ` + one dispatching ISR per vector, with honest `nvic_unresolved` / `TODO` for irregular or unknown vectors instead of a guessed IRQn (see `2026-07-01-nvic-backbone.md`; 12 + 6 + 6 + 2 tests; suite 439 passed / 1 skipped)
 
 ## Tier 3 (cont.) — complete peripheral .Init structs
 

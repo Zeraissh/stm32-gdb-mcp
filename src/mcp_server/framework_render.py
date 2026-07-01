@@ -97,7 +97,40 @@ def _render_source(plan: dict) -> str:
     lines += _render_gpio_init(plan)
     for block in plan.get("peripherals", []):
         lines += _render_peripheral_init(block)
+    lines += _render_isrs(plan)
     return "\n".join(lines)
+
+
+def _render_isrs(plan: dict) -> list[str]:
+    """One interrupt service routine per resolved vector, dispatching to the HAL handler.
+
+    Shared vectors (e.g. ``TIM6_DAC_IRQn``) that serve several enabled peripherals
+    emit a single ISR that calls every attached handle, so no duplicate symbol is
+    generated.
+    """
+    by_isr: dict[str, list[str]] = {}
+    order: list[str] = []
+    for block in plan.get("peripherals", []):
+        nvic = block.get("nvic")
+        if not nvic or not nvic.get("resolved"):
+            continue
+        for vector in nvic["vectors"]:
+            isr = vector["isr"]
+            if isr not in by_isr:
+                by_isr[isr] = []
+                order.append(isr)
+            call = f"{vector['handler']}(&{block['handle']});"
+            if call not in by_isr[isr]:
+                by_isr[isr].append(call)
+
+    if not order:
+        return []
+    lines = ["/* Interrupt service routines -- dispatch into the HAL handlers. */"]
+    for isr in order:
+        lines += [f"void {isr}(void)", "{"]
+        lines += [f"    {call}" for call in by_isr[isr]]
+        lines += ["}", ""]
+    return lines
 
 
 def _render_bsp_init(plan: dict) -> list[str]:
@@ -189,7 +222,24 @@ def _render_peripheral_init(block: dict) -> list[str]:
     lines += [f"    if ({block['hal_init_call']}(&{handle}) != HAL_OK)",
               "    {",
               "        Error_Handler();",
-              "    }",
-              "}",
-              ""]
+              "    }"]
+    lines += _render_nvic_calls(block)
+    lines += ["}", ""]
+    return lines
+
+
+def _render_nvic_calls(block: dict) -> list[str]:
+    """HAL_NVIC_SetPriority + HAL_NVIC_EnableIRQ for each resolved vector, or a TODO."""
+    nvic = block.get("nvic")
+    if not nvic or not nvic.get("requested"):
+        return []
+    if not nvic.get("resolved"):
+        return [f"    /* TODO: enable {block['name']} interrupt -- {nvic['unresolved_reason']} */"]
+    lines = ["    /* NVIC */"]
+    note = ("  /* default priority -- review preemption for your app/RTOS */"
+            if nvic.get("priority_source") == "default" else "")
+    for vector in nvic["vectors"]:
+        lines.append(f"    HAL_NVIC_SetPriority({vector['irqn']}, {nvic['preempt']}, {nvic['sub']});{note}")
+        lines.append(f"    HAL_NVIC_EnableIRQ({vector['irqn']});")
+        note = ""  # annotate only the first vector
     return lines

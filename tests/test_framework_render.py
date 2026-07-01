@@ -163,3 +163,51 @@ def test_clock_stub_remains_without_clock_config():
     _, source, _ = _render()
     assert "TODO: configure the clock tree" in source
     assert "RCC_OscInitTypeDef" not in source
+
+
+# --- NVIC interrupt backbone (Pillar D Tier 3) ------------------------------
+
+
+def _render_pins(pins, design):
+    plan = build_framework_plan(_board(pins), design=design)
+    result = render_framework(plan)
+    source = next(f["content"] for f in result["files"] if f["path"] == "bsp_init.c")
+    return result, source
+
+
+def test_nvic_renders_setpriority_enable_and_isr():
+    _, source, _ = _render(design={"USART1": {"nvic_priority": 5}})
+    assert "HAL_NVIC_SetPriority(USART1_IRQn, 5, 0);" in source
+    assert "HAL_NVIC_EnableIRQ(USART1_IRQn);" in source
+    # A dispatching ISR is generated for the enabled vector.
+    assert "void USART1_IRQHandler(void)" in source
+    assert "HAL_UART_IRQHandler(&huart1);" in source
+
+
+def test_nvic_default_priority_carries_review_note():
+    _, source, _ = _render(design={"USART1": {"nvic": True}})
+    assert "HAL_NVIC_SetPriority(USART1_IRQn, 5, 0);" in source
+    assert "default priority" in source
+
+
+def test_nvic_i2c_emits_both_event_and_error_vectors():
+    _, source, _ = _render(design={"I2C1": {"nvic": True}})
+    assert "HAL_NVIC_EnableIRQ(I2C1_EV_IRQn);" in source
+    assert "HAL_NVIC_EnableIRQ(I2C1_ER_IRQn);" in source
+    assert "void I2C1_EV_IRQHandler(void)" in source
+    assert "HAL_I2C_EV_IRQHandler(&hi2c1);" in source
+    assert "void I2C1_ER_IRQHandler(void)" in source
+    assert "HAL_I2C_ER_IRQHandler(&hi2c1);" in source
+
+
+def test_nvic_unresolved_vector_renders_todo_not_a_guess():
+    tim_pins = [_pin("10", "PA8", "/TIM1_CH1", _fn("TIM1", "CH1"))]
+    _, source = _render_pins(tim_pins, {"TIM1": {"nvic": True}})
+    assert "TODO: enable TIM1 interrupt" in source
+    assert "HAL_NVIC_EnableIRQ" not in source  # nothing guessed
+
+
+def test_nvic_generated_code_is_pure_ascii():
+    result, _, _ = _render(design={"USART1": {"nvic": True}, "I2C1": {"nvic_priority": 3}})
+    for f in result["files"]:
+        f["content"].encode("ascii")

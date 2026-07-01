@@ -302,3 +302,54 @@ def test_merge_af_maps_handles_none_inputs():
     assert merge_af_maps(None, None) == {}
     assert merge_af_maps(None, {"F4": {"PA0": {"X_Y": 1}}}) == {"F4": {"PA0": {"X_Y": 1}}}
     assert merge_af_maps({"F4": {"PA0": {"X_Y": 1}}}, None) == {"F4": {"PA0": {"X_Y": 1}}}
+
+
+# --- NVIC interrupt backbone (Pillar D Tier 3) ------------------------------
+
+
+def _timer_pins(peripheral="TIM3"):
+    return [_pin("10", "PA6", f"/{peripheral}_CH1", _fn(peripheral, "CH1"))]
+
+
+def test_nvic_capture_resolves_uart_and_records_priority():
+    plan = build_framework_plan(_board(_mixed_pins()), design={"USART1": {"nvic_priority": 5}})
+    usart = next(b for b in plan["peripherals"] if b["name"] == "USART1")
+
+    assert usart["nvic"]["resolved"] is True
+    assert usart["nvic"]["vectors"][0]["irqn"] == "USART1_IRQn"
+    assert usart["nvic"]["preempt"] == 5 and usart["nvic"]["priority_source"] == "explicit"
+    # The NVIC directive must not leak into the .Init pass-through.
+    assert usart["unmapped_config"] == []
+    # And the peripheral summary carries a compact NVIC view.
+    summary = summarize_framework(plan)
+    su = next(p for p in summary["peripherals"] if p["name"] == "USART1")
+    assert su["nvic"]["irqns"] == ["USART1_IRQn"]
+
+
+def test_nvic_default_priority_when_bare_enable():
+    plan = build_framework_plan(_board(_mixed_pins()), design={"USART1": {"nvic": True}})
+    usart = next(b for b in plan["peripherals"] if b["name"] == "USART1")
+    assert usart["nvic"]["preempt"] == 5 and usart["nvic"]["priority_source"] == "default"
+
+
+def test_nvic_advanced_timer_without_vector_is_surfaced():
+    plan = build_framework_plan(_board(_timer_pins("TIM1")), design={"TIM1": {"nvic": True}})
+    tim = next(b for b in plan["peripherals"] if b["name"] == "TIM1")
+    assert tim["nvic"]["requested"] and not tim["nvic"]["resolved"]
+    assert any(u["type"] == "nvic_unresolved" and u["peripheral"] == "TIM1"
+               for u in plan["unresolved"])
+
+
+def test_nvic_irqn_override_resolves_advanced_timer():
+    plan = build_framework_plan(_board(_timer_pins("TIM1")),
+                                design={"TIM1": {"irqn": "TIM1_UP_TIM10_IRQn"}})
+    tim = next(b for b in plan["peripherals"] if b["name"] == "TIM1")
+    assert tim["nvic"]["resolved"] is True
+    assert tim["nvic"]["vectors"][0]["irqn"] == "TIM1_UP_TIM10_IRQn"
+    assert not any(u["type"] == "nvic_unresolved" for u in plan["unresolved"])
+
+
+def test_no_nvic_directive_leaves_block_without_interrupt():
+    plan = build_framework_plan(_board(_mixed_pins()), design={"USART1": {"baud": 115200}})
+    usart = next(b for b in plan["peripherals"] if b["name"] == "USART1")
+    assert usart["nvic"] is None

@@ -1811,6 +1811,55 @@ def test_solve_timer_no_recorded_target_is_reported():
     assert result["data"]["solved_count"] == 0
     assert "no recorded target" in result["data"]["detail"]
 
+# --- NVIC interrupt backbone (Pillar D Tier 3) ------------------------------
+
+
+def test_design_framework_nvic_renders_calls_and_isr():
+    sid = "nvic-happy"
+    asyncio.run(handle_call_tool("import_netlist", {"text": _KICAD_NETLIST, "session": sid}))
+    design = {"USART1": {"baud": 115200, "nvic_priority": 5}, "I2C1": {"nvic": True}}
+    designed = json.loads(asyncio.run(handle_call_tool(
+        "design_framework", {"design": design, "session": sid}))[0].text)
+    assert designed["ok"] is True
+    usart = next(p for p in designed["data"]["peripherals"] if p["name"] == "USART1")
+    assert usart["nvic"]["irqns"] == ["USART1_IRQn"]
+
+    rendered = json.loads(asyncio.run(handle_call_tool("render_framework", {"session": sid}))[0].text)
+    source = next(f["content"] for f in rendered["data"]["files"] if f["path"] == "bsp_init.c")
+    assert "HAL_NVIC_SetPriority(USART1_IRQn, 5, 0);" in source
+    assert "HAL_NVIC_EnableIRQ(USART1_IRQn);" in source
+    assert "void USART1_IRQHandler(void)" in source
+    assert "HAL_UART_IRQHandler(&huart1);" in source
+    # I2C default-enabled -> both event/error vectors + a review note.
+    assert "HAL_NVIC_EnableIRQ(I2C1_EV_IRQn);" in source
+    assert "HAL_NVIC_EnableIRQ(I2C1_ER_IRQn);" in source
+    assert "default priority" in source
+
+
+def test_design_framework_nvic_unknown_vector_is_surfaced_not_guessed():
+    sid = "nvic-unresolved"
+    # Advanced-timer TIM1 has an irregular vector deliberately left out of the
+    # built-in table, so a bare nvic request must surface honestly (never guessed).
+    tim1_net = _TIMER_NETLIST.replace("/TIM3_CH1", "/TIM1_CH1")
+    asyncio.run(handle_call_tool("import_netlist", {"text": tim1_net, "session": sid}))
+    designed = json.loads(asyncio.run(handle_call_tool(
+        "design_framework", {"design": {"TIM1": {"nvic": True}}, "session": sid}))[0].text)
+    assert designed["ok"] is True
+    tim1 = next(p for p in designed["data"]["peripherals"] if p["name"] == "TIM1")
+    assert tim1["nvic"]["requested"] is True
+    assert tim1["nvic"]["resolved"] is False
+    assert tim1["nvic"]["irqns"] == []
+
+    unresolved = json.loads(asyncio.run(handle_call_tool(
+        "describe_framework", {"what": "unresolved", "session": sid}))[0].text)
+    assert any(u["type"] == "nvic_unresolved" and u["peripheral"] == "TIM1"
+               for u in unresolved["data"]["unresolved"])
+
+    rendered = json.loads(asyncio.run(handle_call_tool("render_framework", {"session": sid}))[0].text)
+    source = next(f["content"] for f in rendered["data"]["files"] if f["path"] == "bsp_init.c")
+    assert "TODO: enable TIM1 interrupt" in source
+    assert "HAL_NVIC_EnableIRQ" not in source
+
 # --- DB-derived GPIO alternate-function resolution (Pillar D Tier 3) ---------
 
 

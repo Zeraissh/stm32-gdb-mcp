@@ -23,6 +23,8 @@ Everything is plain dicts so a plan serializes straight through the
 
 import re
 
+from .interrupt_solver import NVIC_KEYS, build_nvic
+
 # --- Peripheral classification ----------------------------------------------
 
 _UART_RE = re.compile(r"^(LP)?US?ART\d+$")
@@ -439,7 +441,7 @@ def build_framework_plan(board: dict, design: dict | None = None, af_map: dict |
 
     peripheral_blocks = []
     for name in sorted(peripherals):
-        block = _build_peripheral_block(name, peripherals[name], design.get(name))
+        block = _build_peripheral_block(name, peripherals[name], design.get(name), family)
         peripheral_blocks.append(block)
         for todo in block["param_todos"]:
             unresolved.append({"type": "param_unresolved", "peripheral": name, "field": todo["field"],
@@ -448,6 +450,10 @@ def build_framework_plan(board: dict, design: dict | None = None, af_map: dict |
         if not block["param_todos"] and not block["config_fields"]:
             unresolved.append({"type": "no_config", "peripheral": name,
                                "detail": f"{name}: no design config supplied; init parameters left as TODO."})
+        nvic = block.get("nvic")
+        if nvic and nvic.get("requested") and not nvic.get("resolved"):
+            unresolved.append({"type": "nvic_unresolved", "peripheral": name,
+                               "detail": f"{name}: interrupt requested but vector unknown -- {nvic['unresolved_reason']}"})
 
     init_order = ["SystemClock_Config", "MX_GPIO_Init"] + [b["init_fn"] for b in peripheral_blocks]
 
@@ -468,7 +474,7 @@ def build_framework_plan(board: dict, design: dict | None = None, af_map: dict |
     }
 
 
-def _build_peripheral_block(name: str, info: dict, config: dict | None) -> dict:
+def _build_peripheral_block(name: str, info: dict, config: dict | None, family: str | None = None) -> dict:
     kind = info["kind"]
     meta = _kind_meta(kind)
     handle = f"{meta['handle_prefix']}{_peripheral_index(name).lower() or name.lower()}"
@@ -478,6 +484,12 @@ def _build_peripheral_block(name: str, info: dict, config: dict | None) -> dict:
     order = params.get("order", [])
     defaults = params.get("defaults", {})
     required = params.get("required", [])
+
+    # Interrupt generation is opt-in: pop the NVIC directives before the remaining
+    # config is mapped to HAL .Init fields, then resolve the concrete vector(s).
+    nvic_args = {key: config.pop(key) for key in NVIC_KEYS if key in config}
+    nvic = build_nvic(name, kind, family, nvic=nvic_args.get("nvic"),
+                      nvic_priority=nvic_args.get("nvic_priority"), irqn=nvic_args.get("irqn"))
 
     # A timer's target frequency is intent, not a HAL field: record it and keep it out
     # of the unmapped pass-through so solve_timer can resolve PSC/ARR post clock-solve.
@@ -553,6 +565,7 @@ def _build_peripheral_block(name: str, info: dict, config: dict | None) -> dict:
         "config_sources": _count_sources(config_fields),
         "has_config": bool(config_fields),
         "timer_target_hz": timer_target,
+        "nvic": nvic,
     }
 
 
@@ -567,6 +580,19 @@ def _empty_plan(warnings: list[str]) -> dict:
 # --- Views for the design_framework / describe_framework tools ---------------
 
 
+def _nvic_summary(nvic: dict | None) -> dict | None:
+    """Compact NVIC view for a peripheral summary, or ``None`` when no interrupt."""
+    if not nvic:
+        return None
+    return {
+        "requested": nvic.get("requested", False),
+        "resolved": nvic.get("resolved", False),
+        "irqns": [v["irqn"] for v in nvic.get("vectors", [])],
+        "priority": [nvic.get("preempt"), nvic.get("sub")],
+        "priority_source": nvic.get("priority_source"),
+    }
+
+
 def summarize_framework(plan: dict) -> dict:
     """Compact, human-oriented overview of a FrameworkPlan."""
     return {
@@ -575,7 +601,8 @@ def summarize_framework(plan: dict) -> dict:
         "peripherals": [{"name": b["name"], "kind": b["kind"], "handle": b["handle"],
                          "pin_count": len(b["pins"]), "has_config": b["has_config"],
                          "config_sources": b.get("config_sources", {}),
-                         "param_todo_count": len(b.get("param_todos", []))}
+                         "param_todo_count": len(b.get("param_todos", [])),
+                         "nvic": _nvic_summary(b.get("nvic"))}
                         for b in plan.get("peripherals", [])],
         "init_order": plan.get("init_order", []),
         "unresolved_count": plan.get("stats", {}).get("unresolved_count", 0),
