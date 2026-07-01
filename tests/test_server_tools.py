@@ -1185,6 +1185,8 @@ def test_server_exposes_netlist_pipeline_tools():
 
     assert "import_netlist" in tool_names
     assert "describe_board" in tool_names
+    assert "import_spec" in tool_names
+    assert "design_framework" in tool_names
 
 
 def test_import_netlist_then_describe_board_roundtrip():
@@ -1898,6 +1900,65 @@ def test_design_framework_dma_unmapped_is_surfaced_not_guessed():
     source = next(f["content"] for f in rendered["data"]["files"] if f["path"] == "bsp_init.c")
     assert "USART2 rx DMA requested but stream unknown" in source
     assert "HAL_DMA_Init" not in source
+
+# --- Product-spec entry (controlled vocabulary -> design params) -------------
+
+
+def test_import_spec_then_design_from_spec_renders_translated_hal_macros():
+    sid = "spec-happy"
+    asyncio.run(handle_call_tool("import_netlist", {"text": _KICAD_NETLIST, "session": sid}))
+    spec = {"USART1": {"baud": 115200, "framing": "8E1", "direction": "txrx"},
+            "I2C1": {"addressing": "10bit"}}
+    imported = json.loads(asyncio.run(handle_call_tool("import_spec", {"spec": spec, "session": sid}))[0].text)
+    assert imported["ok"] is True
+    data = imported["data"]
+    assert data["cross_checked"] is True
+    assert data["conflicts"] == []
+    # 8E1 -> HAL folds the parity bit into WordLength.
+    assert data["design"]["USART1"]["word_length"] == "UART_WORDLENGTH_9B"
+    assert data["design"]["USART1"]["parity"] == "UART_PARITY_EVEN"
+
+    designed = json.loads(asyncio.run(handle_call_tool(
+        "design_framework", {"from_spec": True, "session": sid}))[0].text)
+    assert designed["ok"] is True
+    rendered = json.loads(asyncio.run(handle_call_tool("render_framework", {"session": sid}))[0].text)
+    source = next(f["content"] for f in rendered["data"]["files"] if f["path"] == "bsp_init.c")
+    assert "huart1.Init.BaudRate = 115200;" in source
+    assert "huart1.Init.WordLength = UART_WORDLENGTH_9B;" in source
+    assert "huart1.Init.Parity = UART_PARITY_EVEN;" in source
+    assert "huart1.Init.Mode = UART_MODE_TX_RX;" in source
+    assert "hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_10BIT;" in source
+
+
+def test_import_spec_flags_peripheral_absent_from_netlist():
+    sid = "spec-conflict"
+    asyncio.run(handle_call_tool("import_netlist", {"text": _KICAD_NETLIST, "session": sid}))
+    imported = json.loads(asyncio.run(handle_call_tool(
+        "import_spec", {"spec": {"SPI2": {"role": "master"}}, "session": sid}))[0].text)
+    data = imported["data"]
+    assert any(c["peripheral"] == "SPI2" for c in data["conflicts"])
+    assert "SPI2" not in data["design"]  # no code for hardware that is not wired
+
+
+def test_design_framework_from_spec_without_import_errors():
+    sid = "spec-missing"
+    asyncio.run(handle_call_tool("import_netlist", {"text": _KICAD_NETLIST, "session": sid}))
+    res = json.loads(asyncio.run(handle_call_tool(
+        "design_framework", {"from_spec": True, "session": sid}))[0].text)
+    assert res["ok"] is False
+    assert res["error"]["code"] == "no_spec"
+
+
+def test_design_framework_from_spec_explicit_design_overrides():
+    sid = "spec-merge"
+    asyncio.run(handle_call_tool("import_netlist", {"text": _KICAD_NETLIST, "session": sid}))
+    asyncio.run(handle_call_tool("import_spec", {"spec": {"USART1": {"baud": 9600}}, "session": sid}))
+    asyncio.run(handle_call_tool(
+        "design_framework", {"from_spec": True, "design": {"USART1": {"baud": 115200}}, "session": sid}))
+    rendered = json.loads(asyncio.run(handle_call_tool("render_framework", {"session": sid}))[0].text)
+    source = next(f["content"] for f in rendered["data"]["files"] if f["path"] == "bsp_init.c")
+    assert "huart1.Init.BaudRate = 115200;" in source
+    assert "9600" not in source
 
 # --- DB-derived GPIO alternate-function resolution (Pillar D Tier 3) ---------
 

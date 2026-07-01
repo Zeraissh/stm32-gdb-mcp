@@ -69,6 +69,7 @@ from .reset_strategy import resolve_reset_command
 from .scenario import load_scenario, replay_scenario, step_summary
 from .self_check import evaluate_self_check
 from .session_journal import SessionJournal
+from .spec_model import build_design
 from .stack_analysis import stack_report
 from .svd_parser import SVDParser
 from .timer_solver import solve_timers_in_plan
@@ -166,6 +167,7 @@ _board = {"current": None}  # imported BoardDescription (netlist -> BSP model) f
 _acceptance = {"current": None, "last_result": None}  # loaded AcceptanceSpec + last verdict (default session)
 _loop = {"current": None}  # bounded acceptance-loop state (Pillar C) for the default session
 _design = {"current": None, "last_render": None}  # FrameworkPlan + last render (Pillar D) for default session
+_spec = {"current": None}  # translated product spec (spec_model -> design params) for the default session
 _reported_issues = {}  # fingerprint -> issue url (in-session dedup)
 
 # Phase 3: named per-target sessions for multi-board / CI. The "default" session reuses
@@ -175,10 +177,11 @@ session_manager = SessionManager()
 _SESSION_ATTRS = ("gdb_manager", "gdb_client", "svd_parser", "variable_tracker",
                   "debug_profile", "freertos_inspector", "rtt_log_reader", "swo_log_reader",
                   "swo_file_reader", "uart_log_reader", "memory_guard", "last_session", "board",
-                  "acceptance", "loop", "design")
+                  "acceptance", "loop", "design", "spec")
 # Session attrs whose "default" backing global is named differently from the attribute.
 _DEFAULT_SESSION_GLOBALS = {"last_session": "_last_session", "board": "_board",
-                            "acceptance": "_acceptance", "loop": "_loop", "design": "_design"}
+                            "acceptance": "_acceptance", "loop": "_loop", "design": "_design",
+                            "spec": "_spec"}
 
 
 def _resolve_session(arguments: dict):
@@ -1459,6 +1462,28 @@ async def handle_list_tools() -> list[Tool]:
             }
         ),
         Tool(
+            name="import_spec",
+            description="Translate a controlled-vocabulary product spec (human/product terms) into the "
+                        "per-peripheral design params design_framework consumes, and cross-check it against the "
+                        "imported netlist. This is the upstream guard the pipeline lacked: instead of hand-writing "
+                        "HAL macros, supply intent -- UART framing '8N1', direction 'txrx', flow_control 'rtscts'; "
+                        "SPI role 'master', spi_mode 0..3, data_size, bit_order; I2C speed 'fast', addressing "
+                        "'7bit'; ADC resolution 12, conversion 'continuous'; a timer update_hz; plus dma / "
+                        "interrupt / priority opt-ins -- and the machine expands it deterministically (8E1 -> "
+                        "UART_WORDLENGTH_9B + UART_PARITY_EVEN, honoring HAL's parity-bit-in-word-length rule). A "
+                        "peripheral named in the spec but absent from the netlist is a conflict; an intent key or "
+                        "value the machine does not model is surfaced as unresolved -- never guessed. Then "
+                        "design_framework(from_spec=true) builds the plan from the translated params. Import a "
+                        "netlist first so the spec is cross-checked.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "spec": {"type": "object", "description": "Per-peripheral intent, e.g. {'USART1': {'baud': 115200, 'framing': '8N1', 'direction': 'txrx'}, 'ADC1': {'resolution': 12, 'conversion': 'continuous', 'dma': true}}."},
+                    "session": {"type": "string", "description": "Target session id (default 'default')."}
+                }
+            }
+        ),
+        Tool(
             name="design_framework",
             description="Synthesize a deterministic FrameworkPlan (Pillar D) from the session's imported "
                         "board: which clocks to enable, how each pin must be muxed, and which peripheral "
@@ -1476,6 +1501,7 @@ async def handle_list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "design": {"type": "object", "description": "Per-peripheral config, e.g. {'USART1': {'baud': 115200, 'word_length': 'UART_WORDLENGTH_8B'}}."},
+                    "from_spec": {"type": "boolean", "description": "Build from the session's imported product spec (import_spec) instead of, or merged under, an explicit design (explicit keys win)."},
                     "af_map": {"type": "object", "description": "Optional alternate-function numbers: {line_or_family: {port_pin: {'USART1_TX': 7}}}. Overrides db_path per pin."},
                     "db_path": {"type": "string", "description": "Optional JSON pin-capability DB (CubeMX-derived); entries with an 'af' field auto-fill alternate-function numbers."},
                     "session": {"type": "string", "description": "Target session id (default 'default')."}
@@ -1776,6 +1802,7 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
     session_acceptance = _sess.acceptance
     session_loop = _sess.loop
     session_design = _sess.design
+    session_spec = _sess.spec
 
     try:
         # Action-dispatched families: translate to the underlying tool and reuse its handler.
@@ -2888,6 +2915,26 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                     suggested_next_actions=["start_acceptance_loop"])]
             return [content_success({"summary": summarize_loop(state), "decision": loop_decision(state)})]
 
+        elif name == "import_spec":
+            spec = arguments.get("spec")
+            if not isinstance(spec, dict) or not spec:
+                return [content_error(
+                    "import_spec needs a non-empty 'spec' object mapping peripheral -> intent config.",
+                    code="missing_argument",
+                    suggested_next_actions=["import_spec(spec={'USART1': {'baud': 115200, 'framing': '8N1'}})"])]
+            board = session_board.get("current")
+            result = build_design(spec, board=board)
+            session_spec["current"] = result
+            payload = dict(result)
+            payload["cross_checked"] = board is not None
+            if result["conflicts"]:
+                actions = ["describe_board (what=peripherals)", "fix the spec, then import_spec again"]
+            elif result["unresolved"]:
+                actions = ["review unresolved, then design_framework(from_spec=true)"]
+            else:
+                actions = ["design_framework(from_spec=true)"]
+            return [content_success(payload, suggested_next_actions=actions)]
+
         elif name == "design_framework":
             board = session_board.get("current")
             if not board:
@@ -2899,6 +2946,21 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                 return [content_error(
                     "design must be an object mapping peripheral name -> config.", code="invalid_argument",
                     suggested_next_actions=["design_framework(design={'USART1': {'baud': 115200}})"])]
+            if arguments.get("from_spec"):
+                stored = session_spec.get("current")
+                if not stored:
+                    return [content_error(
+                        "from_spec set but no spec imported for this session. Run import_spec first.",
+                        code="no_spec",
+                        suggested_next_actions=["import_spec(spec={'USART1': {'baud': 115200}})"])]
+                spec_design = stored.get("design") or {}
+                if design:
+                    merged = {p: dict(cfg) for p, cfg in spec_design.items()}
+                    for p, cfg in design.items():
+                        merged[p] = {**merged.get(p, {}), **(cfg or {})}
+                    design = merged
+                else:
+                    design = {p: dict(cfg) for p, cfg in spec_design.items()}
             af_map = arguments.get("af_map")
             if af_map is not None and not isinstance(af_map, dict):
                 return [content_error(
