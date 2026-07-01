@@ -110,9 +110,17 @@ pytest, ruff (E/F/I/UP/B @120).
   validate each net's inferred function is a legal alternate function for that package
   pin; detect two nets on one pin, illegal AF, DMA-stream / timer-channel collisions.
 - Tests with a small fixture DB.
+- *Done, `board_validation.py`:* structural detectors (`pin_double_assignment`,
+  `port_pin_double_assignment`, `duplicate_peripheral_signal`) always run; AF-legality
+  via a pluggable `PinCapabilityDB` where an unknown pin/line degrades to `unverified`
+  (never a false conflict). Missing power/ground/debug/reset surface as warnings.
+  **DMA-request / timer-channel collision mapping deferred** — needs a richer DB than
+  the port-pin→AF map; tracked for a later pass.
 
 ### T3.2 `validate_board` tool
 - Returns `{conflicts, unassigned, warnings}` + `suggested_next_actions` → `plan_framework`.
+- *Done:* reads the per-session board; optional `db_path` arg or `STM32_GDB_MCP_PIN_DB`
+  env selects the capability DB; envelope `ok` = tool ran, `data.ok` = board valid.
 
 ---
 
@@ -135,5 +143,5 @@ existing history.
 ## Status / 状态
 - [x] **Tier 1** — `board_model.py` + `netlist_parser.py` + tests. *Done, committed.*
 - [x] **Tier 2** — `import_netlist` / `describe_board` tools + per-session persistence + tests. *Done.*
-- [ ] **Tier 3** — AF-legality validation + `validate_board`.
+- [x] **Tier 3** — AF-legality validation + `validate_board`. *Done (DMA-request mapping deferred).*
 - [ ] **Tier 4** — Altium / OrCAD / CSV importers.

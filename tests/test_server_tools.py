@@ -1218,3 +1218,52 @@ def test_describe_board_without_import_errors():
 
     assert payload["ok"] is False
     assert payload["error"]["code"] == "no_board"
+
+
+_KICAD_NETLIST_CONFLICT = (
+    '(export (version "E")'
+    '  (components'
+    '    (comp (ref "U1") (value "STM32L431CBT6") (footprint "LQFP-48")))'
+    '  (nets'
+    '    (net (code "1") (name "/USART1_TX")'
+    '      (node (ref "U1") (pin "42") (pinfunction "PA9")))'
+    '    (net (code "2") (name "/MCU_USART1_TX")'
+    '      (node (ref "U1") (pin "20") (pinfunction "PB6")))))'
+)
+
+
+def test_server_exposes_validate_board_tool():
+    tool_names = {tool.name for tool in asyncio.run(handle_list_tools())}
+
+    assert "validate_board" in tool_names
+
+
+def test_validate_board_on_clean_import_is_ok():
+    asyncio.run(handle_call_tool("import_netlist", {"text": _KICAD_NETLIST, "session": "board-validate-ok"}))
+    result = asyncio.run(handle_call_tool("validate_board", {"session": "board-validate-ok"}))
+    payload = json.loads(result[0].text)
+
+    assert payload["ok"] is True  # envelope
+    assert payload["data"]["ok"] is True  # no structural errors
+    assert payload["data"]["af_checked"] is False
+    # No power/SWD/NRST in the fixture -> warnings, but not blocking errors.
+    assert payload["data"]["stats"]["error_count"] == 0
+
+
+def test_validate_board_detects_duplicate_signal():
+    asyncio.run(handle_call_tool("import_netlist", {"text": _KICAD_NETLIST_CONFLICT, "session": "board-validate-bad"}))
+    result = asyncio.run(handle_call_tool("validate_board", {"session": "board-validate-bad"}))
+    payload = json.loads(result[0].text)
+
+    assert payload["ok"] is True  # tool ran successfully
+    assert payload["data"]["ok"] is False  # board is invalid
+    kinds = {c["type"] for c in payload["data"]["conflicts"]}
+    assert "duplicate_peripheral_signal" in kinds
+
+
+def test_validate_board_without_import_errors():
+    result = asyncio.run(handle_call_tool("validate_board", {"session": "board-validate-empty"}))
+    payload = json.loads(result[0].text)
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "no_board"

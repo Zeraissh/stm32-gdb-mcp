@@ -16,6 +16,7 @@ from mcp.types import TextContent, Tool
 from . import build as build_mod
 from . import swo_config
 from .board_model import board_view, summarize_board
+from .board_validation import load_capability_db, validate_board
 from .composites import capture_state, debug_until, flash_and_run
 from .debug_config import (
     load_debug_config as load_debug_config_file,
@@ -1340,6 +1341,22 @@ async def handle_list_tools() -> list[Tool]:
                     "session": {"type": "string", "description": "Target session id (default 'default')."}
                 }
             }
+        ),
+        Tool(
+            name="validate_board",
+            description="Validate the imported BoardDescription: detect a package pin wired to "
+                        "multiple nets (short), a peripheral signal routed to multiple pins, a port "
+                        "pin driven by multiple nets, and missing power/ground/debug/reset nets. With "
+                        "a pin-capability DB (db_path or the STM32_GDB_MCP_PIN_DB env) it also checks "
+                        "alternate-function legality; unknown pins degrade to 'unverified', never a "
+                        "false conflict. Run import_netlist first.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "db_path": {"type": "string", "description": "Optional JSON pin-capability DB (CubeMX-derived) for AF-legality checks."},
+                    "session": {"type": "string", "description": "Target session id (default 'default')."}
+                }
+            }
         )
     ]
     # Compact mode (STM32_GDB_MCP_COMPACT=1): expose only a small core so nothing gets
@@ -2497,6 +2514,27 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                     f"Unknown view '{what}'.", code="invalid_argument",
                     suggested_next_actions=["describe_board (what=summary|pins|nets|power|peripherals)"])]
             return [content_success(view, suggested_next_actions=["describe_board (what=pins)"])]
+
+        elif name == "validate_board":
+            parsed = session_board.get("current")
+            if not parsed:
+                return [content_error(
+                    "No board imported for this session. Run import_netlist first.", code="no_board",
+                    suggested_next_actions=["import_netlist(path='board.net')"])]
+            capability_db = None
+            db_path = arguments.get("db_path") or os.environ.get("STM32_GDB_MCP_PIN_DB")
+            if db_path:
+                try:
+                    capability_db = load_capability_db(db_path)
+                except (OSError, ValueError) as e:
+                    return [content_error(
+                        f"Failed to load pin-capability DB: {e}", code="db_load_error",
+                        suggested_next_actions=["validate_board without db_path"])]
+            report = validate_board(parsed, capability_db)
+            actions = ["describe_board (what=pins)"] if not report["ok"] else ["describe_board (what=peripherals)"]
+            if not report["af_checked"]:
+                actions.append("validate_board(db_path=...) to also check alternate-function legality")
+            return [content_success(report, suggested_next_actions=actions)]
 
         else:
             hint = _RENAMED_TOOLS.get(name)

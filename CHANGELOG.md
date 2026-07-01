@@ -5,6 +5,7 @@
 ### Spec-to-silicon pipeline / 从规格到芯片流水线 (Pillar A)
 
 - Added `import_netlist` and `describe_board`: parse a schematic netlist (KiCad `.net`) into a machine-readable BoardDescription — MCU part/family/line, a per-pin map (package pin → port pin → net → inferred peripheral function), and power/ground nets — the input contract for automated framework design. / 新增 `import_netlist` 与 `describe_board`：将原理图网表（KiCad `.net`）解析为机器可读的 BoardDescription——MCU 型号/族系/产品线、逐脚映射（封装引脚 → 端口引脚 → 网络 → 推断的外设功能）以及电源/地网络——作为自动框架设计的输入契约。
+- Added `validate_board`: check a BoardDescription for structural faults — a package pin wired to multiple nets (short), a peripheral signal routed to multiple pins, a port pin driven by multiple nets — plus missing power/ground/debug/reset nets, and (with an optional CubeMX-derived pin-capability DB via `db_path`/`STM32_GDB_MCP_PIN_DB`) alternate-function legality; unknown pins degrade to `unverified` rather than a false conflict. / 新增 `validate_board`：检测 BoardDescription 的结构性错误——同一封装引脚接到多个网络（短路）、同一外设信号布到多个引脚、同一端口引脚被多个网络驱动——以及缺失的电源/地/调试/复位网络，并在提供 CubeMX 引脚能力库（`db_path`/`STM32_GDB_MCP_PIN_DB`）时校验复用功能合法性；未知引脚降级为`unverified` 而非误报冲突。
 
 ### Toolchain & robustness / 工具链与健壮性
 
