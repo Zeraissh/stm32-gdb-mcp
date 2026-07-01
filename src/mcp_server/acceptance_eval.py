@@ -151,6 +151,11 @@ def evaluate_acceptance(spec: dict, reader) -> dict:
             "actual": actual,
             "detail": detail,
         })
+        # Carry the check's source provenance on any non-pass result so the fix is precision-guided.
+        # The Pillar C loop reuses this evaluator, so the located source flows into its verdict too.
+        provenance = check.get("provenance")
+        if provenance and status != "pass":
+            results[-1]["provenance"] = provenance
 
     return {
         "ok": failed == 0 and errored == 0,

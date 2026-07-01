@@ -27,6 +27,12 @@ Derived checks, every one honest (a target it cannot place is surfaced in
   MODER's offset-0 layout is arch-standard on every STM32 port **except F1** (CRL/CRH),
   which is excluded honestly; the port base comes from a ``gpio_resolver``.
 * ``stopped_at`` — optional, when the caller names an entry symbol to reach.
+
+Every derived check also carries a ``provenance`` object naming the plan element it
+came from: an ``origin`` plus a **join key** taken verbatim from the plan (the RCC
+clock macro, the IRQ name, or the port-pin). The server layer resolves that key
+against the rendered init's source map (see ``provenance.py``) so a failing check can
+point straight at the init function + line to fix — deterministically, never guessed.
 """
 
 import re
@@ -275,7 +281,11 @@ def _gpio_targets(plan: dict) -> list[dict]:
     for entry in plan.get("gpio", []):
         role = entry.get("role")
         if role in _MODER_MODE_BITS and entry.get("port") is not None and entry.get("pin") is not None:
-            targets.append({"port": entry["port"], "pin": int(entry["pin"]), "role": role})
+            targets.append({
+                "port": entry["port"], "pin": int(entry["pin"]), "role": role,
+                "port_pin": entry.get("port_pin") or f"P{entry['port']}{entry['pin']}",
+                "signal": entry.get("signal"), "peripheral": entry.get("peripheral"),
+            })
     return targets
 
 
@@ -305,6 +315,7 @@ def derive_acceptance_spec(plan: dict, clock_resolver=None, options: dict | None
             "id": "no_fault_after_init",
             "kind": "no_fault",
             "description": "MCU is not in a fault state after BSP_Init().",
+            "provenance": {"origin": "no_fault", "scope": "invariant", "init_fn": "BSP_Init"},
         })
 
     stopped_at = options.get("stopped_at")
@@ -314,6 +325,7 @@ def derive_acceptance_spec(plan: dict, clock_resolver=None, options: dict | None
             "kind": "stopped_at",
             "symbol": stopped_at,
             "description": f"Execution reached {stopped_at} after init.",
+            "provenance": {"origin": "stopped_at", "symbol": stopped_at},
         })
 
     resolved_clocks = 0
@@ -335,6 +347,8 @@ def derive_acceptance_spec(plan: dict, clock_resolver=None, options: dict | None
             "expect": _hex32(1 << bit),
             "op": "bits_set",
             "description": f"RCC clock enable for {target['name']} (bit {bit}) is set after init.",
+            "provenance": {"origin": "clock_enable", "macro": target.get("hal_macro"),
+                           "peripheral": target["name"]},
         })
         resolved_clocks += 1
 
@@ -365,6 +379,8 @@ def derive_acceptance_spec(plan: dict, clock_resolver=None, options: dict | None
                 "expect": _hex32(1 << (number % 32)),
                 "op": "bits_set",
                 "description": f"NVIC set-enable for {target['irq']} (IRQ {number}) is set after init.",
+                "provenance": {"origin": "nvic_enable", "irq": target["irq"],
+                               "detail": target.get("source")},
             })
             resolved_nvic += 1
         if irq_resolver is None and nvic_targets:
@@ -403,6 +419,9 @@ def derive_acceptance_spec(plan: dict, clock_resolver=None, options: dict | None
                     "op": "eq",
                     "description": f"GPIO P{target['port']}{target['pin']} MODER = "
                                    f"{'AF' if mode_bits == 0b10 else 'analog'} after init.",
+                    "provenance": {"origin": "gpio_mode", "port_pin": target["port_pin"],
+                                   "port": target["port"], "pin": target["pin"],
+                                   "role": target["role"], "signal": target.get("signal")},
                 })
                 resolved_gpio += 1
             if gpio_resolver is None:

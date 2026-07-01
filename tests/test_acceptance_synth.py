@@ -393,3 +393,32 @@ def test_derived_gpio_check_fails_when_pin_left_as_input():
     report = evaluate_acceptance(spec, reader)
     pa9 = next(r for r in report["results"] if r["id"] == "gpio_PA9_mode")
     assert pa9["status"] == "fail"
+
+
+# --- provenance: every derived check names the plan element it came from --------
+
+
+def test_derived_checks_carry_provenance_join_keys():
+    plan = _nvic_plan({"USART1": {"nvic": True}})
+    clock_r = dict_clock_resolver({"STM32L431": {
+        "GPIOA": {"address": "0x4002104C", "bit": 0},
+        "USART1": {"address": "0x40021060", "bit": 14},
+    }}, "STM32L431", "STM32L4")
+    irq_r = dict_irq_resolver({"STM32L431": {"USART1_IRQn": 37}}, "STM32L431", "STM32L4")
+    gpio_r = dict_gpio_resolver({"STM32L431": {"A": "0x48000000"}}, "STM32L431", "STM32L4")
+    result = derive_acceptance_spec(plan, clock_resolver=clock_r, irq_resolver=irq_r, gpio_resolver=gpio_r)
+    by_id = {c["id"]: c["provenance"] for c in result["spec"]["checks"]}
+
+    assert by_id["no_fault_after_init"] == {"origin": "no_fault", "scope": "invariant", "init_fn": "BSP_Init"}
+    assert by_id["clk_USART1_enabled"]["origin"] == "clock_enable"
+    assert by_id["clk_USART1_enabled"]["macro"] == "__HAL_RCC_USART1_CLK_ENABLE"
+    assert by_id["nvic_USART1_IRQn_enabled"]["origin"] == "nvic_enable"
+    assert by_id["nvic_USART1_IRQn_enabled"]["irq"] == "USART1_IRQn"
+    assert by_id["gpio_PA9_mode"]["origin"] == "gpio_mode"
+    assert by_id["gpio_PA9_mode"]["port_pin"] == "PA9"
+
+
+def test_stopped_at_check_carries_symbol_provenance():
+    result = derive_acceptance_spec(_plan(), clock_resolver=None, options={"stopped_at": "main"})
+    prov = next(c["provenance"] for c in result["spec"]["checks"] if c["kind"] == "stopped_at")
+    assert prov == {"origin": "stopped_at", "symbol": "main"}

@@ -69,6 +69,22 @@ def test_unknown_af_becomes_todo_not_a_number():
     assert "GPIO_InitStruct.Alternate = GPIO_AF" not in source  # nothing fabricated
 
 
+def test_render_includes_source_map_with_tagged_constructs():
+    result, source, _ = _render(design={"USART1": {"nvic": True}})
+    smaps = {s["path"]: s for s in result["source_map"]}
+
+    assert set(smaps) == {"bsp_init.c", "bsp_init.h"}
+    keys = {(c["tag"], c["key"]) for c in smaps["bsp_init.c"]["constructs"]}
+    assert ("clock_enable", "__HAL_RCC_USART1_CLK_ENABLE") in keys
+    assert ("nvic_enable", "USART1_IRQn") in keys
+    assert ("gpio_mode", "PA9") in keys
+    # every construct points at a real 1-based line of the rendered source
+    lines = source.split("\n")
+    for construct in smaps["bsp_init.c"]["constructs"]:
+        assert 1 <= construct["line"] <= len(lines)
+    assert smaps["bsp_init.h"]["constructs"] == []
+
+
 def test_af_map_emits_concrete_alternate():
     af_map = {"STM32L431": {"PA9": {"USART1_TX": 7}, "PA10": {"USART1_RX": 7}}}
     _, source, _ = _render(af_map=af_map)

@@ -9,6 +9,7 @@ loop (Pillar C).
 """
 
 from .clock_solver import render_system_clock_config
+from .provenance import build_source_map
 
 
 def render_framework(plan: dict, style: str = "hal") -> dict:
@@ -25,12 +26,16 @@ def render_framework(plan: dict, style: str = "hal") -> dict:
     header = _render_header(plan)
     source = _render_source(plan)
     todo_count = header.count("TODO") + source.count("TODO")
+    files = [
+        {"path": "bsp_init.h", "language": "c", "content": header},
+        {"path": "bsp_init.c", "language": "c", "content": source},
+    ]
     return {
         "style": style,
-        "files": [
-            {"path": "bsp_init.h", "language": "c", "content": header},
-            {"path": "bsp_init.c", "language": "c", "content": source},
-        ],
+        "files": files,
+        # A per-file provenance index (init functions + tagged constructs with line numbers) so a
+        # failing acceptance check can be mapped back to the exact source construct it verifies.
+        "source_map": [build_source_map(f["content"], f["path"]) for f in files],
         "warnings": warnings,
         "todo_count": todo_count,
     }

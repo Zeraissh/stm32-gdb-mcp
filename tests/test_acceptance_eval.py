@@ -145,3 +145,51 @@ def test_all_pass_is_ok():
 
     assert report["ok"] is True
     assert report["stats"]["passed"] == 4
+
+
+# --- provenance passthrough: non-pass results carry the check's provenance ------
+
+_PROV = {"origin": "clock_enable", "macro": "__HAL_RCC_USART1_CLK_ENABLE",
+         "source": {"located": True, "file": "bsp_init.c",
+                    "init_fn": "MX_USART1_UART_Init", "line": 80}}
+
+
+def test_provenance_flows_to_failing_result():
+    reader = FakeReader(memory={0x40021060: 0x0})  # bit not set -> fail
+    report = _run([{"id": "clk", "kind": "memory_u32", "address": "0x40021060",
+                    "expect": "0x4000", "op": "bits_set", "provenance": _PROV}], reader)
+
+    fail = next(r for r in report["results"] if r["id"] == "clk")
+    assert fail["status"] == "fail"
+    assert fail["provenance"]["source"]["init_fn"] == "MX_USART1_UART_Init"
+    assert fail["provenance"]["source"]["line"] == 80
+
+
+def test_error_result_also_carries_provenance():
+    reader = FakeReader(memory={})  # unreadable target -> error, never a silent pass
+    report = _run([{"id": "clk", "kind": "memory_u32", "address": "0x40021060",
+                    "expect": "0x4000", "op": "bits_set", "provenance": _PROV}], reader)
+
+    err = next(r for r in report["results"] if r["id"] == "clk")
+    assert err["status"] == "error"
+    assert err["provenance"]["origin"] == "clock_enable"
+
+
+def test_passing_result_does_not_carry_provenance():
+    reader = FakeReader(memory={0x40021060: 0x4000})  # bit set -> pass
+    report = _run([{"id": "clk", "kind": "memory_u32", "address": "0x40021060",
+                    "expect": "0x4000", "op": "bits_set", "provenance": _PROV}], reader)
+
+    ok = next(r for r in report["results"] if r["id"] == "clk")
+    assert ok["status"] == "pass"
+    assert "provenance" not in ok
+
+
+def test_check_without_provenance_yields_no_provenance_key():
+    reader = FakeReader(memory={0x40021060: 0x0})
+    report = _run([{"id": "clk", "kind": "memory_u32", "address": "0x40021060",
+                    "expect": "0x4000", "op": "bits_set"}], reader)
+
+    fail = next(r for r in report["results"] if r["id"] == "clk")
+    assert fail["status"] == "fail"
+    assert "provenance" not in fail

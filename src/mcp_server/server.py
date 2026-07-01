@@ -72,6 +72,7 @@ from .metrics import compute_metrics
 from .netlist_parser import load_netlist_file, parse_netlist
 from .openocd_config import find_openocd_scripts, suggest_server_args
 from .project_inspector import inspect_project
+from .provenance import annotate_spec_sources
 from .reliability import retry_call
 from .reset_strategy import resolve_reset_command
 from .scenario import load_scenario, replay_scenario, step_summary
@@ -1403,7 +1404,9 @@ async def handle_list_tools() -> list[Tool]:
             name="run_acceptance",
             description="Evaluate the loaded AcceptanceSpec against live silicon state and return a "
                         "deterministic pass/fail/error verdict per check (the closed-loop judge). An "
-                        "unreadable target is reported as 'error', never a silent pass. Run "
+                        "unreadable target is reported as 'error', never a silent pass. A failing/errored "
+                        "check derived by synthesize_acceptance carries provenance.source — the init "
+                        "function + line that should satisfy it — so fixes are precision-guided. Run "
                         "load_acceptance first; halt the target at the state you want to assert.",
             inputSchema={
                 "type": "object",
@@ -1555,7 +1558,9 @@ async def handle_list_tools() -> list[Tool]:
                         "NVIC ISER bit, from the resolved IRQ number), and a masked memory_u32 eq check per "
                         "configured pin (GPIO MODER = AF/analog; F1's CRL/CRH is skipped). Register/IRQ/port "
                         "placements come from the session's loaded SVD or explicit register_map/irq_map/gpio_map; "
-                        "anything unresolvable is surfaced, never guessed. Run design_framework first; load an "
+                        "anything unresolvable is surfaced, never guessed. Each derived check also carries source "
+                        "provenance (the init function + line that should satisfy it), so a later failure points "
+                        "straight at the fix site. Run design_framework first; load an "
                         "SVD (start_debug_session/set svd) for clock/NVIC/GPIO checks.",
             inputSchema={
                 "type": "object",
@@ -3079,6 +3084,12 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                 return [content_error(
                     f"Derived acceptance spec is invalid: {exc}", code="invalid_spec",
                     suggested_next_actions=["synthesize_acceptance(include_no_fault=true)"])]
+            # Provenance -> source (Pillar E): render the same plan, build its per-file source map,
+            # and resolve each check's provenance to the exact init function + line it verifies. A
+            # construct that was not emitted (TODO/unresolved) resolves to located=false, never a
+            # fabricated line. The stored spec is self-contained -- run_acceptance and every loop
+            # verdict then carry result.provenance.source with no further plan lookup.
+            provenance_stats = annotate_spec_sources(validated, render_framework(plan).get("source_map"))
             loaded = arguments.get("load", True)
             if loaded:
                 session_acceptance["current"] = validated
@@ -3091,6 +3102,7 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                 "unresolved": derived["unresolved"],
                 "notes": derived["notes"],
                 "stats": derived["stats"],
+                "provenance": provenance_stats,
                 "placement_source": clock_source,
                 "resolver_sources": {"clock": clock_source, "nvic": irq_source, "gpio": gpio_source},
                 "loaded": loaded,

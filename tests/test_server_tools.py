@@ -1689,6 +1689,55 @@ def test_synthesize_acceptance_reports_all_sources_none_without_maps_or_svd():
     assert result["data"]["resolver_sources"] == {"clock": "none", "nvic": "none", "gpio": "none"}
 
 
+def test_synthesize_acceptance_annotates_source_provenance():
+    sid = "synth-prov"
+    _seed_design_nvic(sid)
+    result = json.loads(asyncio.run(handle_call_tool(
+        "synthesize_acceptance",
+        {"irq_map": {"STM32L431": {"USART1_IRQn": 37}},
+         "gpio_map": {"STM32L431": {"A": "0x48000000", "B": "0x48000400"}},
+         "session": sid}))[0].text)
+
+    assert result["ok"] is True
+    assert result["data"]["provenance"]["located"] >= 2  # nvic + gpio at least
+    # The stored spec carries each check's resolved source location.
+    checks = json.loads(asyncio.run(handle_call_tool(
+        "describe_acceptance", {"what": "checks", "session": sid}))[0].text)["data"]["checks"]
+    nvic = next(c for c in checks if c["id"] == "nvic_USART1_IRQn_enabled")["provenance"]["source"]
+    assert nvic["located"] is True
+    assert nvic["init_fn"] == "MX_USART1_UART_Init"
+    assert nvic["file"] == "bsp_init.c"
+    gpio = next(c for c in checks if c["id"] == "gpio_PA9_mode")["provenance"]["source"]
+    assert gpio["init_fn"] == "MX_GPIO_Init"
+
+
+def test_run_acceptance_failure_carries_source_provenance(monkeypatch):
+    import mcp_server.server as server_module
+
+    sid = "accept-prov"
+    _seed_design_nvic(sid)
+    asyncio.run(handle_call_tool(
+        "synthesize_acceptance",
+        {"gpio_map": {"STM32L431": {"A": "0x48000000", "B": "0x48000400"}}, "session": sid}))
+
+    sess = server_module.session_manager.get(sid)
+    client = _ScriptedClient(  # MODER still at reset (input) -> every GPIO mode check fails
+        memory={0x48000000: 0x0, 0x48000400: 0x0}, variables={}, registers={}, symbols={})
+    monkeypatch.setattr(sess, "gdb_client", client)
+
+    payload = json.loads(asyncio.run(handle_call_tool("run_acceptance", {"session": sid}))[0].text)
+    assert payload["ok"] is True
+    assert payload["data"]["ok"] is False
+    gpio_fail = next(r for r in payload["data"]["results"] if r["id"] == "gpio_PA9_mode")
+    assert gpio_fail["status"] == "fail"
+    assert gpio_fail["provenance"]["source"]["located"] is True
+    assert gpio_fail["provenance"]["source"]["init_fn"] == "MX_GPIO_Init"
+    # a passing check carries no provenance noise
+    no_fault = next(r for r in payload["data"]["results"] if r["id"] == "no_fault_after_init")
+    assert no_fault["status"] == "pass"
+    assert "provenance" not in no_fault
+
+
 # --- solve_clock_tree (Pillar D Tier 3: SystemClock_Config synthesis) --------
 
 _H7_NETLIST = (
