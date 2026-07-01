@@ -2220,3 +2220,71 @@ def test_load_device_pack_bad_path_is_honest():
     payload = _payload(asyncio.run(handle_call_tool("load_device_pack", {"path": "no-such-file.json"})))
     assert payload["ok"] is False
     assert payload["error"]["code"] == "pack_unreadable"
+
+
+def test_run_pipeline_registered_as_capstone_tool():
+    tool = next(t for t in asyncio.run(handle_list_tools()) if t.name == "run_pipeline")
+    props = tool.inputSchema["properties"]
+    # It advertises the whole design-half surface in one tool.
+    for key in ("netlist", "spec", "sysclk_hz", "af_map", "irq_map", "gpio_map", "synthesize"):
+        assert key in props
+
+
+def test_run_pipeline_end_to_end_from_netlist_and_spec():
+    # One call: netlist + product spec -> plan -> render -> acceptance, with every
+    # stage's honest gaps aggregated into one list.
+    result = _payload(asyncio.run(handle_call_tool("run_pipeline", {
+        "netlist": {"text": _KICAD_NETLIST},
+        "spec": {"USART1": {"baud": 115200}},
+        "session": "pipe-e2e",
+    })))
+    assert result["ok"] is True
+    data = result["data"]
+
+    # The design DAG ran in order; the two input-gated stages were honestly skipped.
+    assert data["ran"] == ["import_netlist", "import_spec", "design_framework",
+                           "render_framework", "synthesize_acceptance"]
+    assert {s["stage"] for s in data["skipped"]} == {"solve_clock_tree", "solve_timer"}
+
+    # No af_map supplied -> PA9's alternate function is an honest, aggregated gap,
+    # tagged with the stage that produced it. Nothing is invented.
+    assert data["pipeline_status"] == "complete_with_unresolved"
+    assert data["unresolved_count"] == len(data["unresolved"])
+    assert data["unresolved_count"] >= 1
+    assert any(gap["stage"] == "design_framework" for gap in data["unresolved"])
+
+    # The engineer gets the actual products in hand: MCU, rendered files, acceptance spec.
+    assert data["mcu"]["line"] == "STM32L431"
+    assert data["files"] and all("path" in f and "content" in f for f in data["files"])
+    assert any(f["path"].endswith(".c") for f in data["files"])
+    assert data["acceptance"]["check_count"] >= 1
+
+
+def test_run_pipeline_blocked_is_honest_without_board():
+    # No netlist and no board in the session -> the required design stage fails; the
+    # pipeline reports that honestly as blocked rather than guessing a board.
+    result = _payload(asyncio.run(handle_call_tool("run_pipeline", {"session": "pipe-blocked"})))
+    assert result["ok"] is True
+    data = result["data"]
+    assert data["pipeline_status"] == "blocked"
+    assert data["blocked"]["stage"] == "design_framework"
+    assert data["blocked"]["code"] == "no_board"
+    assert data["ran"] == ["design_framework"]
+    assert "files" not in data and "acceptance" not in data
+
+
+def test_run_pipeline_synthesize_false_stops_after_render():
+    # synthesize=false hands off a flashable skeleton without a machine judge.
+    result = _payload(asyncio.run(handle_call_tool("run_pipeline", {
+        "netlist": {"text": _KICAD_NETLIST},
+        "spec": {"USART1": {"baud": 115200}},
+        "af_map": {"STM32L431": {"PA9": {"USART1_TX": 7}}},
+        "synthesize": False,
+        "session": "pipe-nosynth",
+    })))
+    assert result["ok"] is True
+    data = result["data"]
+    assert "synthesize_acceptance" not in data["ran"]
+    assert any(s["stage"] == "synthesize_acceptance" for s in data["skipped"])
+    assert "acceptance" not in data
+    assert data["files"]  # render still produced the skeleton
