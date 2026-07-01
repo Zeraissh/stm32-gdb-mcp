@@ -2,6 +2,10 @@
 
 ## Unreleased / 未发布
 
+### Spec-to-silicon pipeline / 从规格到芯片流水线 (Pillar B1 — acceptance)
+
+- Added `load_acceptance`, `run_acceptance`, and `describe_acceptance`: turn a product spec into a machine-checked **AcceptanceSpec** (deterministic checks — `memory_u32` for any memory-mapped register, `variable` for a C global, `core_register`, `no_fault`, and `stopped_at`) and evaluate it against live silicon, returning a per-check pass/fail/error verdict. This is the closed-loop *judge* that lets an agent decide “verification failed → keep fixing” objectively; an unreadable target is reported as `error`, never a silent pass. / 新增 `load_acceptance` / `run_acceptance` / `describe_acceptance`：将产品规格转为机器可校验的 **AcceptanceSpec**（确定性断言——`memory_u32` 适用于任意内存映射寄存器、`variable` 读 C 全局变量、`core_register`、`no_fault`、`stopped_at`）并对真实芯片状态求值，逐项返回 通过/失败/错误 裁决。这是闭环的“裁判”，让 agent 客观地判定“验证不过→继续修改”；无法读取的目标报为 `error`，绝不静默通过。
+
 ### Spec-to-silicon pipeline / 从规格到芯片流水线 (Pillar A)
 
 - Added `import_netlist` and `describe_board`: parse a schematic netlist (KiCad `.net`) into a machine-readable BoardDescription — MCU part/family/line, a per-pin map (package pin → port pin → net → inferred peripheral function), and power/ground nets — the input contract for automated framework design. / 新增 `import_netlist` 与 `describe_board`：将原理图网表（KiCad `.net`）解析为机器可读的 BoardDescription——MCU 型号/族系/产品线、逐脚映射（封装引脚 → 端口引脚 → 网络 → 推断的外设功能）以及电源/地网络——作为自动框架设计的输入契约。

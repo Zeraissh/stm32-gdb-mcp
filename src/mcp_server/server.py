@@ -15,6 +15,8 @@ from mcp.types import TextContent, Tool
 
 from . import build as build_mod
 from . import swo_config
+from .acceptance_eval import GdbAcceptanceReader, evaluate_acceptance
+from .acceptance_model import summarize_acceptance, validate_acceptance_spec
 from .board_model import board_view, summarize_board
 from .board_validation import load_capability_db, validate_board
 from .composites import capture_state, debug_until, flash_and_run
@@ -153,6 +155,7 @@ memory_guard = MemoryWriteGuard()
 session_journal = SessionJournal()
 _last_session = {"server_type": None, "server_args": []}
 _board = {"current": None}  # imported BoardDescription (netlist -> BSP model) for the default session
+_acceptance = {"current": None, "last_result": None}  # loaded AcceptanceSpec + last verdict (default session)
 _reported_issues = {}  # fingerprint -> issue url (in-session dedup)
 
 # Phase 3: named per-target sessions for multi-board / CI. The "default" session reuses
@@ -161,9 +164,10 @@ _reported_issues = {}  # fingerprint -> issue url (in-session dedup)
 session_manager = SessionManager()
 _SESSION_ATTRS = ("gdb_manager", "gdb_client", "svd_parser", "variable_tracker",
                   "debug_profile", "freertos_inspector", "rtt_log_reader", "swo_log_reader",
-                  "swo_file_reader", "uart_log_reader", "memory_guard", "last_session", "board")
+                  "swo_file_reader", "uart_log_reader", "memory_guard", "last_session", "board",
+                  "acceptance")
 # Session attrs whose "default" backing global is named differently from the attribute.
-_DEFAULT_SESSION_GLOBALS = {"last_session": "_last_session", "board": "_board"}
+_DEFAULT_SESSION_GLOBALS = {"last_session": "_last_session", "board": "_board", "acceptance": "_acceptance"}
 
 
 def _resolve_session(arguments: dict):
@@ -1357,6 +1361,47 @@ async def handle_list_tools() -> list[Tool]:
                     "session": {"type": "string", "description": "Target session id (default 'default')."}
                 }
             }
+        ),
+        Tool(
+            name="load_acceptance",
+            description="Load a machine-checked AcceptanceSpec (product-spec → deterministic checks) "
+                        "from an inline 'spec' object or a JSON 'path'. Checks: memory_u32 (any "
+                        "memory-mapped register), variable (C global), core_register, no_fault, "
+                        "stopped_at (PC in a symbol). Stored on the session; evaluate with run_acceptance.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "spec": {"type": "object", "description": "Inline AcceptanceSpec {name, description, checks:[...]}."},
+                    "path": {"type": "string", "description": "Path to a JSON AcceptanceSpec (alternative to 'spec')."},
+                    "session": {"type": "string", "description": "Target session id (default 'default')."}
+                }
+            }
+        ),
+        Tool(
+            name="run_acceptance",
+            description="Evaluate the loaded AcceptanceSpec against live silicon state and return a "
+                        "deterministic pass/fail/error verdict per check (the closed-loop judge). An "
+                        "unreadable target is reported as 'error', never a silent pass. Run "
+                        "load_acceptance first; halt the target at the state you want to assert.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "session": {"type": "string", "description": "Target session id (default 'default')."}
+                }
+            }
+        ),
+        Tool(
+            name="describe_acceptance",
+            description="Read the loaded AcceptanceSpec or the last verdict. what=summary (name + "
+                        "check counts), checks (full check list), or last_result (the most recent "
+                        "run_acceptance report).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "what": {"type": "string", "description": "summary|checks|last_result (default summary)."},
+                    "session": {"type": "string", "description": "Target session id (default 'default')."}
+                }
+            }
         )
     ]
     # Compact mode (STM32_GDB_MCP_COMPACT=1): expose only a small core so nothing gets
@@ -1551,6 +1596,7 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
     uart_log_reader = _sess.uart_log_reader
     _last_session = _sess.last_session
     session_board = _sess.board
+    session_acceptance = _sess.acceptance
 
     try:
         # Action-dispatched families: translate to the underlying tool and reuse its handler.
@@ -2535,6 +2581,73 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
             if not report["af_checked"]:
                 actions.append("validate_board(db_path=...) to also check alternate-function legality")
             return [content_success(report, suggested_next_actions=actions)]
+
+        elif name == "load_acceptance":
+            raw = arguments.get("spec")
+            path = arguments.get("path")
+            if raw is None and not path:
+                return [content_error(
+                    "Provide 'spec' (inline object) or 'path' (JSON file).", code="missing_argument",
+                    suggested_next_actions=["load_acceptance(spec={'checks': [...]})"])]
+            if raw is None:
+                try:
+                    with open(path, encoding="utf-8") as handle:
+                        raw = json.load(handle)
+                except (OSError, ValueError) as e:
+                    return [content_error(
+                        f"Failed to read acceptance spec: {e}", code="spec_load_error",
+                        suggested_next_actions=["load_acceptance(spec={...})"])]
+            try:
+                normalized = validate_acceptance_spec(raw)
+            except ValueError as e:
+                return [content_error(
+                    str(e), code="invalid_spec",
+                    suggested_next_actions=["load_acceptance with a corrected spec"])]
+            session_acceptance["current"] = normalized
+            session_acceptance["last_result"] = None
+            return [content_success(
+                summarize_acceptance(normalized),
+                suggested_next_actions=["run_acceptance", "describe_acceptance (what=checks)"])]
+
+        elif name == "run_acceptance":
+            spec = session_acceptance.get("current")
+            if not spec:
+                return [content_error(
+                    "No acceptance spec loaded for this session. Run load_acceptance first.", code="no_spec",
+                    suggested_next_actions=["load_acceptance(spec={...})"])]
+            reader = GdbAcceptanceReader(gdb_client)
+            report = evaluate_acceptance(spec, reader)
+            session_acceptance["last_result"] = report
+            if report["ok"]:
+                actions = ["describe_acceptance (what=last_result)", "plan_framework"]
+            else:
+                actions = ["describe_acceptance (what=last_result)", "read_call_stack",
+                           "reconstruct_fault_context"]
+            return [content_success(report, suggested_next_actions=actions)]
+
+        elif name == "describe_acceptance":
+            spec = session_acceptance.get("current")
+            if not spec:
+                return [content_error(
+                    "No acceptance spec loaded for this session. Run load_acceptance first.", code="no_spec",
+                    suggested_next_actions=["load_acceptance(spec={...})"])]
+            what = arguments.get("what") or "summary"
+            if what == "summary":
+                return [content_success(summarize_acceptance(spec),
+                                        suggested_next_actions=["run_acceptance"])]
+            if what == "checks":
+                return [content_success({"checks": spec["checks"]},
+                                        suggested_next_actions=["run_acceptance"])]
+            if what == "last_result":
+                result = session_acceptance.get("last_result")
+                if result is None:
+                    return [content_error(
+                        "No verdict yet. Run run_acceptance first.", code="no_result",
+                        suggested_next_actions=["run_acceptance"])]
+                return [content_success(result)]
+            return [content_error(
+                "what must be summary|checks|last_result", code="invalid_argument",
+                suggested_next_actions=["describe_acceptance (what=summary|checks|last_result)"])]
 
         else:
             hint = _RENAMED_TOOLS.get(name)

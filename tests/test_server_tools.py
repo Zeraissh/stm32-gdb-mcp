@@ -1267,3 +1267,129 @@ def test_validate_board_without_import_errors():
 
     assert payload["ok"] is False
     assert payload["error"]["code"] == "no_board"
+
+
+# --- Pillar B1: acceptance layer -------------------------------------------
+
+_ACCEPTANCE_SPEC = {
+    "name": "blinky-accept",
+    "checks": [
+        {"id": "usart1-on", "kind": "memory_u32", "address": "0x40013800", "expect": "0x1"},
+        {"id": "sysclk", "kind": "variable", "name": "SystemCoreClock", "expect": 80000000},
+        {"id": "sp-in-ram", "kind": "core_register", "register": "sp", "op": "ge", "expect": "0x20000000"},
+        {"id": "no-fault", "kind": "no_fault"},
+        {"id": "reached", "kind": "stopped_at", "symbol": "main_loop"},
+    ],
+}
+
+
+class _ScriptedClient:
+    """A gdb_client stand-in returning canned values for the acceptance reader."""
+
+    def __init__(self, memory, variables, registers, symbols, fault_registers=None):
+        self.memory = memory
+        self.variables = variables
+        self.registers = registers
+        self.symbols = symbols
+        self.fault_registers = fault_registers or {"CFSR": 0, "HFSR": 0, "BFAR": 0, "MMFAR": 0}
+
+    def read_word(self, address):
+        key = int(address, 0) if isinstance(address, str) else address
+        return self.memory[key]
+
+    def read_register_value(self, expr):
+        return self.registers[expr.lstrip("$")]
+
+    def read_fault_registers(self):
+        return self.fault_registers
+
+    def symbolize_pc(self, pc):
+        return self.symbols.get(pc, "")
+
+    def read_variable(self, name):
+        return [{"type": "result", "payload": {"value": str(self.variables[name])}}]
+
+
+def _healthy_client():
+    return _ScriptedClient(
+        memory={0x40013800: 0x1},
+        variables={"SystemCoreClock": 80000000},
+        registers={"sp": 0x20001000, "pc": 0x08000500},
+        symbols={0x08000500: "main_loop"},
+    )
+
+
+def test_server_exposes_acceptance_tools():
+    tool_names = {tool.name for tool in asyncio.run(handle_list_tools())}
+
+    assert {"load_acceptance", "run_acceptance", "describe_acceptance"} <= tool_names
+
+
+def test_load_and_describe_acceptance():
+    loaded = asyncio.run(handle_call_tool("load_acceptance", {"spec": _ACCEPTANCE_SPEC, "session": "accept-desc"}))
+    loaded_payload = json.loads(loaded[0].text)
+
+    assert loaded_payload["ok"] is True
+    assert loaded_payload["data"]["check_count"] == 5
+    assert loaded_payload["data"]["kinds"]["memory_u32"] == 1
+
+    checks = asyncio.run(handle_call_tool("describe_acceptance", {"what": "checks", "session": "accept-desc"}))
+    checks_payload = json.loads(checks[0].text)
+
+    assert checks_payload["ok"] is True
+    assert [c["id"] for c in checks_payload["data"]["checks"]] == \
+        ["usart1-on", "sysclk", "sp-in-ram", "no-fault", "reached"]
+
+
+def test_load_acceptance_rejects_invalid_spec():
+    result = asyncio.run(handle_call_tool(
+        "load_acceptance", {"spec": {"checks": [{"kind": "bogus"}]}, "session": "accept-bad"}))
+    payload = json.loads(result[0].text)
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "invalid_spec"
+
+
+def test_run_acceptance_passes_against_scripted_client(monkeypatch):
+    import mcp_server.server as server_module
+
+    sess = server_module.session_manager.get("accept-pass")
+    monkeypatch.setattr(sess, "gdb_client", _healthy_client())
+
+    asyncio.run(handle_call_tool("load_acceptance", {"spec": _ACCEPTANCE_SPEC, "session": "accept-pass"}))
+    result = asyncio.run(handle_call_tool("run_acceptance", {"session": "accept-pass"}))
+    payload = json.loads(result[0].text)
+
+    assert payload["ok"] is True  # tool ran
+    assert payload["data"]["ok"] is True  # all checks passed
+    assert payload["data"]["stats"] == {"total": 5, "passed": 5, "failed": 0, "errored": 0}
+
+    # The verdict is retrievable via describe_acceptance(what=last_result).
+    last = asyncio.run(handle_call_tool("describe_acceptance", {"what": "last_result", "session": "accept-pass"}))
+    assert json.loads(last[0].text)["data"]["ok"] is True
+
+
+def test_run_acceptance_reports_failure(monkeypatch):
+    import mcp_server.server as server_module
+
+    sess = server_module.session_manager.get("accept-fail")
+    client = _healthy_client()
+    client.memory[0x40013800] = 0x0  # USART1 disabled -> usart1-on check fails
+    monkeypatch.setattr(sess, "gdb_client", client)
+
+    asyncio.run(handle_call_tool("load_acceptance", {"spec": _ACCEPTANCE_SPEC, "session": "accept-fail"}))
+    result = asyncio.run(handle_call_tool("run_acceptance", {"session": "accept-fail"}))
+    payload = json.loads(result[0].text)
+
+    assert payload["ok"] is True
+    assert payload["data"]["ok"] is False
+    failed = [r for r in payload["data"]["results"] if r["status"] == "fail"]
+    assert [r["id"] for r in failed] == ["usart1-on"]
+
+
+def test_run_acceptance_without_spec_errors():
+    result = asyncio.run(handle_call_tool("run_acceptance", {"session": "accept-empty"}))
+    payload = json.loads(result[0].text)
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "no_spec"
