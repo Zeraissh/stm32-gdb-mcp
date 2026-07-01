@@ -44,6 +44,48 @@ git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
+Pushing a `v*` tag triggers `.github/workflows/release.yml`, which runs the
+quality gate, builds the sdist + wheel, and publishes them to PyPI. 推送 `v*`
+标签会触发 `.github/workflows/release.yml`：跑质量门禁、构建 sdist + wheel 并发布到 PyPI。
+
+## Publishing to PyPI / 发布到 PyPI
+
+Publishing is automated via **PyPI Trusted Publishing (OIDC)** — no API token is
+stored in the repo. 发布通过 **PyPI 可信发布 (OIDC)** 自动完成，仓库中不保存任何 API token。
+
+**One-time setup / 一次性配置** (only needed before the first PyPI publish):
+
+1. On PyPI, add a trusted publisher at
+   <https://pypi.org/manage/account/publishing/> (use the "pending publisher"
+   form if `stm32-gdb-mcp` does not exist on PyPI yet) with exactly:
+   - **PyPI Project Name**: `stm32-gdb-mcp`
+   - **Owner**: `Zeraissh`
+   - **Repository name**: `stm32-gdb-mcp`
+   - **Workflow name**: `release.yml`
+   - **Environment name**: `pypi`
+2. In the GitHub repo, create an Environment named `pypi`
+   (Settings → Environments → New environment). Optionally add required
+   reviewers to gate publishing behind a manual approval.
+3. Ensure `pyproject.toml` `version` is the version you intend to publish, then
+   tag and push (see **Tagging** above).
+
+在 PyPI 的 <https://pypi.org/manage/account/publishing/> 添加可信发布者（若项目尚不存在则用
+“pending publisher”表单），四项须与上面完全一致；在 GitHub 仓库 Settings → Environments 建一个
+名为 `pypi` 的环境（可加必需审核人以在发布前人工确认）；确认 `pyproject.toml` 版本号无误后打标签推送即可。
+
+**Manual dry run / 手动演练**: trigger the workflow via *Actions →
+Release → Run workflow* (`workflow_dispatch`). It runs the quality gate and
+build but **skips the publish step** (that step only runs for `v*` tag pushes),
+so you can verify the pipeline without releasing. 通过 *Actions → Release → Run
+workflow* 手动触发只会跑质量门禁与构建、**跳过发布步骤**（发布仅在 `v*` 标签推送时执行），可用于在不发布的情况下验证流水线。
+
+**Existing tags / 已存在的标签**: a tag pushed before this workflow existed
+(e.g. `v0.3.0`) will not have triggered it. To publish that version, either
+re-push the tag (`git push origin :refs/tags/vX.Y.Z` then re-tag and push) or
+publish it once manually with `python -m build && python -m twine upload dist/*`.
+本工作流之前推送的标签（如 `v0.3.0`）不会自动触发；如需发布该版本，可删除并重推标签，或用
+`python -m build && python -m twine upload dist/*` 手动发布一次。
+
 ## Release Notes / 发布说明
 
 Include / 请包含：

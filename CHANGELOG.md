@@ -2,6 +2,10 @@
 
 ## Unreleased / 未发布
 
+### Tooling / 工具链
+
+- Added `.github/workflows/release.yml`: pushing a `v*` tag now runs the quality gate (ruff / pytest / compileall), builds the sdist + wheel, checks the metadata with `twine`, and publishes to **PyPI via Trusted Publishing (OIDC)** — no API token is stored in the repo. `workflow_dispatch` runs everything except the publish step for a safe dry run. One-time PyPI trusted-publisher + `pypi` environment setup is documented in `docs/release.md`. 新增 `.github/workflows/release.yml`：推送 `v*` 标签即跑质量门禁、构建 sdist + wheel、用 `twine` 校验元数据，并通过 **PyPI 可信发布 (OIDC)** 发布（仓库不存 token）；`workflow_dispatch` 可做除发布外的安全演练；一次性配置见 `docs/release.md`。
+
 ## [0.3.0] - 2026-07-01
 
 First tagged release. Turns the STM32 GDB MCP server into a **spec-to-silicon autonomous pipeline**: a netlist plus a product spec becomes a framework design, HAL code, and a machine-checked acceptance spec, then hands off to the bounded closed-loop debug-verify already in the server. The machine layer stays deterministic and never hallucinates — every unknown surfaces as an honest `unresolved` / `located:false` / `TODO` / `conflict` marker rather than a guess. 首个打标签发布：把 STM32 GDB MCP 服务器演进为**从规格到芯片的自主流水线**——网表加产品规格生成框架设计、HAL 代码与机检验收规格，随后交接给服务器内既有的有界闭环调试验证；机器层保持确定性、绝不臆造，一切未知都以诚实的 `unresolved` / `located:false` / `TODO` / `conflict` 标记呈现，而非猜测。
