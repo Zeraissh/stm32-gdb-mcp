@@ -1541,3 +1541,92 @@ def test_render_framework_without_design_errors():
 
     assert payload["ok"] is False
     assert payload["error"]["code"] == "no_design"
+
+
+def _seed_design(sid):
+    asyncio.run(handle_call_tool("import_netlist", {"text": _KICAD_NETLIST, "session": sid}))
+    design = {"USART1": {"baud": 115200}}
+    af_map = {"STM32L431": {"PA9": {"USART1_TX": 7}}}
+    asyncio.run(handle_call_tool(
+        "design_framework", {"design": design, "af_map": af_map, "session": sid}))
+
+
+def test_synthesize_acceptance_requires_design():
+    result = asyncio.run(handle_call_tool("synthesize_acceptance", {"session": "synth-nodesign"}))
+    payload = json.loads(result[0].text)
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "no_design"
+
+
+def test_synthesize_acceptance_no_placement_source_is_no_fault_only():
+    sid = "synth-nofault"
+    _seed_design(sid)
+    result = json.loads(asyncio.run(handle_call_tool(
+        "synthesize_acceptance", {"session": sid}))[0].text)
+
+    assert result["ok"] is True
+    data = result["data"]
+    assert data["placement_source"] == "none"
+    assert data["stats"]["clock_checks"] == 0
+    assert [c["kind"] for c in data["checks"]] == ["no_fault"]
+    # Clocks the plan enables are surfaced as unresolved, never invented.
+    assert {"GPIOA", "GPIOB", "USART1", "I2C1"} <= {u["clock"] for u in data["unresolved"]}
+
+
+def test_synthesize_acceptance_with_register_map_emits_clock_check():
+    sid = "synth-regmap"
+    _seed_design(sid)
+    register_map = {"STM32L431": {"USART1": {"address": "0x40021060", "bit": 14}}}
+    result = json.loads(asyncio.run(handle_call_tool(
+        "synthesize_acceptance", {"register_map": register_map, "session": sid}))[0].text)
+
+    assert result["ok"] is True
+    data = result["data"]
+    assert data["placement_source"] == "register_map"
+    usart = next(c for c in data["checks"] if c["id"] == "clk_USART1_enabled")
+    assert usart["kind"] == "memory_u32"
+    assert usart["op"] == "bits_set"
+    assert usart["expect"] == "0x00004000"
+    # Clocks without a placement stay unresolved.
+    assert any(u["clock"] == "I2C1" for u in data["unresolved"])
+
+
+def test_synthesize_acceptance_rejects_bad_register_map():
+    sid = "synth-badmap"
+    _seed_design(sid)
+    result = json.loads(asyncio.run(handle_call_tool(
+        "synthesize_acceptance", {"register_map": "nope", "session": sid}))[0].text)
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "invalid_argument"
+
+
+def test_synthesize_acceptance_auto_loads_into_session():
+    sid = "synth-autoload"
+    _seed_design(sid)
+    synth = json.loads(asyncio.run(handle_call_tool(
+        "synthesize_acceptance", {"stopped_at": "main", "session": sid}))[0].text)
+    assert synth["data"]["loaded"] is True
+
+    # The derived spec is now the session's acceptance judge.
+    checks = json.loads(asyncio.run(handle_call_tool(
+        "describe_acceptance", {"what": "checks", "session": sid}))[0].text)
+    assert checks["ok"] is True
+    ids = [c["id"] for c in checks["data"]["checks"]]
+    assert "no_fault_after_init" in ids
+    kinds = {c["kind"] for c in checks["data"]["checks"]}
+    assert "stopped_at" in kinds
+
+
+def test_synthesize_acceptance_no_load_leaves_session_untouched():
+    sid = "synth-noload"
+    _seed_design(sid)
+    synth = json.loads(asyncio.run(handle_call_tool(
+        "synthesize_acceptance", {"load": False, "session": sid}))[0].text)
+    assert synth["data"]["loaded"] is False
+
+    # Nothing was loaded, so describe_acceptance has no spec to show.
+    describe = json.loads(asyncio.run(handle_call_tool(
+        "describe_acceptance", {"what": "checks", "session": sid}))[0].text)
+    assert describe["ok"] is False

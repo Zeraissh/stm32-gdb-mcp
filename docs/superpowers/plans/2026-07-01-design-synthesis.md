@@ -67,13 +67,46 @@ scaffolding, not a plausible-looking guess.
   acceptance / loop persistence.
 - Tests appended to `tests/test_server_tools.py`.
 
+## Tier 3 — auto-derive the AcceptanceSpec from the plan (welds D -> B1 -> C)
+
+The machine now generates the pass/fail judge itself, so the whole
+`netlist + spec -> design -> code -> acceptance -> loop` chain needs no
+hand-written checks. Deterministic and honest: every check is a resolved fact;
+anything unresolvable is surfaced, never guessed.
+
+- `acceptance_synth.py` (pure Tier 1 core):
+  - `derive_acceptance_spec(plan, clock_resolver=None, options=None)` ->
+    `{spec, unresolved, notes, stats}`. Always emits a `no_fault` check
+    (`no_fault_after_init`; target-independent ARM SCB fact). For each clock the
+    plan enables, calls `clock_resolver(name)`; if resolved -> a `memory_u32`
+    `bits_set` check `expect = hex(1 << bit)` (no mask needed); else -> an
+    `unresolved` entry. Optional `stopped_at` symbol check.
+  - `dict_clock_resolver(register_map, line, family)` — resolve RCC enable-bit
+    placements from an explicit `{line_or_family: {clock: {address, bit}}}` map
+    (line first, then family).
+  - `svd_clock_resolver(svd_parser, rcc_name="RCC")` — resolve placements from a
+    loaded SVD by scanning RCC enable registers for the `<NAME>EN` field (GPIO
+    ports also try `IOP<L>EN` for F1/L0). Never raises.
+- Deliberately bounded: only `no_fault` + RCC clock-enable checks. Peripheral-
+  enable (e.g. `USART1 CR1.UE`) and GPIO `MODER` checks are deferred because GPIO
+  register layout differs radically across families (F1 CRL/CRH vs F4/L4 MODER) —
+  correctness risk not worth taking in the deterministic layer.
+- Tier 2 tool `synthesize_acceptance(register_map?, stopped_at?, include_no_fault?,
+  load?, name?, session?)`: derives the spec from the session's FrameworkPlan,
+  resolves clock placements from `register_map` (preferred) or the session's loaded
+  SVD, validates it, and (by default) loads it as the session acceptance judge.
+  Returns `placement_source` (register_map | svd | none), `unresolved`, `notes`,
+  `stats`, `loaded`.
+- Tests: `tests/test_acceptance_synth.py` (13) + 6 server tests.
+
 ## Not in scope (future) / 暂不包含
 
 - Clock-tree solver (`SystemClock_Config` stays an honest TODO stub).
 - Register-level (non-HAL) codegen back-ends.
-- Auto-deriving an AcceptanceSpec from the plan (a natural Tier 3: "after init these
-  RCC bits are set / these pins are muxed" → feeds Pillar B1 automatically).
+- Peripheral-enable / GPIO-MODER acceptance checks (family-specific register
+  layouts; deferred from Tier 3 to keep the deterministic judge correct).
 
 ## Status / 状态
 - [x] **Tier 1** — `framework_solver.py` + `framework_render.py` + tests. (16 + 12 tests)
 - [x] **Tier 2** — `design/describe/render_framework` tools + per-session state + tests. (5 server tests; suite 340 passed / 1 skipped)
+- [x] **Tier 3** — `acceptance_synth.py` + `synthesize_acceptance` tool welding D -> B1 -> C. (13 + 6 tests; suite 359 passed / 1 skipped)

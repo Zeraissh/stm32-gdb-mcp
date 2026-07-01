@@ -17,6 +17,7 @@ from . import build as build_mod
 from . import swo_config
 from .acceptance_eval import GdbAcceptanceReader, evaluate_acceptance
 from .acceptance_model import summarize_acceptance, validate_acceptance_spec
+from .acceptance_synth import derive_acceptance_spec, dict_clock_resolver, svd_clock_resolver
 from .board_model import board_view, summarize_board
 from .board_validation import load_capability_db, validate_board
 from .composites import capture_state, debug_until, flash_and_run
@@ -1499,6 +1500,27 @@ async def handle_list_tools() -> list[Tool]:
                     "session": {"type": "string", "description": "Target session id (default 'default')."}
                 }
             }
+        ),
+        Tool(
+            name="synthesize_acceptance",
+            description="Auto-derive a machine-checked AcceptanceSpec from the synthesized FrameworkPlan "
+                        "(Pillar D Tier 3) and load it as the session's acceptance judge — welding design "
+                        "synthesis to the acceptance loop. Always emits a no_fault check (init must not "
+                        "HardFault); adds a memory_u32 bits_set check per clock the plan enables, using RCC "
+                        "enable-bit placements resolved from the session's loaded SVD (or an explicit "
+                        "register_map). Unresolvable clocks are surfaced, never guessed. Run "
+                        "design_framework first; load an SVD (start_debug_session/set svd) for clock checks.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "register_map": {"type": "object", "description": "Optional explicit RCC placements {line_or_family: {clock: {address, bit}}}; overrides the SVD."},
+                    "stopped_at": {"type": "string", "description": "Optional symbol to also assert the PC reached after init (e.g. 'main')."},
+                    "include_no_fault": {"type": "boolean", "description": "Emit the no_fault check (default true)."},
+                    "load": {"type": "boolean", "description": "Load the derived spec as the session acceptance judge (default true)."},
+                    "name": {"type": "string", "description": "Optional spec name."},
+                    "session": {"type": "string", "description": "Target session id (default 'default')."}
+                }
+            }
         )
     ]
     # Compact mode (STM32_GDB_MCP_COMPACT=1): expose only a small core so nothing gets
@@ -2855,7 +2877,56 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
             session_design["last_render"] = rendered
             return [content_success(
                 rendered,
-                suggested_next_actions=["load_acceptance (define pass/fail checks)", "build_firmware"])]
+                suggested_next_actions=["synthesize_acceptance", "build_firmware"])]
+
+        elif name == "synthesize_acceptance":
+            plan = session_design.get("current")
+            if not plan:
+                return [content_error(
+                    "No framework plan for this session. Run design_framework first.", code="no_design",
+                    suggested_next_actions=["design_framework"])]
+            register_map = arguments.get("register_map")
+            if register_map is not None and not isinstance(register_map, dict):
+                return [content_error(
+                    "register_map must be an object {line_or_family: {clock: {address, bit}}}.",
+                    code="invalid_argument", suggested_next_actions=["synthesize_acceptance"])]
+            mcu = plan.get("mcu") or {}
+            if register_map:
+                resolver = dict_clock_resolver(register_map, mcu.get("line"), mcu.get("family"))
+                source = "register_map"
+            elif getattr(svd_parser, "svd_root", None) is not None:
+                resolver = svd_clock_resolver(svd_parser)
+                source = "svd"
+            else:
+                resolver = None
+                source = "none"
+            options = {
+                "include_no_fault": arguments.get("include_no_fault", True),
+                "stopped_at": arguments.get("stopped_at"),
+                "name": arguments.get("name"),
+            }
+            derived = derive_acceptance_spec(plan, clock_resolver=resolver, options=options)
+            try:
+                validated = validate_acceptance_spec(derived["spec"])
+            except ValueError as exc:
+                return [content_error(
+                    f"Derived acceptance spec is invalid: {exc}", code="invalid_spec",
+                    suggested_next_actions=["synthesize_acceptance(include_no_fault=true)"])]
+            loaded = arguments.get("load", True)
+            if loaded:
+                session_acceptance["current"] = validated
+                session_acceptance["last_result"] = None
+            next_actions = (["start_acceptance_loop", "describe_acceptance (what=checks)"] if loaded
+                            else ["load_acceptance", "describe_acceptance"])
+            return [content_success({
+                "spec": summarize_acceptance(validated),
+                "checks": validated["checks"],
+                "unresolved": derived["unresolved"],
+                "notes": derived["notes"],
+                "stats": derived["stats"],
+                "placement_source": source,
+                "loaded": loaded,
+            }, suggested_next_actions=next_actions)]
 
         else:
             hint = _RENAMED_TOOLS.get(name)
