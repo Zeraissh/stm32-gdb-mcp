@@ -49,7 +49,7 @@ from .error_taxonomy import classify_error
 from .exception_frame import build_fault_context
 from .fault_analysis import diagnose_fault_registers
 from .framework_render import render_framework
-from .framework_solver import build_framework_plan, framework_view, summarize_framework
+from .framework_solver import build_framework_plan, framework_view, merge_af_maps, summarize_framework
 from .freertos_inspector import FreeRTOSInspector
 from .gdb_client import GdbClientManager
 from .gdb_decode import registers_summary
@@ -1462,13 +1462,16 @@ async def handle_list_tools() -> list[Tool]:
                         "board: which clocks to enable, how each pin must be muxed, and which peripheral "
                         "init blocks to emit, in dependency order. Supply per-peripheral HAL .Init "
                         "parameters via design={'USART1': {'baud': 115200, ...}} and optional AF numbers "
-                        "via af_map. Anything not supplied is surfaced as unresolved, never guessed. "
-                        "Import a netlist first (import_netlist).",
+                        "via af_map. Alternate-function numbers are also auto-derived from a pin-capability "
+                        "DB (db_path or the STM32_GDB_MCP_PIN_DB env) when its entries carry an 'af' field; "
+                        "an explicit af_map overrides the DB per pin. Anything not supplied is surfaced as "
+                        "unresolved, never guessed. Import a netlist first (import_netlist).",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "design": {"type": "object", "description": "Per-peripheral config, e.g. {'USART1': {'baud': 115200, 'word_length': 'UART_WORDLENGTH_8B'}}."},
-                    "af_map": {"type": "object", "description": "Optional alternate-function numbers: {line_or_family: {port_pin: {'USART1_TX': 7}}}."},
+                    "af_map": {"type": "object", "description": "Optional alternate-function numbers: {line_or_family: {port_pin: {'USART1_TX': 7}}}. Overrides db_path per pin."},
+                    "db_path": {"type": "string", "description": "Optional JSON pin-capability DB (CubeMX-derived); entries with an 'af' field auto-fill alternate-function numbers."},
                     "session": {"type": "string", "description": "Target session id (default 'default')."}
                 }
             }
@@ -2871,6 +2874,14 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                 return [content_error(
                     "af_map must be an object {line_or_family: {port_pin: {'PERIPH_SIG': af}}}.",
                     code="invalid_argument", suggested_next_actions=["design_framework"])]
+            db_path = arguments.get("db_path") or os.environ.get("STM32_GDB_MCP_PIN_DB")
+            if db_path:
+                try:
+                    af_map = merge_af_maps(load_capability_db(db_path).af_map(), af_map)
+                except (OSError, ValueError) as exc:
+                    return [content_error(
+                        f"Could not load pin-capability DB '{db_path}': {exc}", code="invalid_db",
+                        suggested_next_actions=["design_framework without db_path"])]
             plan = build_framework_plan(board, design=design, af_map=af_map)
             session_design["current"] = plan
             session_design["last_render"] = None

@@ -213,6 +213,28 @@ def _lookup_af(af_map, line, family, port_pin, peripheral, signal):
     return value if isinstance(value, int) else None
 
 
+def merge_af_maps(base: dict | None, override: dict | None) -> dict:
+    """Deep-merge two ``af_map`` dicts; ``override`` wins per line/port_pin/signal.
+
+    Used to layer an explicitly supplied ``af_map`` on top of one derived from a
+    pin-capability DB, so a caller can correct or extend the DB without restating
+    every pin. Inputs are never mutated.
+    """
+    if not base:
+        return {k: {pp: dict(sig) for pp, sig in pins.items()}
+                for k, pins in (override or {}).items() if isinstance(pins, dict)}
+    merged: dict = {k: {pp: dict(sig) for pp, sig in pins.items()}
+                    for k, pins in base.items() if isinstance(pins, dict)}
+    for scope, pins in (override or {}).items():
+        if not isinstance(pins, dict):
+            continue
+        dst_pins = merged.setdefault(scope, {})
+        for port_pin, sig in pins.items():
+            if isinstance(sig, dict):
+                dst_pins.setdefault(port_pin, {}).update(sig)
+    return merged
+
+
 # --- Value rendering for config fields --------------------------------------
 
 

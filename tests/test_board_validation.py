@@ -148,3 +148,43 @@ def test_af_legality_skipped_without_db():
     assert report["af_checked"] is False
     assert report["stats"]["unverified_af_pins"] == 0
     assert not any(c["type"] == "illegal_af" for c in report["conflicts"])
+
+# --- af_map() projection (DB doubles as AF-number source) -------------------
+
+
+def test_capability_db_af_map_projects_only_entries_with_af():
+    db = PinCapabilityDB(
+        {
+            "STM32L431": {
+                "PA9": [
+                    {"peripheral": "USART1", "signal": "TX", "af": 7},
+                    {"peripheral": "TIM1", "signal": "CH2"},          # no af -> omitted
+                ],
+                "PB6": [{"peripheral": "I2C1", "signal": "SCL", "af": 4}],
+                "PC0": [{"peripheral": "ADC1", "signal": "IN1"}],      # no af -> pin dropped
+            },
+            "STM32F4": "not-a-dict",                                  # ignored, never raises
+        }
+    )
+
+    assert db.af_map() == {
+        "STM32L431": {
+            "PA9": {"USART1_TX": 7},
+            "PB6": {"I2C1_SCL": 4},
+        }
+    }
+
+
+def test_capability_db_af_map_rejects_bool_and_non_int_af():
+    db = PinCapabilityDB(
+        {
+            "STM32L431": {
+                "PA9": [
+                    {"peripheral": "USART1", "signal": "TX", "af": True},   # bool is not an AF
+                    {"peripheral": "SPI1", "signal": "MOSI", "af": "5"},    # str ignored
+                ],
+            }
+        }
+    )
+
+    assert db.af_map() == {}

@@ -2,6 +2,7 @@ from mcp_server.framework_solver import (
     build_framework_plan,
     classify_peripheral,
     gpio_role,
+    merge_af_maps,
     parse_port_pin,
     summarize_framework,
 )
@@ -192,3 +193,28 @@ def test_summarize_framework_is_compact():
     assert "__HAL_RCC_USART1_CLK_ENABLE" in summary["clocks"]
     assert {p["name"] for p in summary["peripherals"]} == {"ADC1", "I2C1", "USART1"}
     assert summary["stats"]["gpio_count"] == len(plan["gpio"])
+
+
+# --- af_map merging (DB-derived + explicit override) ------------------------
+
+
+def test_merge_af_maps_override_wins_and_base_preserved():
+    base = {"STM32L431": {"PA9": {"USART1_TX": 7}, "PB6": {"I2C1_SCL": 4}}}
+    override = {"STM32L431": {"PA9": {"USART1_TX": 99, "TIM1_CH2": 1}}}
+
+    merged = merge_af_maps(base, override)
+
+    assert merged == {
+        "STM32L431": {
+            "PA9": {"USART1_TX": 99, "TIM1_CH2": 1},
+            "PB6": {"I2C1_SCL": 4},
+        }
+    }
+    # Inputs are never mutated.
+    assert base["STM32L431"]["PA9"] == {"USART1_TX": 7}
+
+
+def test_merge_af_maps_handles_none_inputs():
+    assert merge_af_maps(None, None) == {}
+    assert merge_af_maps(None, {"F4": {"PA0": {"X_Y": 1}}}) == {"F4": {"PA0": {"X_Y": 1}}}
+    assert merge_af_maps({"F4": {"PA0": {"X_Y": 1}}}, None) == {"F4": {"PA0": {"X_Y": 1}}}

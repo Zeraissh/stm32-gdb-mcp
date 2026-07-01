@@ -18,7 +18,12 @@ authoritative table, so validation is never wrong for lack of trustworthy data.
 
 DB JSON shape::
 
-    {"<mcu line or family>": {"<port pin>": [{"peripheral": "...", "signal": "..."}, ...]}}
+    {"<mcu line or family>": {"<port pin>": [{"peripheral": "...", "signal": "...", "af": 7}, ...]}}
+
+The optional ``"af"`` field (an integer alternate-function number) is not used by
+legality checks; it lets the same CubeMX-derived DB double as the authoritative
+source for GPIO alternate-function *numbers* during framework synthesis (see
+``af_map``). Entries without ``"af"`` still validate normally.
 """
 
 import json
@@ -47,6 +52,34 @@ class PinCapabilityDB:
             if entry.get("peripheral") == peripheral and entry.get("signal") == signal:
                 return True
         return False
+
+    def af_map(self) -> dict:
+        """Project the DB into an ``af_map`` for framework synthesis.
+
+        Returns ``{line_or_family: {port_pin: {"<peripheral>_<signal>": af}}}`` built
+        only from entries that carry an integer ``"af"``. Entries without an ``af``
+        are omitted, so a pin whose number is unknown stays unresolved rather than
+        being assigned a fabricated value.
+        """
+        result: dict = {}
+        for scope, pins in self._data.items():
+            if not isinstance(pins, dict):
+                continue
+            pin_map: dict = {}
+            for port_pin, entries in pins.items():
+                sig_map: dict = {}
+                for entry in entries or []:
+                    if not isinstance(entry, dict):
+                        continue
+                    af = entry.get("af")
+                    peripheral, signal = entry.get("peripheral"), entry.get("signal")
+                    if isinstance(af, int) and not isinstance(af, bool) and peripheral and signal:
+                        sig_map[f"{peripheral}_{signal}"] = af
+                if sig_map:
+                    pin_map[port_pin] = sig_map
+            if pin_map:
+                result[scope] = pin_map
+        return result
 
 
 def load_capability_db(path: str) -> PinCapabilityDB:

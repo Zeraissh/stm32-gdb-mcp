@@ -110,3 +110,28 @@ anything unresolvable is surfaced, never guessed.
 - [x] **Tier 1** — `framework_solver.py` + `framework_render.py` + tests. (16 + 12 tests)
 - [x] **Tier 2** — `design/describe/render_framework` tools + per-session state + tests. (5 server tests; suite 340 passed / 1 skipped)
 - [x] **Tier 3** — `acceptance_synth.py` + `synthesize_acceptance` tool welding D -> B1 -> C. (13 + 6 tests; suite 359 passed / 1 skipped)
+- [x] **Tier 3 (cont.)** — deterministic clock-tree solver (`clock_solver.py` + `solve_clock_tree`); render emits a real `SystemClock_Config`. (see `2026-07-01-clock-tree-solver.md`; suite 382 passed / 1 skipped)
+- [x] **Tier 3 (cont.)** — DB-derived GPIO alternate-function resolution (see below; 2 + 2 + 4 tests; suite 390 passed / 1 skipped)
+
+## Tier 3 (cont.) — DB-derived GPIO alternate-function numbers
+
+The renderer previously left `GPIO_InitStruct.Alternate` as a datasheet TODO
+whenever the caller did not hand-write an `af_map`. The pin-capability DB
+(`PinCapabilityDB`, CubeMX-derived) already lists which `{peripheral, signal}`
+each port pin can carry; entries now accept an optional integer `"af"` so the
+same DB doubles as the authoritative source for the alternate-function *number*.
+
+- `PinCapabilityDB.af_map()` projects entries that carry an `"af"` into the
+  solver's existing `af_map` shape `{line_or_family: {port_pin: {"PERIPH_SIG": af}}}`.
+  Entries without an `af` are omitted — an unknown pin stays unresolved, never
+  guessed.
+- `framework_solver.merge_af_maps(base, override)` layers an explicit `af_map`
+  on top of the DB-derived one (explicit wins per pin), so a caller can correct
+  or extend the DB without restating every pin.
+- `design_framework(db_path?)` (or the `STM32_GDB_MCP_PIN_DB` env, mirroring
+  `validate_board`) loads the DB, derives an `af_map`, merges any explicit
+  `af_map`, and feeds `build_framework_plan`. With the DB present the rendered
+  code carries concrete `GPIO_AF<n>_<PERIPH>` values and the `af_unknown` /
+  `TODO: Alternate` markers disappear for every pin the DB knows.
+- Honest by construction: a pin missing from the DB still renders the datasheet
+  TODO and reports `af_unknown`; a bad `db_path` yields an `invalid_db` error.

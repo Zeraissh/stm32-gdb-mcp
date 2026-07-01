@@ -1713,3 +1713,78 @@ def test_solve_clock_tree_no_load_leaves_stub():
     rendered = json.loads(asyncio.run(handle_call_tool("render_framework", {"session": sid}))[0].text)
     source = next(f["content"] for f in rendered["data"]["files"] if f["path"] == "bsp_init.c")
     assert "TODO: configure the clock tree" in source
+
+# --- DB-derived GPIO alternate-function resolution (Pillar D Tier 3) ---------
+
+
+def test_design_framework_derives_af_from_db(tmp_path):
+    sid = "design-af-db"
+    asyncio.run(handle_call_tool("import_netlist", {"text": _KICAD_NETLIST, "session": sid}))
+    db = tmp_path / "pins.json"
+    db.write_text(json.dumps({
+        "STM32L431": {
+            "PA9": [{"peripheral": "USART1", "signal": "TX", "af": 7}],
+            "PB6": [{"peripheral": "I2C1", "signal": "SCL", "af": 4}],
+        }
+    }), encoding="utf-8")
+
+    designed = json.loads(asyncio.run(handle_call_tool(
+        "design_framework",
+        {"design": {"USART1": {"baud": 115200}}, "db_path": str(db), "session": sid}))[0].text)
+    assert designed["ok"] is True
+
+    rendered = json.loads(asyncio.run(handle_call_tool("render_framework", {"session": sid}))[0].text)
+    blob = "\n".join(f["content"] for f in rendered["data"]["files"])
+    # AF numbers are transcribed from the DB, and the datasheet TODO disappears.
+    assert "GPIO_AF7_USART1" in blob
+    assert "GPIO_AF4_I2C1" in blob
+    assert "TODO: GPIO_InitStruct.Alternate" not in blob
+
+
+def test_design_framework_explicit_af_map_overrides_db(tmp_path):
+    sid = "design-af-override"
+    asyncio.run(handle_call_tool("import_netlist", {"text": _KICAD_NETLIST, "session": sid}))
+    db = tmp_path / "pins.json"
+    db.write_text(json.dumps({
+        "STM32L431": {"PA9": [{"peripheral": "USART1", "signal": "TX", "af": 7}]}
+    }), encoding="utf-8")
+
+    asyncio.run(handle_call_tool(
+        "design_framework",
+        {"design": {"USART1": {"baud": 115200}},
+         "af_map": {"STM32L431": {"PA9": {"USART1_TX": 3}}},
+         "db_path": str(db), "session": sid}))
+
+    rendered = json.loads(asyncio.run(handle_call_tool("render_framework", {"session": sid}))[0].text)
+    blob = "\n".join(f["content"] for f in rendered["data"]["files"])
+    assert "GPIO_AF3_USART1" in blob
+    assert "GPIO_AF7_USART1" not in blob
+
+
+def test_design_framework_missing_db_entry_stays_honest(tmp_path):
+    sid = "design-af-partial"
+    asyncio.run(handle_call_tool("import_netlist", {"text": _KICAD_NETLIST, "session": sid}))
+    db = tmp_path / "pins.json"
+    # DB knows PA9 but not PB6 -> PB6 must stay an unresolved TODO, never guessed.
+    db.write_text(json.dumps({
+        "STM32L431": {"PA9": [{"peripheral": "USART1", "signal": "TX", "af": 7}]}
+    }), encoding="utf-8")
+
+    asyncio.run(handle_call_tool(
+        "design_framework",
+        {"design": {"USART1": {"baud": 115200}}, "db_path": str(db), "session": sid}))
+
+    rendered = json.loads(asyncio.run(handle_call_tool("render_framework", {"session": sid}))[0].text)
+    blob = "\n".join(f["content"] for f in rendered["data"]["files"])
+    assert "GPIO_AF7_USART1" in blob
+    assert "TODO: GPIO_InitStruct.Alternate for I2C1_SCL" in blob
+
+
+def test_design_framework_bad_db_path_is_honest(tmp_path):
+    sid = "design-af-baddb"
+    asyncio.run(handle_call_tool("import_netlist", {"text": _KICAD_NETLIST, "session": sid}))
+    result = json.loads(asyncio.run(handle_call_tool(
+        "design_framework",
+        {"db_path": str(tmp_path / "nope.json"), "session": sid}))[0].text)
+    assert result["ok"] is False
+    assert result["error"]["code"] == "invalid_db"
