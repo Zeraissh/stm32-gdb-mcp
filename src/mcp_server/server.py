@@ -1462,10 +1462,14 @@ async def handle_list_tools() -> list[Tool]:
                         "board: which clocks to enable, how each pin must be muxed, and which peripheral "
                         "init blocks to emit, in dependency order. Supply per-peripheral HAL .Init "
                         "parameters via design={'USART1': {'baud': 115200, ...}} and optional AF numbers "
-                        "via af_map. Alternate-function numbers are also auto-derived from a pin-capability "
-                        "DB (db_path or the STM32_GDB_MCP_PIN_DB env) when its entries carry an 'af' field; "
-                        "an explicit af_map overrides the DB per pin. Anything not supplied is surfaced as "
-                        "unresolved, never guessed. Import a netlist first (import_netlist).",
+                        "via af_map. Mandatory .Init members are auto-filled with HAL-standard defaults "
+                        "(a complete, valid init struct, not a half-initialized one) and a few are derived "
+                        "from the netlist (UART flow control from RTS/CTS pins, SPI NSS from an NSS pin); "
+                        "each field is tagged explicit/derived/default. Alternate-function numbers are also "
+                        "auto-derived from a pin-capability DB (db_path or the STM32_GDB_MCP_PIN_DB env) "
+                        "when its entries carry an 'af' field; an explicit af_map overrides the DB per pin. "
+                        "Anything that needs a human decision (baud, timer period, I2C timing) is surfaced "
+                        "as unresolved, never guessed. Import a netlist first (import_netlist).",
             inputSchema={
                 "type": "object",
                 "properties": {

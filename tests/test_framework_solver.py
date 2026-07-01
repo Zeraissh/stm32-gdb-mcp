@@ -154,8 +154,92 @@ def test_peripheral_without_config_is_unresolved_but_present():
     names = [b["name"] for b in plan["peripherals"]]
 
     assert names == ["ADC1", "I2C1", "USART1"]  # sorted, debug/sys excluded
-    assert any(u["type"] == "no_config" and u["peripheral"] == "SPI1" for u in plan["unresolved"]) is False
-    assert any(u["type"] == "no_config" and u["peripheral"] == "USART1" for u in plan["unresolved"])
+    # A required design decision (UART baud) with no value is surfaced, never guessed.
+    assert any(u["type"] == "param_unresolved" and u["peripheral"] == "USART1"
+               and u["field"] == "BaudRate" for u in plan["unresolved"])
+    # I2C still needs its variant-specific timing/speed decision.
+    assert any(u["type"] == "param_unresolved" and u["peripheral"] == "I2C1"
+               for u in plan["unresolved"])
+    # ADC has no universal default set -> stays a plain no_config hole.
+    assert any(u["type"] == "no_config" and u["peripheral"] == "ADC1" for u in plan["unresolved"])
+
+
+def test_mandatory_init_fields_get_hal_standard_defaults():
+    plan = build_framework_plan(_board(_mixed_pins()), design={"USART1": {"baud": 115200}})
+    usart = next(b for b in plan["peripherals"] if b["name"] == "USART1")
+    fields = {f["field"]: f for f in usart["config_fields"]}
+
+    # Baud is explicit; the rest of a valid 8N1 init is filled from HAL defaults.
+    assert fields["BaudRate"]["source"] == "explicit"
+    assert fields["WordLength"] == {"field": "WordLength", "value": "UART_WORDLENGTH_8B",
+                                    "rendered": "UART_WORDLENGTH_8B", "source": "default",
+                                    "source_key": None, "mapped": True, "note": None}
+    assert fields["Parity"]["value"] == "UART_PARITY_NONE"
+    assert fields["Mode"]["value"] == "UART_MODE_TX_RX"
+    assert fields["OverSampling"]["value"] == "UART_OVERSAMPLING_16"
+    # No baud TODO once the engineer supplied it.
+    assert not any(u["type"] == "param_unresolved" and u["peripheral"] == "USART1"
+                   for u in plan["unresolved"])
+
+
+def _flow_pins():
+    return [
+        _pin("42", "PA9", "/USART1_TX", _fn("USART1", "TX")),
+        _pin("43", "PA10", "/USART1_RX", _fn("USART1", "RX")),
+        _pin("44", "PA11", "/USART1_CTS", _fn("USART1", "CTS")),
+        _pin("45", "PA12", "/USART1_RTS", _fn("USART1", "RTS")),
+    ]
+
+
+def test_uart_flow_control_derived_from_rts_cts_pins():
+    plan = build_framework_plan(_board(_flow_pins()), design={"USART1": {"baud": 9600}})
+    usart = next(b for b in plan["peripherals"] if b["name"] == "USART1")
+    flow = next(f for f in usart["config_fields"] if f["field"] == "HwFlowCtl")
+
+    assert flow["value"] == "UART_HWCONTROL_RTS_CTS"
+    assert flow["source"] == "derived"
+
+
+def test_uart_flow_control_none_when_no_rts_cts():
+    plan = build_framework_plan(_board(_mixed_pins()), design={"USART1": {"baud": 9600}})
+    usart = next(b for b in plan["peripherals"] if b["name"] == "USART1")
+    flow = next(f for f in usart["config_fields"] if f["field"] == "HwFlowCtl")
+
+    assert flow["value"] == "UART_HWCONTROL_NONE"
+    assert flow["source"] == "derived"
+
+
+def test_spi_nss_derived_from_nss_pin():
+    with_nss = [
+        _pin("30", "PA5", "/SPI1_SCK", _fn("SPI1", "SCK")),
+        _pin("31", "PA6", "/SPI1_MISO", _fn("SPI1", "MISO")),
+        _pin("32", "PA7", "/SPI1_MOSI", _fn("SPI1", "MOSI")),
+        _pin("33", "PA4", "/SPI1_NSS", _fn("SPI1", "NSS")),
+    ]
+    plan = build_framework_plan(_board(with_nss))
+    spi = next(b for b in plan["peripherals"] if b["name"] == "SPI1")
+    nss = next(f for f in spi["config_fields"] if f["field"] == "NSS")
+
+    assert nss["value"] == "SPI_NSS_HARD_OUTPUT"
+    assert nss["source"] == "derived"
+    # A fully-defaultable SPI needs no design decision (its pins still need AF numbers,
+    # which is a separate af_unknown, but no param/no_config hole remains).
+    assert not any(u["type"] in ("param_unresolved", "no_config") and u.get("peripheral") == "SPI1"
+                   for u in plan["unresolved"])
+
+
+def test_explicit_value_overrides_derived_and_default():
+    design = {"USART1": {"baud": 115200, "flow_control": "UART_HWCONTROL_NONE",
+                         "word_length": "UART_WORDLENGTH_9B"}}
+    plan = build_framework_plan(_board(_flow_pins()), design=design)
+    usart = next(b for b in plan["peripherals"] if b["name"] == "USART1")
+    fields = {f["field"]: f for f in usart["config_fields"]}
+
+    # Explicit flow_control beats the RTS/CTS derivation; explicit word_length beats the default.
+    assert fields["HwFlowCtl"]["value"] == "UART_HWCONTROL_NONE"
+    assert fields["HwFlowCtl"]["source"] == "explicit"
+    assert fields["WordLength"]["value"] == "UART_WORDLENGTH_9B"
+    assert fields["WordLength"]["source"] == "explicit"
 
 
 def test_init_order_is_clocks_then_gpio_then_peripherals():

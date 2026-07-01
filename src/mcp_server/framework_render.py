@@ -169,14 +169,21 @@ def _render_peripheral_init(block: dict) -> list[str]:
 
     handle = block["handle"]
     lines.append(f"    {handle}.Instance = {block['instance']};")
-    if block.get("has_config"):
-        for field in block.get("config_fields", []):
-            if field.get("mapped"):
-                lines.append(f"    {handle}.Init.{field['field']} = {field['rendered']};")
-            else:
-                lines.append(f"    /* design.{field['source_key']} = {field['rendered']} "
-                             "(no HAL field mapping; set the matching .Init member manually) */")
-    else:
+    for field in block.get("config_fields", []):
+        source = field.get("source")
+        if source == "default":
+            comment = "  /* default */"
+        elif source == "derived":
+            comment = f"  /* derived: {field['note']} */" if field.get("note") else "  /* derived */"
+        else:
+            comment = ""
+        lines.append(f"    {handle}.Init.{field['field']} = {field['rendered']};{comment}")
+    for extra in block.get("unmapped_config", []):
+        lines.append(f"    /* design.{extra['key']} = {extra['rendered']} "
+                     "(no HAL .Init field mapping; set the matching member manually) */")
+    for todo in block.get("param_todos", []):
+        lines.append(f"    /* TODO: set {handle}.Init.{todo['field']} -- {todo['hint']} */")
+    if not block.get("config_fields") and not block.get("param_todos"):
         lines.append(f"    /* TODO: no design config supplied for {block['name']}; "
                      "set its .Init fields (see the peripheral's HAL .Init members). */")
     lines += [f"    if ({block['hal_init_call']}(&{handle}) != HAL_OK)",

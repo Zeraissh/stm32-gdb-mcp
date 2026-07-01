@@ -89,7 +89,10 @@ def test_design_config_renders_hal_init_fields():
 
 def test_missing_config_becomes_todo():
     _, source, _ = _render()  # no design supplied
-    assert "TODO: no design config supplied for USART1" in source
+    # Mandatory fields are still filled from HAL defaults (a complete, valid struct)...
+    assert "huart1.Init.WordLength = UART_WORDLENGTH_8B;" in source
+    # ...but the genuine design decision (baud) stays an honest TODO, never guessed.
+    assert "TODO: set huart1.Init.BaudRate" in source
 
 
 def test_header_declares_handles_and_prototypes():

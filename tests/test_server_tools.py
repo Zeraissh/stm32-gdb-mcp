@@ -1510,20 +1510,23 @@ def test_design_then_describe_and_render_roundtrip():
     assert "__HAL_RCC_USART1_CLK_ENABLE" in designed["data"]["clocks"]
     assert {p["name"] for p in designed["data"]["peripherals"]} == {"I2C1", "USART1"}
 
-    # describe: the I2C1 peripheral has no config -> shows up as unresolved.
+    # describe: I2C1 still needs a variant-specific timing/speed decision -> unresolved.
     unresolved = json.loads(asyncio.run(handle_call_tool(
         "describe_framework", {"what": "unresolved", "session": sid}))[0].text)
-    assert any(u["type"] == "no_config" and u["peripheral"] == "I2C1"
+    assert any(u["type"] == "param_unresolved" and u["peripheral"] == "I2C1"
                for u in unresolved["data"]["unresolved"])
 
-    # render: concrete facts for USART1, honest TODO for I2C1.
+    # render: concrete facts for USART1, honest TODO for I2C1's timing.
     rendered = json.loads(asyncio.run(handle_call_tool(
         "render_framework", {"session": sid}))[0].text)
     assert rendered["ok"] is True
     source = next(f["content"] for f in rendered["data"]["files"] if f["path"] == "bsp_init.c")
     assert "GPIO_InitStruct.Alternate = GPIO_AF7_USART1;" in source
     assert "huart1.Init.BaudRate = 115200;" in source
-    assert "TODO: no design config supplied for I2C1" in source
+    # Mandatory UART fields are now filled from HAL defaults (complete, valid struct).
+    assert "huart1.Init.WordLength = UART_WORDLENGTH_8B;" in source
+    assert "hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;" in source
+    assert "set hi2c1.Init.Timing/ClockSpeed" in source
     assert rendered["data"]["todo_count"] > 0
 
 

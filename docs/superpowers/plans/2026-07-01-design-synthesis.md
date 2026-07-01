@@ -112,6 +112,35 @@ anything unresolvable is surfaced, never guessed.
 - [x] **Tier 3** — `acceptance_synth.py` + `synthesize_acceptance` tool welding D -> B1 -> C. (13 + 6 tests; suite 359 passed / 1 skipped)
 - [x] **Tier 3 (cont.)** — deterministic clock-tree solver (`clock_solver.py` + `solve_clock_tree`); render emits a real `SystemClock_Config`. (see `2026-07-01-clock-tree-solver.md`; suite 382 passed / 1 skipped)
 - [x] **Tier 3 (cont.)** — DB-derived GPIO alternate-function resolution (see below; 2 + 2 + 4 tests; suite 390 passed / 1 skipped)
+- [x] **Tier 3 (cont.)** — complete peripheral `.Init` structs: HAL-standard defaults + netlist-derived values (UART flow control, SPI NSS) + honest required-decision TODOs (see below; suite 395 passed / 1 skipped)
+
+## Tier 3 (cont.) — complete peripheral .Init structs
+
+Previously a peripheral init emitted only the fields the engineer explicitly
+passed, so `design={"USART1": {"baud": 115200}}` rendered a struct with
+`BaudRate` set but `WordLength` / `StopBits` / `Parity` / `Mode` / `OverSampling`
+**uninitialized** — a latent bug (garbage HAL config from stack junk). The init
+struct is now always complete and valid:
+
+- **HAL-standard defaults.** `framework_solver._KIND_PARAMS` gives each kind
+  (UART / SPI / I2C / TIM) its canonical `.Init` field order plus the default
+  value CubeMX itself emits for every mandatory member (UART 8N1 / 16x oversample
+  / TX+RX; SPI master / 8-bit / mode 0 / MSB; I2C 7-bit addressing / no stretch;
+  TIM up-counting / div1). Filling them is strictly more correct than leaving
+  members uninitialized — not a target-specific guess.
+- **Netlist-derived values.** UART `HwFlowCtl` is derived from the presence of
+  RTS/CTS pins on the board (`UART_HWCONTROL_RTS_CTS` / `_RTS` / `_CTS` / `_NONE`),
+  and SPI `NSS` from a hardware NSS/CS pin (`SPI_NSS_HARD_OUTPUT` vs `_SOFT`).
+  100% deterministic from the board model.
+- **Transparent provenance.** Every field carries a `source` of
+  `explicit` (engineer) / `derived` (board) / `default` (HAL standard), rendered
+  as a trailing `/* default */` or `/* derived: ... */` comment. Precedence is
+  explicit > derived > default, so an explicit value always wins.
+- **Honest required decisions.** Values with no safe universal default — UART
+  baud, TIM `Prescaler`/`Period`, I2C `Timing`/`ClockSpeed` (variant- and
+  clock-dependent) — are never invented. When unset they surface as
+  `param_unresolved` and render as a `TODO: set <handle>.Init.<field> -- <hint>`.
+  Kinds with no default table (ADC/generic) keep the plain `no_config` hole.
 
 ## Tier 3 (cont.) — DB-derived GPIO alternate-function numbers
 

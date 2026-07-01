@@ -6,9 +6,14 @@ pin must be configured, and which peripheral init blocks to emit — all in
 dependency order. This is the "framework design + code writing" stage that feeds
 the bounded acceptance loop (Pillar C).
 
-Everything derivable from the board model alone is 100% deterministic. Values that
-genuinely need target-specific data (a GPIO alternate-function number) or a human
-design decision (a baud rate) are **never invented**: they surface in
+Everything derivable from the board model alone is 100% deterministic. Mandatory
+HAL ``.Init`` members are filled with the standard defaults CubeMX itself emits
+(so the generated init struct is complete and valid, never a half-initialized
+struct), and a few values are derived straight from the netlist (UART hardware
+flow control from the RTS/CTS pins, SPI NSS management from a hardware NSS pin).
+Every field is tagged ``explicit`` / ``derived`` / ``default`` so nothing looks
+hand-tuned. Values that genuinely need a human design decision (a baud rate, a
+timer period, an I2C bus timing) are **never invented**: they surface in
 ``unresolved`` and, when rendered, become clearly marked ``TODO`` holes. A senior
 engineer gets correct scaffolding, not a plausible-looking guess.
 
@@ -190,6 +195,109 @@ def _kind_meta(kind: str) -> dict:
             "init_suffix": "Init", "hal_init_call": generic["hal_init_call"], "fields": {}}
 
 
+# --- Standard .Init parameters (defaults + derivations + required decisions) --
+
+# For each kind: the canonical HAL ``.Init`` field order, the HAL-standard default
+# for every mandatory field (the values CubeMX emits for a fresh peripheral), and
+# the fields that are genuine *design decisions* with no safe universal default.
+# Filling defaults makes the generated init struct complete and valid instead of
+# leaving members uninitialized; every defaulted field is tagged ``default`` so it
+# never looks hand-tuned. Required fields, when the engineer does not supply them,
+# stay honest ``TODO`` holes — never guessed.
+_KIND_PARAMS = {
+    "uart": {
+        "order": ["BaudRate", "WordLength", "StopBits", "Parity", "Mode", "HwFlowCtl", "OverSampling"],
+        "defaults": {
+            "WordLength": "UART_WORDLENGTH_8B",
+            "StopBits": "UART_STOPBITS_1",
+            "Parity": "UART_PARITY_NONE",
+            "Mode": "UART_MODE_TX_RX",
+            "OverSampling": "UART_OVERSAMPLING_16",
+        },
+        "required": [{"field": "BaudRate", "keys": ["baud"], "hint": "bit/s, e.g. 115200"}],
+    },
+    "spi": {
+        "order": ["Mode", "Direction", "DataSize", "CLKPolarity", "CLKPhase", "NSS",
+                  "BaudRatePrescaler", "FirstBit", "TIMode", "CRCCalculation", "CRCPolynomial"],
+        "defaults": {
+            "Mode": "SPI_MODE_MASTER",
+            "Direction": "SPI_DIRECTION_2LINES",
+            "DataSize": "SPI_DATASIZE_8BIT",
+            "CLKPolarity": "SPI_POLARITY_LOW",
+            "CLKPhase": "SPI_PHASE_1EDGE",
+            "BaudRatePrescaler": "SPI_BAUDRATEPRESCALER_16",
+            "FirstBit": "SPI_FIRSTBIT_MSB",
+            "TIMode": "SPI_TIMODE_DISABLE",
+            "CRCCalculation": "SPI_CRCCALCULATION_DISABLE",
+            "CRCPolynomial": "10",
+        },
+        "required": [],
+    },
+    "i2c": {
+        "order": ["Timing", "ClockSpeed", "DutyCycle", "OwnAddress1", "AddressingMode",
+                  "DualAddressMode", "OwnAddress2", "GeneralCallMode", "NoStretchMode"],
+        "defaults": {
+            "OwnAddress1": "0",
+            "AddressingMode": "I2C_ADDRESSINGMODE_7BIT",
+            "DualAddressMode": "I2C_DUALADDRESS_DISABLE",
+            "OwnAddress2": "0",
+            "GeneralCallMode": "I2C_GENERALCALL_MODE_DISABLE",
+            "NoStretchMode": "I2C_NOSTRETCH_DISABLE",
+        },
+        "required": [{"field": "Timing/ClockSpeed", "keys": ["timing", "clock_speed"],
+                      "hint": "I2C_Timing (v2 peripheral) or ClockSpeed+DutyCycle (v1) -- "
+                              "depends on your I2C version and kernel clock"}],
+    },
+    "timer": {
+        "order": ["Prescaler", "CounterMode", "Period", "ClockDivision", "AutoReloadPreload"],
+        "defaults": {
+            "CounterMode": "TIM_COUNTERMODE_UP",
+            "ClockDivision": "TIM_CLOCKDIVISION_DIV1",
+            "AutoReloadPreload": "TIM_AUTORELOADPRELOAD_DISABLE",
+        },
+        "required": [
+            {"field": "Prescaler", "keys": ["prescaler"], "hint": "APBx timer clock / desired tick rate - 1"},
+            {"field": "Period", "keys": ["period"], "hint": "counter ticks per update event - 1 (ARR)"},
+        ],
+    },
+}
+
+
+def _derive_uart_params(pins: list[dict]) -> dict:
+    """Derive UART hardware flow control from the RTS/CTS pins on the netlist."""
+    signals = {(p.get("signal") or "").upper() for p in pins}
+    rts, cts = "RTS" in signals, "CTS" in signals
+    if rts and cts:
+        flow, note = "UART_HWCONTROL_RTS_CTS", "RTS and CTS pins present on the netlist"
+    elif rts:
+        flow, note = "UART_HWCONTROL_RTS", "only an RTS pin present on the netlist"
+    elif cts:
+        flow, note = "UART_HWCONTROL_CTS", "only a CTS pin present on the netlist"
+    else:
+        flow, note = "UART_HWCONTROL_NONE", "no RTS/CTS pins on the netlist"
+    return {"HwFlowCtl": {"value": flow, "note": f"flow control: {note}"}}
+
+
+def _derive_spi_params(pins: list[dict]) -> dict:
+    """Derive SPI NSS management from the presence of a hardware NSS/CS pin."""
+    signals = {(p.get("signal") or "").upper() for p in pins}
+    if "NSS" in signals or "CS" in signals:
+        return {"NSS": {"value": "SPI_NSS_HARD_OUTPUT", "note": "hardware NSS pin present (master-mode assumption)"}}
+    return {"NSS": {"value": "SPI_NSS_SOFT", "note": "no NSS pin on the netlist"}}
+
+
+_DERIVERS = {"uart": _derive_uart_params, "spi": _derive_spi_params}
+
+
+def _count_sources(config_fields: list[dict]) -> dict:
+    counts = {"explicit": 0, "derived": 0, "default": 0}
+    for field in config_fields:
+        source = field.get("source")
+        if source in counts:
+            counts[source] += 1
+    return counts
+
+
 # --- Alternate-function lookup ----------------------------------------------
 
 
@@ -328,7 +436,11 @@ def build_framework_plan(board: dict, design: dict | None = None, af_map: dict |
     for name in sorted(peripherals):
         block = _build_peripheral_block(name, peripherals[name], design.get(name))
         peripheral_blocks.append(block)
-        if not block["has_config"]:
+        for todo in block["param_todos"]:
+            unresolved.append({"type": "param_unresolved", "peripheral": name, "field": todo["field"],
+                               "detail": f"{name}.Init.{todo['field']}: {todo['hint']} "
+                                         f"(supply via design[{name!r}])."})
+        if not block["param_todos"] and not block["config_fields"]:
             unresolved.append({"type": "no_config", "peripheral": name,
                                "detail": f"{name}: no design config supplied; init parameters left as TODO."})
 
@@ -356,17 +468,52 @@ def _build_peripheral_block(name: str, info: dict, config: dict | None) -> dict:
     meta = _kind_meta(kind)
     handle = f"{meta['handle_prefix']}{_peripheral_index(name).lower() or name.lower()}"
     config = config or {}
-    fields = meta.get("fields", {})
-    config_fields = []
+    fields_map = meta.get("fields", {})
+    params = _KIND_PARAMS.get(kind, {})
+    order = params.get("order", [])
+    defaults = params.get("defaults", {})
+    required = params.get("required", [])
+
+    # Explicit engineer values: map each design key to its HAL .Init field, or keep
+    # it as an unmapped pass-through comment when there is no known mapping.
+    explicit: dict = {}
+    unmapped: list[dict] = []
     for key, value in config.items():
-        hal_field = fields.get(key)
+        hal_field = fields_map.get(key)
+        if hal_field:
+            explicit[hal_field] = {"value": value, "source_key": key}
+        else:
+            unmapped.append({"key": key, "value": value, "rendered": _render_value(value)})
+
+    deriver = _DERIVERS.get(kind)
+    derived = deriver(info["pins"]) if deriver else {}
+
+    # Required design decisions the engineer must still make (no safe default).
+    param_todos = [{"field": req["field"], "hint": req["hint"]}
+                   for req in required if not any(k in config for k in req["keys"])]
+
+    # Assemble ordered, deduped fields with precedence explicit > derived > default.
+    config_fields: list[dict] = []
+    seen: set = set()
+
+    def _emit(hal_field, value, source, source_key=None, note=None):
         config_fields.append({
-            "field": hal_field or key,
-            "value": value,
-            "rendered": _render_value(value),
-            "source_key": key,
-            "mapped": hal_field is not None,
+            "field": hal_field, "value": value, "rendered": _render_value(value),
+            "source": source, "source_key": source_key, "mapped": True, "note": note,
         })
+        seen.add(hal_field)
+
+    for hal_field in list(order) + [f for f in explicit if f not in order]:
+        if hal_field in seen:
+            continue
+        if hal_field in explicit:
+            _emit(hal_field, explicit[hal_field]["value"], "explicit",
+                  source_key=explicit[hal_field]["source_key"])
+        elif hal_field in derived:
+            _emit(hal_field, derived[hal_field]["value"], "derived", note=derived[hal_field]["note"])
+        elif hal_field in defaults:
+            _emit(hal_field, defaults[hal_field], "default")
+
     return {
         "name": name,
         "kind": kind,
@@ -379,7 +526,10 @@ def _build_peripheral_block(name: str, info: dict, config: dict | None) -> dict:
         "pins": info["pins"],
         "config": config,
         "config_fields": config_fields,
-        "has_config": bool(config),
+        "unmapped_config": unmapped,
+        "param_todos": param_todos,
+        "config_sources": _count_sources(config_fields),
+        "has_config": bool(config_fields),
     }
 
 
@@ -400,7 +550,9 @@ def summarize_framework(plan: dict) -> dict:
         "mcu": plan.get("mcu"),
         "clocks": [c.get("hal_macro") for c in plan.get("clocks", [])],
         "peripherals": [{"name": b["name"], "kind": b["kind"], "handle": b["handle"],
-                         "pin_count": len(b["pins"]), "has_config": b["has_config"]}
+                         "pin_count": len(b["pins"]), "has_config": b["has_config"],
+                         "config_sources": b.get("config_sources", {}),
+                         "param_todo_count": len(b.get("param_todos", []))}
                         for b in plan.get("peripherals", [])],
         "init_order": plan.get("init_order", []),
         "unresolved_count": plan.get("stats", {}).get("unresolved_count", 0),
