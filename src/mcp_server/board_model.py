@@ -233,3 +233,48 @@ def _pin_sort_key(pin: str | None) -> tuple:
     if pin.isdigit():
         return (0, int(pin))
     return (1, pin)
+
+
+# --- Views for the import_netlist / describe_board tools --------------------
+
+
+def peripherals_in_use(board: dict) -> list[str]:
+    """Return the sorted distinct peripherals the MCU pins are assigned to."""
+    mcu = board.get("mcu")
+    if not mcu:
+        return []
+    names = {p["function"]["peripheral"] for p in mcu.get("pins", []) if p.get("function")}
+    return sorted(names)
+
+
+def summarize_board(board: dict) -> dict:
+    """Compact, human-oriented overview of a BoardDescription."""
+    mcu = board.get("mcu")
+    mcu_summary = None
+    if mcu:
+        mcu_summary = {k: mcu.get(k) for k in ("ref", "part", "part_normalized", "family", "line")}
+    return {
+        "source": board.get("source"),
+        "format": board.get("format"),
+        "mcu": mcu_summary,
+        "peripherals": peripherals_in_use(board),
+        "power_nets": board.get("power_nets"),
+        "stats": board.get("stats"),
+        "warnings": board.get("warnings", []),
+    }
+
+
+def board_view(board: dict, what: str = "summary") -> dict | None:
+    """Return a filtered view of a BoardDescription, or ``None`` for an unknown view."""
+    if what == "summary":
+        return summarize_board(board)
+    if what == "pins":
+        mcu = board.get("mcu")
+        return {"pins": mcu.get("pins", []) if mcu else []}
+    if what == "nets":
+        return {"nets": board.get("nets", [])}
+    if what == "power":
+        return {"power_nets": board.get("power_nets")}
+    if what == "peripherals":
+        return {"peripherals": peripherals_in_use(board)}
+    return None

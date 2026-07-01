@@ -1,9 +1,12 @@
 from mcp_server.board_model import (
+    board_view,
     build_board_description,
     classify_power_net,
     infer_pin_function,
     is_mcu_value,
     normalize_mcu_part,
+    peripherals_in_use,
+    summarize_board,
 )
 
 
@@ -114,3 +117,40 @@ def test_build_board_description_warns_on_multiple_mcu_candidates():
 
     assert board["mcu"]["ref"] == "U1"
     assert any("Multiple MCU candidates" in w for w in board["warnings"])
+
+
+def _sample_board():
+    components = [{"ref": "U1", "value": "STM32L431CBT6", "footprint": "", "pins": {}}]
+    nets = [
+        {"name": "/USART1_TX", "nodes": [{"ref": "U1", "pin": "42", "port_pin": "PA9"}]},
+        {"name": "/I2C1_SCL", "nodes": [{"ref": "U1", "pin": "45", "port_pin": "PB6"}]},
+        {"name": "GND", "nodes": [{"ref": "U1", "pin": "8"}]},
+        {"name": "+3V3", "nodes": [{"ref": "U1", "pin": "1"}]},
+    ]
+    return build_board_description(components, nets, source="b.net", fmt="kicad")
+
+
+def test_peripherals_in_use_is_sorted_and_deduped():
+    assert peripherals_in_use(_sample_board()) == ["I2C1", "USART1"]
+    assert peripherals_in_use({"mcu": None}) == []
+
+
+def test_summarize_board():
+    summary = summarize_board(_sample_board())
+
+    assert summary["mcu"]["family"] == "STM32L4"
+    assert summary["mcu"]["line"] == "STM32L431"
+    assert summary["peripherals"] == ["I2C1", "USART1"]
+    assert summary["power_nets"] == {"power": ["+3V3"], "ground": ["GND"]}
+    assert summary["stats"]["mcu_pin_count"] == 4
+
+
+def test_board_view_dispatches_by_what():
+    board = _sample_board()
+
+    assert board_view(board, "summary") == summarize_board(board)
+    assert board_view(board, "pins")["pins"] == board["mcu"]["pins"]
+    assert board_view(board, "nets") == {"nets": board["nets"]}
+    assert board_view(board, "power")["power_nets"]["ground"] == ["GND"]
+    assert board_view(board, "peripherals") == {"peripherals": ["I2C1", "USART1"]}
+    assert board_view(board, "bogus") is None

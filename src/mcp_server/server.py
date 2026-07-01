@@ -15,6 +15,7 @@ from mcp.types import TextContent, Tool
 
 from . import build as build_mod
 from . import swo_config
+from .board_model import board_view, summarize_board
 from .composites import capture_state, debug_until, flash_and_run
 from .debug_config import (
     load_debug_config as load_debug_config_file,
@@ -50,6 +51,7 @@ from .issue_reporter import DEFAULT_REPO, build_issue_body, file_issue, issue_fi
 from .log_reader import FileLogReader, ProcessLogReader, SerialLogReader
 from .memory_guard import MemoryWriteGuard
 from .metrics import compute_metrics
+from .netlist_parser import load_netlist_file, parse_netlist
 from .openocd_config import find_openocd_scripts, suggest_server_args
 from .project_inspector import inspect_project
 from .reliability import retry_call
@@ -149,6 +151,7 @@ uart_log_reader = SerialLogReader()
 memory_guard = MemoryWriteGuard()
 session_journal = SessionJournal()
 _last_session = {"server_type": None, "server_args": []}
+_board = {"current": None}  # imported BoardDescription (netlist -> BSP model) for the default session
 _reported_issues = {}  # fingerprint -> issue url (in-session dedup)
 
 # Phase 3: named per-target sessions for multi-board / CI. The "default" session reuses
@@ -157,7 +160,9 @@ _reported_issues = {}  # fingerprint -> issue url (in-session dedup)
 session_manager = SessionManager()
 _SESSION_ATTRS = ("gdb_manager", "gdb_client", "svd_parser", "variable_tracker",
                   "debug_profile", "freertos_inspector", "rtt_log_reader", "swo_log_reader",
-                  "swo_file_reader", "uart_log_reader", "memory_guard", "last_session")
+                  "swo_file_reader", "uart_log_reader", "memory_guard", "last_session", "board")
+# Session attrs whose "default" backing global is named differently from the attribute.
+_DEFAULT_SESSION_GLOBALS = {"last_session": "_last_session", "board": "_board"}
 
 
 def _resolve_session(arguments: dict):
@@ -165,7 +170,7 @@ def _resolve_session(arguments: dict):
     sid = arguments.get("session") or "default"
     if sid == "default":
         g = globals()
-        return types.SimpleNamespace(id="default", **{a: g[a if a != "last_session" else "_last_session"]
+        return types.SimpleNamespace(id="default", **{a: g[_DEFAULT_SESSION_GLOBALS.get(a, a)]
                                                        for a in _SESSION_ATTRS})
     return session_manager.get(sid)
 
@@ -1305,6 +1310,36 @@ async def handle_list_tools() -> list[Tool]:
                     "enable": {"type": "boolean", "description": "Enable DWT trace before sampling (default true)."}
                 }
             }
+        ),
+        Tool(
+            name="import_netlist",
+            description="Parse a schematic netlist (KiCad .net today) into a machine-readable "
+                        "BoardDescription: the MCU part/family/line, a per-pin map (package pin -> "
+                        "port pin -> net -> inferred peripheral function), and the power/ground nets. "
+                        "This is the input contract for automated framework design. Pass 'path' or "
+                        "'text'. The result is stored on the session; read views with describe_board.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path to a netlist file (e.g. board.net)."},
+                    "text": {"type": "string", "description": "Netlist contents inline (alternative to path)."},
+                    "format": {"type": "string", "description": "Netlist format: auto (default) or kicad."},
+                    "session": {"type": "string", "description": "Target session id (default 'default')."}
+                }
+            }
+        ),
+        Tool(
+            name="describe_board",
+            description="Read the BoardDescription imported by import_netlist. what=summary (MCU + "
+                        "peripherals + counts), pins (full MCU pin map), nets, power (power/ground "
+                        "nets), or peripherals (distinct peripherals in use).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "what": {"type": "string", "description": "summary|pins|nets|power|peripherals (default summary)."},
+                    "session": {"type": "string", "description": "Target session id (default 'default')."}
+                }
+            }
         )
     ]
     # Compact mode (STM32_GDB_MCP_COMPACT=1): expose only a small core so nothing gets
@@ -1498,6 +1533,7 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
     swo_file_reader = _sess.swo_file_reader
     uart_log_reader = _sess.uart_log_reader
     _last_session = _sess.last_session
+    session_board = _sess.board
 
     try:
         # Action-dispatched families: translate to the underlying tool and reuse its handler.
@@ -2427,6 +2463,40 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                 actions = ["frame", "disassemble"]
             return [content_success({"message": msg, **profile},
                                     suggested_next_actions=actions)]
+
+        elif name == "import_netlist":
+            text = arguments.get("text")
+            path = arguments.get("path")
+            if not text and not path:
+                return [content_error(
+                    "import_netlist needs 'path' or 'text'.", code="missing_argument",
+                    suggested_next_actions=["import_netlist(path='board.net')"])]
+            fmt = arguments.get("format", "auto")
+            try:
+                parsed = (parse_netlist(text, fmt=fmt, source="<text>") if text
+                          else load_netlist_file(path, fmt=fmt))
+            except (ValueError, OSError) as e:
+                return [content_error(
+                    str(e), code="netlist_parse_error",
+                    suggested_next_actions=["import_netlist with format=kicad"])]
+            session_board["current"] = parsed
+            return [content_success(
+                summarize_board(parsed),
+                suggested_next_actions=["describe_board (what=pins)", "describe_board (what=peripherals)"])]
+
+        elif name == "describe_board":
+            parsed = session_board.get("current")
+            if not parsed:
+                return [content_error(
+                    "No board imported for this session. Run import_netlist first.", code="no_board",
+                    suggested_next_actions=["import_netlist(path='board.net')"])]
+            what = arguments.get("what", "summary")
+            view = board_view(parsed, what)
+            if view is None:
+                return [content_error(
+                    f"Unknown view '{what}'.", code="invalid_argument",
+                    suggested_next_actions=["describe_board (what=summary|pins|nets|power|peripherals)"])]
+            return [content_success(view, suggested_next_actions=["describe_board (what=pins)"])]
 
         else:
             hint = _RENAMED_TOOLS.get(name)

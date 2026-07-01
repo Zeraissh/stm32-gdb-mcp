@@ -133,7 +133,7 @@ T1 (this change) → T2 → T3 → T4. Each capability committed independently, 
 existing history.
 
 ## Status / 状态
-- [~] **Tier 1** — `board_model.py` + `netlist_parser.py` + tests. *In progress (this change).*
-- [ ] **Tier 2** — `import_netlist` / `describe_board`, session persistence.
+- [x] **Tier 1** — `board_model.py` + `netlist_parser.py` + tests. *Done, committed.*
+- [x] **Tier 2** — `import_netlist` / `describe_board` tools + per-session persistence + tests. *Done.*
 - [ ] **Tier 3** — AF-legality validation + `validate_board`.
 - [ ] **Tier 4** — Altium / OrCAD / CSV importers.

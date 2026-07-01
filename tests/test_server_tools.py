@@ -1163,3 +1163,58 @@ def test_blocking_dispatch_does_not_block_event_loop(monkeypatch):
     # If dispatch ran inline on the loop, the ticker could not advance during the 0.2s
     # blocking sleep. Run off-loop it ticks ~20 times; allow generous slack.
     assert ticks > 5
+
+
+_KICAD_NETLIST = (
+    '(export (version "E")'
+    '  (components'
+    '    (comp (ref "U1") (value "STM32L431CBT6") (footprint "LQFP-48"))'
+    '    (comp (ref "J1") (value "USB_C") (footprint "Conn")))'
+    '  (nets'
+    '    (net (code "1") (name "/USART1_TX")'
+    '      (node (ref "U1") (pin "42") (pinfunction "PA9"))'
+    '      (node (ref "J1") (pin "3")))'
+    '    (net (code "2") (name "/I2C1_SCL")'
+    '      (node (ref "U1") (pin "45") (pinfunction "PB6")))'
+    '    (net (code "3") (name "GND") (node (ref "U1") (pin "8")))))'
+)
+
+
+def test_server_exposes_netlist_pipeline_tools():
+    tool_names = {tool.name for tool in asyncio.run(handle_list_tools())}
+
+    assert "import_netlist" in tool_names
+    assert "describe_board" in tool_names
+
+
+def test_import_netlist_then_describe_board_roundtrip():
+    imported = asyncio.run(handle_call_tool("import_netlist", {"text": _KICAD_NETLIST, "session": "board-import"}))
+    payload = json.loads(imported[0].text)
+
+    assert payload["ok"] is True
+    assert payload["data"]["mcu"]["line"] == "STM32L431"
+    assert payload["data"]["peripherals"] == ["I2C1", "USART1"]
+
+    pins = asyncio.run(handle_call_tool("describe_board", {"what": "pins", "session": "board-import"}))
+    pins_payload = json.loads(pins[0].text)
+
+    assert pins_payload["ok"] is True
+    tx = next(p for p in pins_payload["data"]["pins"] if p["net"] == "/USART1_TX")
+    assert tx["port_pin"] == "PA9"
+    assert tx["function"] == {"peripheral": "USART1", "signal": "TX"}
+
+
+def test_import_netlist_requires_path_or_text():
+    result = asyncio.run(handle_call_tool("import_netlist", {"session": "board-missing"}))
+    payload = json.loads(result[0].text)
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "missing_argument"
+
+
+def test_describe_board_without_import_errors():
+    result = asyncio.run(handle_call_tool("describe_board", {"session": "board-empty"}))
+    payload = json.loads(result[0].text)
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "no_board"

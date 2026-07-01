@@ -2,6 +2,10 @@
 
 ## Unreleased / 未发布
 
+### Spec-to-silicon pipeline / 从规格到芯片流水线 (Pillar A)
+
+- Added `import_netlist` and `describe_board`: parse a schematic netlist (KiCad `.net`) into a machine-readable BoardDescription — MCU part/family/line, a per-pin map (package pin → port pin → net → inferred peripheral function), and power/ground nets — the input contract for automated framework design. / 新增 `import_netlist` 与 `describe_board`：将原理图网表（KiCad `.net`）解析为机器可读的 BoardDescription——MCU 型号/族系/产品线、逐脚映射（封装引脚 → 端口引脚 → 网络 → 推断的外设功能）以及电源/地网络——作为自动框架设计的输入契约。
+
 ### Toolchain & robustness / 工具链与健壮性
 
 - Added `build_firmware`: build with Keil uVision (UV4), CMake, make, or a custom command; Keil `.axf` (ELF/DWARF) debugs through the existing tools like a `.elf`. / 新增 `build_firmware`,支持 Keil uVision(UV4)、CMake、make 或自定义命令构建;Keil 的 `.axf` 与 `.elf` 一样可被现有工具调试。

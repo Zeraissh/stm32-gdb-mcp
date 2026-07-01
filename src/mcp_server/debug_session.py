@@ -39,6 +39,7 @@ class DebugSession:
         self.uart_log_reader = SerialLogReader()
         self.memory_guard = MemoryWriteGuard()
         self.last_session = {"server_type": None, "server_args": []}
+        self.board = {"current": None}  # imported BoardDescription (netlist -> BSP model)
 
     def teardown(self):
         for obj, method in ((self.gdb_client, "stop_gdb"), (self.gdb_manager, "stop"),
