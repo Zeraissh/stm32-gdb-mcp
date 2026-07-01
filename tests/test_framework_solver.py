@@ -393,11 +393,12 @@ def test_dma_unmapped_peripheral_is_surfaced_not_guessed():
 
 
 def test_dma_stream_conflict_is_detected(monkeypatch):
-    from mcp_server import dma_solver
+    from mcp_server import device_packs
     # Force ADC1 onto USART1's rx channel so the two collide on DMA1_Channel5.
-    patched = dict(dma_solver._DMA_MAP["STM32L4"]["ADC1"])
+    l4_map = device_packs.get_pack("STM32L4")["dma"]["map"]
+    patched = dict(l4_map["ADC1"])
     patched["rx"] = (1, 5, 0)
-    monkeypatch.setitem(dma_solver._DMA_MAP["STM32L4"], "ADC1", patched)
+    monkeypatch.setitem(l4_map, "ADC1", patched)
 
     plan = build_framework_plan(_board(_mixed_pins()),
                                 design={"USART1": {"dma": "rx"}, "ADC1": {"dma": True}})

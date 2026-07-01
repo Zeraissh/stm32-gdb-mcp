@@ -14,9 +14,13 @@ the DMA stream IRQ vector is *derived* from the resolved stream by the universal
 table -- other peripherals, other families, receive-only mismatches -- is surfaced
 as ``dma_unresolved`` with a reason, never a guessed stream.
 
-Standalone pure module (no imports from the rest of the package): everything is
-plain dicts so a result serializes straight through the JSON envelope.
+The request-routing facts (DMA architecture + per-peripheral stream/channel table)
+come from the device-pack registry (``device_packs``), so covering a new family is
+"supply a verified pack", never a hardcoded guess. Otherwise a pure module:
+everything is plain dicts so a result serializes straight through the JSON envelope.
 """
+
+from . import device_packs
 
 # Design keys (in design[name]) that control DMA generation; popped before the
 # remaining config is mapped to HAL .Init fields.
@@ -24,32 +28,6 @@ DMA_KEYS = ("dma", "dma_priority")
 
 _DEFAULT_PREEMPT = 5
 _DEFAULT_SUB = 0
-
-# Per-family DMA architecture. ``unit`` is the addressable resource in the Instance
-# name (Stream on F4, Channel on L4); ``select_field`` is the HAL .Init member that
-# routes the request, with ``select_prefix`` its macro stem.
-_DMA_ARCH = {
-    "STM32F4": {"unit": "Stream", "select_field": "Channel", "select_prefix": "DMA_CHANNEL_"},
-    "STM32L4": {"unit": "Channel", "select_field": "Request", "select_prefix": "DMA_REQUEST_"},
-}
-
-# Verified request routing, keyed family -> peripheral -> direction -> (controller,
-# unit, selector). F4 selector is the channel number; L4 selector is the CSELR
-# request number. Cross-checked against RM0090 (F4) / RM0394 (L4) + CubeMX output.
-_DMA_MAP = {
-    "STM32F4": {
-        "USART1": {"rx": (2, 2, 4), "tx": (2, 7, 4)},
-        "SPI1": {"rx": (2, 0, 3), "tx": (2, 3, 3)},
-        "I2C1": {"rx": (1, 0, 1), "tx": (1, 6, 1)},
-        "ADC1": {"rx": (2, 4, 0)},
-    },
-    "STM32L4": {
-        "USART1": {"rx": (1, 5, 2), "tx": (1, 4, 2)},
-        "SPI1": {"rx": (1, 2, 1), "tx": (1, 3, 1)},
-        "I2C1": {"rx": (1, 7, 3), "tx": (1, 6, 3)},
-        "ADC1": {"rx": (1, 1, 0)},
-    },
-}
 
 # Peripheral kinds that support the DMA templates in this tier, and their natural
 # transfer directions.
@@ -126,11 +104,11 @@ def _stream_nvic(instance):
 
 def _resolve_stream(name, kind, family, direction, priority_macro):
     """Build one DMA stream dict for a direction, or ``None`` when unmapped."""
-    table = _DMA_MAP.get(family, {}).get(name, {})
+    table = device_packs.dma_map(family).get(name, {})
     mapping = table.get(direction)
-    if not mapping:
+    arch = device_packs.dma_arch(family)
+    if not mapping or not arch:
         return None
-    arch = _DMA_ARCH[family]
     controller, unit, selector = mapping
     instance = f"DMA{controller}_{arch['unit']}{unit}"
     align = _DATA_ALIGN.get(kind, "BYTE")
@@ -154,11 +132,13 @@ def _resolve_stream(name, kind, family, direction, priority_macro):
 def _unresolved_reason(name, kind, family):
     if kind not in _NATURAL_DIRECTIONS:
         return f"{name}: DMA templating is not supported for {kind} peripherals in this tier."
-    if family not in _DMA_MAP:
+    families = device_packs.dma_families()
+    if family not in families:
         return (f"DMA request mapping for {family or 'this device'} is not in the built-in "
-                "table (only STM32F4 / STM32L4 are modelled today).")
+                f"table (modelled: {', '.join(families) or 'none'}); load a device pack.")
+    known = ", ".join(sorted(device_packs.dma_map(family))) or "none"
     return (f"No DMA request mapping known for {name} on {family or 'this device'} "
-            "(built-in table covers USART1 / SPI1 / I2C1 / ADC1).")
+            f"(pack covers {known}).")
 
 
 def build_dma(name, kind, family, dma=None, dma_priority=None):

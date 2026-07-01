@@ -15,7 +15,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
 from . import build as build_mod
-from . import swo_config
+from . import device_packs, swo_config
 from .acceptance_eval import GdbAcceptanceReader, evaluate_acceptance
 from .acceptance_model import summarize_acceptance, validate_acceptance_spec
 from .acceptance_synth import (
@@ -1625,6 +1625,24 @@ async def handle_list_tools() -> list[Tool]:
                     "session": {"type": "string", "description": "Target session id (default 'default')."}
                 }
             }
+        ),
+        Tool(
+            name="load_device_pack",
+            description="Register a verified device-fact pack (Pillar F) so the deterministic solvers cover a new "
+                        "STM32 family: its DMA request routing, irregular NVIC vectors, clock PLL profile, and "
+                        "timer bus/width. Facts are DATA, never guessed -- STM32F4/L4 ship built-in; add a family "
+                        "by supplying a validated pack (schema 'stm32-device-pack/v1') via path= (a JSON file) or "
+                        "inline pack=. Call with no arguments to report current coverage. Honest by design: a "
+                        "malformed pack is rejected with the list of problems and never half-loaded; shadowing a "
+                        "built-in family needs allow_override=true.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path to a device-pack JSON file to load and register."},
+                    "pack": {"type": "object", "description": "Inline device-pack object (takes precedence over path)."},
+                    "allow_override": {"type": "boolean", "description": "Permit shadowing a built-in family pack (default false)."}
+                }
+            }
         )
     ]
     # Compact mode (STM32_GDB_MCP_COMPACT=1): expose only a small core so nothing gets
@@ -3202,6 +3220,42 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                 "results": report["results"],
                 "loaded": loaded,
             }, suggested_next_actions=["render_framework", "describe_framework (what=unresolved)"])]
+
+        elif name == "load_device_pack":
+            pack_arg = arguments.get("pack")
+            path = arguments.get("path")
+            allow_override = bool(arguments.get("allow_override"))
+            if pack_arg is None and not path:
+                # No pack supplied -> report which families the deterministic solvers currently cover.
+                return [content_success({
+                    "action": "coverage",
+                    "coverage": device_packs.coverage(),
+                }, suggested_next_actions=[
+                    "load_device_pack(path='pack.json')", "load_device_pack(pack={...})"])]
+            if pack_arg is not None and not isinstance(pack_arg, dict):
+                return [content_error(
+                    "pack must be a device-pack object.", code="invalid_argument",
+                    suggested_next_actions=["load_device_pack(path='pack.json')"])]
+            if pack_arg is None:
+                pack_arg, read_problems = device_packs.load_pack(path)
+                if pack_arg is None:
+                    return [content_error(
+                        "Could not read device pack: " + "; ".join(read_problems), code="pack_unreadable",
+                        raw_response={"problems": read_problems},
+                        suggested_next_actions=["load_device_pack(path=<valid json file>)"])]
+            problems = device_packs.register_pack(pack_arg, allow_override=allow_override)
+            if problems:
+                return [content_error(
+                    "Device pack rejected: " + "; ".join(problems), code="invalid_pack",
+                    raw_response={"problems": problems},
+                    suggested_next_actions=["Fix the reported problems and retry"])]
+            return [content_success({
+                "action": "registered",
+                "family": pack_arg.get("family"),
+                "sections": sorted(k for k in ("clock", "dma", "nvic", "timer") if k in pack_arg),
+                "coverage": device_packs.coverage(),
+            }, suggested_next_actions=[
+                "design_framework", "solve_clock_tree", "synthesize_acceptance"])]
 
         else:
             hint = _RENAMED_TOOLS.get(name)

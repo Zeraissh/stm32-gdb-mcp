@@ -3,6 +3,7 @@ import json
 import threading
 import time
 
+from mcp_server import device_packs
 from mcp_server.server import handle_call_tool, handle_list_tools
 from mcp_server.tool_response import content_success
 
@@ -2135,3 +2136,87 @@ def test_design_framework_bad_db_path_is_honest(tmp_path):
         {"db_path": str(tmp_path / "nope.json"), "session": sid}))[0].text)
     assert result["ok"] is False
     assert result["error"]["code"] == "invalid_db"
+
+
+# --- load_device_pack (Pillar F: data-driven device facts) -------------------
+
+def _pack_for(family="STM32ZZ"):
+    return {
+        "schema": device_packs.SCHEMA,
+        "family": family,
+        "clock": {"profiles": [
+            {"match_lines": [family], "profile": {"family": family, "max_sysclk_hz": 80_000_000}}]},
+        "dma": {
+            "arch": {"unit": "Stream", "select_field": "Channel", "select_prefix": "DMA_CHANNEL_"},
+            "map": {"SPI1": {"rx": [2, 0, 3], "tx": [2, 3, 3]}}},
+        "nvic": {"i2c_dual": True, "irq": {"TIM2": ["TIM2_IRQn"]}},
+        "timer": {"apb2": ["TIM1"], "bits32": ["TIM2"]},
+    }
+
+
+def test_load_device_pack_reports_coverage():
+    payload = _payload(asyncio.run(handle_call_tool("load_device_pack", {})))
+    assert payload["ok"] is True
+    assert payload["data"]["action"] == "coverage"
+    assert "STM32F4" in payload["data"]["coverage"]["builtin"]
+    assert "STM32L4" in payload["data"]["coverage"]["builtin"]
+
+
+def test_load_device_pack_registers_family_and_drives_synthesis():
+    try:
+        payload = _payload(asyncio.run(handle_call_tool("load_device_pack", {"pack": _pack_for()})))
+        assert payload["ok"] is True
+        assert payload["data"]["action"] == "registered"
+        assert payload["data"]["family"] == "STM32ZZ"
+        assert payload["data"]["sections"] == ["clock", "dma", "nvic", "timer"]
+        # The freshly-registered family is now a first-class deterministic fact source.
+        assert "STM32ZZ" in device_packs.dma_families()
+        assert device_packs.nvic_table("STM32ZZ")["TIM2"] == ["TIM2_IRQn"]
+    finally:
+        device_packs.reset_external()
+
+
+def test_load_device_pack_rejects_invalid_pack():
+    try:
+        bad = {"schema": "wrong", "family": "NRF52"}
+        payload = _payload(asyncio.run(handle_call_tool("load_device_pack", {"pack": bad})))
+        assert payload["ok"] is False
+        assert payload["error"]["code"] == "invalid_pack"
+        problems = payload["raw_response"]["problems"]
+        assert any("schema" in p for p in problems)
+        assert any("family" in p for p in problems)
+        # Nothing half-loaded.
+        assert "NRF52" not in device_packs.coverage()["families"]
+    finally:
+        device_packs.reset_external()
+
+
+def test_load_device_pack_refuses_builtin_shadow():
+    try:
+        payload = _payload(asyncio.run(handle_call_tool("load_device_pack", {"pack": _pack_for("STM32F4")})))
+        assert payload["ok"] is False
+        assert payload["error"]["code"] == "invalid_pack"
+        assert any("built-in" in p for p in payload["raw_response"]["problems"])
+        # Override lets it through.
+        ok = _payload(asyncio.run(handle_call_tool(
+            "load_device_pack", {"pack": _pack_for("STM32F4"), "allow_override": True})))
+        assert ok["ok"] is True and ok["data"]["action"] == "registered"
+    finally:
+        device_packs.reset_external()
+
+
+def test_load_device_pack_loads_from_path(tmp_path):
+    try:
+        path = tmp_path / "pack.json"
+        path.write_text(json.dumps(_pack_for("STM32YY")), encoding="utf-8")
+        payload = _payload(asyncio.run(handle_call_tool("load_device_pack", {"path": str(path)})))
+        assert payload["ok"] is True
+        assert payload["data"]["family"] == "STM32YY"
+    finally:
+        device_packs.reset_external()
+
+
+def test_load_device_pack_bad_path_is_honest():
+    payload = _payload(asyncio.run(handle_call_tool("load_device_pack", {"path": "no-such-file.json"})))
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "pack_unreadable"

@@ -12,9 +12,13 @@ anything not covered is surfaced as ``nvic_unresolved`` with a reason and an
 ``irqn=`` escape hatch, never guessed. Interrupt priority is an engineer decision,
 so a working default is emitted with a review note when none is supplied.
 
-Standalone pure module (no imports from the rest of the package): everything is
-plain dicts so a result serializes straight through the JSON envelope.
+The irregular vectors and the I2C EV/ER-split family set come from the device-pack
+registry (``device_packs``), so a new family is a verified pack, not a hardcoded
+guess. Otherwise a pure module: everything is plain dicts so a result serializes
+straight through the JSON envelope.
 """
+
+from . import device_packs
 
 # Design keys (in design[name]) that control interrupt generation; popped before
 # the remaining config is mapped to HAL .Init fields.
@@ -31,26 +35,6 @@ _HAL_IRQ_HANDLER = {
     "timer": "HAL_TIM_IRQHandler",
     "adc": "HAL_ADC_IRQHandler",
     "dac": "HAL_DAC_IRQHandler",
-}
-
-# Families whose I2C exposes the classic split event/error vector pair.
-_I2C_DUAL = frozenset({"STM32F1", "STM32F2", "STM32F4", "STM32F7", "STM32L1", "STM32L4"})
-
-# Irregular vectors that cannot be derived from the peripheral name alone: shared
-# timer/DAC vectors and family-specific ADC grouping. Keyed by family then name.
-_NVIC_IRQ = {
-    "STM32F4": {
-        "TIM2": ["TIM2_IRQn"], "TIM3": ["TIM3_IRQn"], "TIM4": ["TIM4_IRQn"], "TIM5": ["TIM5_IRQn"],
-        "TIM6": ["TIM6_DAC_IRQn"], "TIM7": ["TIM7_IRQn"],
-        "ADC1": ["ADC_IRQn"], "ADC2": ["ADC_IRQn"], "ADC3": ["ADC_IRQn"],
-        "DAC": ["TIM6_DAC_IRQn"], "DAC1": ["TIM6_DAC_IRQn"],
-    },
-    "STM32L4": {
-        "TIM2": ["TIM2_IRQn"], "TIM3": ["TIM3_IRQn"], "TIM4": ["TIM4_IRQn"], "TIM5": ["TIM5_IRQn"],
-        "TIM6": ["TIM6_DAC_IRQn"], "TIM7": ["TIM7_IRQn"],
-        "ADC1": ["ADC1_2_IRQn"], "ADC2": ["ADC1_2_IRQn"],
-        "DAC": ["TIM6_DAC_IRQn"], "DAC1": ["TIM6_DAC_IRQn"],
-    },
 }
 
 
@@ -94,12 +78,12 @@ def resolve_vectors(name, kind, family, irqn_override=None):
     if kind in ("uart", "spi"):
         return [_vector(f"{name}_IRQn", kind, "global", "regular")]
     if kind == "i2c":
-        if family in _I2C_DUAL:
+        if device_packs.i2c_dual(family):
             return [_vector(f"{name}_EV_IRQn", kind, "event", "regular"),
                     _vector(f"{name}_ER_IRQn", kind, "error", "regular")]
         return []
 
-    table = _NVIC_IRQ.get(family, {})
+    table = device_packs.nvic_table(family)
     if name in table:
         return [_vector(n, kind, "global", "table") for n in table[name]]
     return []

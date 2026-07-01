@@ -17,21 +17,10 @@ cycle: ``framework_solver`` never imports this one).
 
 import math
 
+from . import device_packs
 from .framework_solver import _KIND_PARAMS, _count_sources
 
 _PSC_MAX = 65535
-
-# Timers on APB2 (every other TIMx is on APB1). Unknown family -> None (honest).
-_TIMER_APB2 = {
-    "STM32F4": {"TIM1", "TIM8", "TIM9", "TIM10", "TIM11"},
-    "STM32L4": {"TIM1", "TIM8", "TIM15", "TIM16", "TIM17"},
-}
-
-# 32-bit timers (ARR up to 2**32-1); everything else is 16-bit.
-_TIMER_32BIT = {
-    "STM32F4": {"TIM2", "TIM5"},
-    "STM32L4": {"TIM2", "TIM5"},
-}
 
 _TIMER_ORDER = _KIND_PARAMS["timer"]["order"]
 
@@ -41,7 +30,7 @@ _TIMER_ORDER = _KIND_PARAMS["timer"]["order"]
 
 def resolve_timer_bus(line, family, timer):
     """Return ``"apb1"``/``"apb2"`` for a timer, or ``None`` when the family is unmodelled."""
-    apb2 = _TIMER_APB2.get(family)
+    apb2 = device_packs.timer_apb2(family)
     if apb2 is None:
         return None
     name = (timer or "").upper()
@@ -53,7 +42,7 @@ def resolve_timer_bus(line, family, timer):
 def timer_arr_bits(line, family, timer):
     """Return 32 for known 32-bit timers (TIM2/TIM5), else 16 (safe default)."""
     name = (timer or "").upper()
-    return 32 if name in _TIMER_32BIT.get(family, set()) else 16
+    return 32 if name in device_packs.timer_bits32(family) else 16
 
 
 def timer_input_clock(clock_solution, bus):

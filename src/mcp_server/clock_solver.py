@@ -24,6 +24,10 @@ clocks maximised), matching common vendor output. The chosen PLL is electrically
 equivalent to CubeMX's even when the exact M/N differ.
 """
 
+import copy
+
+from . import device_packs
+
 _MHZ = 1_000_000
 _USB_HZ = 48 * _MHZ
 
@@ -32,80 +36,34 @@ _AHB_DIVS = (1, 2, 4, 8, 16, 64, 128, 256, 512)
 _APB_DIVS = (1, 2, 4, 8, 16)
 
 
-def _f4_profile(max_sysclk, max_pclk1, max_pclk2, flash_latency, *, family="STM32F4"):
-    """Build an F4-style profile (PLLP feeds SYSCLK; M/N/Q plain ints)."""
-    return {
-        "family": family,
-        "sysclk_pll_field": "P",
-        "hsi_hz": 16 * _MHZ,
-        "pll": {
-            "m": (2, 63), "n": (50, 432), "sysclk_div_set": (2, 4, 6, 8),
-            "q": (2, 15), "vco_in_hz": (1 * _MHZ, 2 * _MHZ),
-            "vco_out_hz": (100 * _MHZ, 432 * _MHZ), "ideal_vco_in_hz": 2 * _MHZ,
-        },
-        "max_sysclk_hz": max_sysclk, "max_hclk_hz": max_sysclk,
-        "max_pclk1_hz": max_pclk1, "max_pclk2_hz": max_pclk2,
-        "flash_latency": flash_latency,
-        "voltage_note": "flash wait-states for 2.7-3.6 V (VOS scale 1)",
-    }
-
-
-def _l4_profile():
-    """Mainstream STM32L4 (<= 80 MHz): PLLR feeds SYSCLK; PLLP/PLLQ are macro fields."""
-    return {
-        "family": "STM32L4",
-        "sysclk_pll_field": "R",
-        "hsi_hz": 16 * _MHZ,
-        "pll": {
-            "m": (1, 8), "n": (8, 86), "sysclk_div_set": (2, 4, 6, 8),
-            "q": (2, 4, 6, 8), "vco_in_hz": (4 * _MHZ, 16 * _MHZ),
-            "vco_out_hz": (64 * _MHZ, 344 * _MHZ), "ideal_vco_in_hz": 16 * _MHZ,
-        },
-        "max_sysclk_hz": 80 * _MHZ, "max_hclk_hz": 80 * _MHZ,
-        "max_pclk1_hz": 80 * _MHZ, "max_pclk2_hz": 80 * _MHZ,
-        "flash_latency": ((16 * _MHZ, 0), (32 * _MHZ, 1), (48 * _MHZ, 2),
-                          (64 * _MHZ, 3), (80 * _MHZ, 4)),
-        "voltage_note": "flash wait-states for range 1 (1.2 V); L4+ (L4R/L4S) differ",
-    }
-
-
-# Flash wait-state tables (ascending [max_hclk_hz, wait_states]).
-_F407_FLASH = ((30 * _MHZ, 0), (60 * _MHZ, 1), (90 * _MHZ, 2),
-               (120 * _MHZ, 3), (150 * _MHZ, 4), (168 * _MHZ, 5))
-_F411_FLASH = ((30 * _MHZ, 0), (64 * _MHZ, 1), (90 * _MHZ, 2), (100 * _MHZ, 3))
-_F401_FLASH = ((30 * _MHZ, 0), (60 * _MHZ, 1), (84 * _MHZ, 2))
-
-
-def _builtin_profiles():
-    f407 = _f4_profile(168 * _MHZ, 42 * _MHZ, 84 * _MHZ, _F407_FLASH, family="STM32F4")
-    f401 = _f4_profile(84 * _MHZ, 42 * _MHZ, 84 * _MHZ, _F401_FLASH, family="STM32F4")
-    f411 = _f4_profile(100 * _MHZ, 50 * _MHZ, 100 * _MHZ, _F411_FLASH, family="STM32F4")
-    l4 = _l4_profile()
-    return {"F407": f407, "F405": f407, "F415": f407, "F417": f407,
-            "F401": f401, "F411": f411, "L4": l4}
-
-
-_L4_PLUS_PREFIXES = ("STM32L4R", "STM32L4S", "STM32L4P", "STM32L4Q")
-
-
 def resolve_profile(line: str | None, family: str | None = None) -> dict | None:
-    """Return a built-in device profile for a normalized line/family, or None.
+    """Return a device clock profile for a normalized line/family, or None.
 
-    Honest by design: unknown devices (and overdrive/L4+ parts we do not model)
-    yield ``None`` so the caller surfaces an ``unresolved`` rather than guessing.
+    Sourced from the device-pack registry (F4/L4 ship built-in). Matching order
+    mirrors the datasheet reality: an exact line-prefix match wins, then a
+    known-unmodelled exclusion (e.g. L4+) yields None, then a broad
+    prefix/family fallback. Honest by design: an unknown device (or an
+    explicitly excluded one) yields ``None`` so the caller surfaces an
+    ``unresolved`` rather than guessing.
     """
-    profiles = _builtin_profiles()
+    data = device_packs.clock_resolution_data()
     up_line = (line or "").upper()
     up_family = (family or "").upper()
 
-    for key in ("F407", "F405", "F415", "F417", "F401", "F411"):
-        if up_line.startswith(f"STM32{key}"):
-            return profiles[key]
+    for entry in data["entries"]:
+        for prefix in entry.get("match_lines", []):
+            if up_line.startswith(prefix.upper()):
+                return copy.deepcopy(entry["profile"])
 
-    if up_line.startswith(_L4_PLUS_PREFIXES):
-        return None  # L4+ (120 MHz) uses a different topology.
-    if up_line.startswith("STM32L4") or up_family == "STM32L4":
-        return profiles["L4"]
+    for prefix in data["exclusions"]:
+        if up_line.startswith(prefix.upper()):
+            return None  # known-unmodelled (e.g. L4+ 120 MHz topology).
+
+    for entry in data["entries"]:
+        prefix = entry.get("match_prefix")
+        fam = entry.get("match_family")
+        if (prefix and up_line.startswith(prefix.upper())) or (fam and up_family == fam.upper()):
+            return copy.deepcopy(entry["profile"])
     return None
 
 
