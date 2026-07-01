@@ -353,3 +353,64 @@ def test_no_nvic_directive_leaves_block_without_interrupt():
     plan = build_framework_plan(_board(_mixed_pins()), design={"USART1": {"baud": 115200}})
     usart = next(b for b in plan["peripherals"] if b["name"] == "USART1")
     assert usart["nvic"] is None
+
+
+# --- DMA association (Pillar D Tier 3) --------------------------------------
+
+
+def test_dma_capture_resolves_usart_streams_and_summarizes():
+    plan = build_framework_plan(_board(_mixed_pins()), design={"USART1": {"baud": 115200, "dma": True}})
+    usart = next(b for b in plan["peripherals"] if b["name"] == "USART1")
+    assert usart["dma"]["resolved"] is True
+    dirs = {s["direction"]: s for s in usart["dma"]["streams"]}
+    assert dirs["rx"]["instance"] == "DMA1_Channel5"
+    assert dirs["tx"]["instance"] == "DMA1_Channel4"
+    # DMA directives must not leak into the .Init pass-through.
+    assert usart["unmapped_config"] == []
+    # baud still mapped, so DMA keys were popped cleanly.
+    assert any(f["field"] == "BaudRate" for f in usart["config_fields"])
+    summary = summarize_framework(plan)
+    su = next(p for p in summary["peripherals"] if p["name"] == "USART1")
+    assert {s["irqn"] for s in su["dma"]["streams"]} == {"DMA1_Channel5_IRQn", "DMA1_Channel4_IRQn"}
+
+
+def test_dma_adc_is_single_receive_stream():
+    plan = build_framework_plan(_board(_mixed_pins()), design={"ADC1": {"dma": True}})
+    adc = next(b for b in plan["peripherals"] if b["name"] == "ADC1")
+    assert len(adc["dma"]["streams"]) == 1
+    assert adc["dma"]["streams"][0]["link_field"] == "DMA_Handle"
+    assert adc["dma"]["streams"][0]["instance"] == "DMA1_Channel1"
+
+
+def test_dma_unmapped_peripheral_is_surfaced_not_guessed():
+    pins = [_pin("25", "PA2", "/USART2_TX", _fn("USART2", "TX")),
+            _pin("26", "PA3", "/USART2_RX", _fn("USART2", "RX"))]
+    plan = build_framework_plan(_board(pins), design={"USART2": {"dma": True}})
+    usart2 = next(b for b in plan["peripherals"] if b["name"] == "USART2")
+    assert usart2["dma"]["resolved"] is False
+    assert usart2["dma"]["streams"] == []
+    assert {u["direction"] for u in plan["unresolved"] if u["type"] == "dma_unresolved"} == {"rx", "tx"}
+
+
+def test_dma_stream_conflict_is_detected(monkeypatch):
+    from mcp_server import dma_solver
+    # Force ADC1 onto USART1's rx channel so the two collide on DMA1_Channel5.
+    patched = dict(dma_solver._DMA_MAP["STM32L4"]["ADC1"])
+    patched["rx"] = (1, 5, 0)
+    monkeypatch.setitem(dma_solver._DMA_MAP["STM32L4"], "ADC1", patched)
+
+    plan = build_framework_plan(_board(_mixed_pins()),
+                                design={"USART1": {"dma": "rx"}, "ADC1": {"dma": True}})
+    conflicts = [u for u in plan["unresolved"] if u["type"] == "dma_conflict"]
+    assert len(conflicts) == 1
+    assert conflicts[0]["instance"] == "DMA1_Channel5"
+    # Exactly one of the two colliding streams is flagged (the loser).
+    flagged = [s for b in plan["peripherals"] if b.get("dma")
+               for s in b["dma"]["streams"] if s.get("conflict")]
+    assert len(flagged) == 1
+
+
+def test_no_dma_directive_leaves_block_without_dma():
+    plan = build_framework_plan(_board(_mixed_pins()), design={"USART1": {"baud": 115200}})
+    usart = next(b for b in plan["peripherals"] if b["name"] == "USART1")
+    assert usart["dma"] is None

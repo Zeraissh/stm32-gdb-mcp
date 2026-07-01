@@ -211,3 +211,42 @@ def test_nvic_generated_code_is_pure_ascii():
     result, _, _ = _render(design={"USART1": {"nvic": True}, "I2C1": {"nvic_priority": 3}})
     for f in result["files"]:
         f["content"].encode("ascii")
+
+
+# --- DMA association (Pillar D Tier 3) --------------------------------------
+
+
+def test_dma_renders_init_link_nvic_and_isr():
+    result, source, header = _render(design={"USART1": {"baud": 115200, "dma": "rx"}})
+    assert "extern DMA_HandleTypeDef hdma_usart1_rx;" in header
+    assert "__HAL_RCC_DMA1_CLK_ENABLE();" in source
+    assert "hdma_usart1_rx.Instance = DMA1_Channel5;" in source
+    assert "hdma_usart1_rx.Init.Request = DMA_REQUEST_2;" in source
+    assert "hdma_usart1_rx.Init.Direction = DMA_PERIPH_TO_MEMORY;" in source
+    assert "__HAL_LINKDMA(&huart1, hdmarx, hdma_usart1_rx);" in source
+    assert "HAL_NVIC_EnableIRQ(DMA1_Channel5_IRQn);" in source
+    # The DMA transfer interrupt reuses the NVIC backbone: an ISR into HAL_DMA_IRQHandler.
+    assert "void DMA1_Channel5_IRQHandler(void)" in source
+    assert "HAL_DMA_IRQHandler(&hdma_usart1_rx);" in source
+
+
+def test_dma_adc_links_dma_handle_field_and_halfword():
+    _, source, _ = _render(design={"ADC1": {"dma": True}})
+    assert "hdma_adc1.Instance = DMA1_Channel1;" in source
+    assert "hdma_adc1.Init.Request = DMA_REQUEST_0;" in source
+    assert "hdma_adc1.Init.PeriphDataAlignment = DMA_PDATAALIGN_HALFWORD;" in source
+    assert "__HAL_LINKDMA(&hadc1, DMA_Handle, hdma_adc1);" in source
+
+
+def test_dma_unmapped_peripheral_renders_todo_not_a_guess():
+    pins = [_pin("25", "PA2", "/USART2_TX", _fn("USART2", "TX")),
+            _pin("26", "PA3", "/USART2_RX", _fn("USART2", "RX"))]
+    _, source = _render_pins(pins, {"USART2": {"dma": True}})
+    assert "USART2 rx DMA requested but stream unknown" in source
+    assert "HAL_DMA_Init" not in source  # nothing guessed
+
+
+def test_dma_generated_code_is_pure_ascii():
+    result, _, _ = _render(design={"USART1": {"dma": True}, "ADC1": {"dma": True}})
+    for f in result["files"]:
+        f["content"].encode("ascii")

@@ -41,6 +41,19 @@ def _handle_peripherals(plan: dict) -> list[dict]:
     return [b for b in plan.get("peripherals", []) if b.get("hal_init_call")]
 
 
+def _dma_handles(plan: dict) -> list[str]:
+    """Names of every renderable DMA handle (resolved, non-conflicting) in the plan."""
+    names: list[str] = []
+    for block in plan.get("peripherals", []):
+        dma = block.get("dma")
+        if not dma:
+            continue
+        for stream in dma.get("streams", []):
+            if not stream.get("conflict"):
+                names.append(stream["handle"])
+    return names
+
+
 def _render_header(plan: dict) -> str:
     lines = [
         "#ifndef BSP_INIT_H",
@@ -58,6 +71,12 @@ def _render_header(plan: dict) -> str:
         lines.append("/* Peripheral handles */")
         for block in handles:
             lines.append(f"extern {block['hal_type']} {block['handle']};")
+        lines.append("")
+    dma_handles = _dma_handles(plan)
+    if dma_handles:
+        lines.append("/* DMA handles */")
+        for name in dma_handles:
+            lines.append(f"extern DMA_HandleTypeDef {name};")
         lines.append("")
     lines.append("void BSP_Init(void);")
     for fn in plan.get("init_order", []):
@@ -91,6 +110,12 @@ def _render_source(plan: dict) -> str:
         for block in handles:
             lines.append(f"{block['hal_type']} {block['handle']};")
         lines.append("")
+    dma_handles = _dma_handles(plan)
+    if dma_handles:
+        lines.append("/* DMA handles */")
+        for name in dma_handles:
+            lines.append(f"DMA_HandleTypeDef {name};")
+        lines.append("")
 
     lines += _render_bsp_init(plan)
     lines += _render_system_clock(plan)
@@ -104,24 +129,33 @@ def _render_source(plan: dict) -> str:
 def _render_isrs(plan: dict) -> list[str]:
     """One interrupt service routine per resolved vector, dispatching to the HAL handler.
 
-    Shared vectors (e.g. ``TIM6_DAC_IRQn``) that serve several enabled peripherals
-    emit a single ISR that calls every attached handle, so no duplicate symbol is
-    generated.
+    Covers both the peripheral vectors (``HAL_UART_IRQHandler`` etc.) and the DMA
+    stream vectors (``HAL_DMA_IRQHandler(&hdma_...)``). Shared vectors (e.g.
+    ``TIM6_DAC_IRQn``) that serve several enabled peripherals emit a single ISR that
+    calls every attached handle, so no duplicate symbol is generated.
     """
     by_isr: dict[str, list[str]] = {}
     order: list[str] = []
+
+    def _add(isr: str, call: str) -> None:
+        if isr not in by_isr:
+            by_isr[isr] = []
+            order.append(isr)
+        if call not in by_isr[isr]:
+            by_isr[isr].append(call)
+
     for block in plan.get("peripherals", []):
         nvic = block.get("nvic")
-        if not nvic or not nvic.get("resolved"):
-            continue
-        for vector in nvic["vectors"]:
-            isr = vector["isr"]
-            if isr not in by_isr:
-                by_isr[isr] = []
-                order.append(isr)
-            call = f"{vector['handler']}(&{block['handle']});"
-            if call not in by_isr[isr]:
-                by_isr[isr].append(call)
+        if nvic and nvic.get("resolved"):
+            for vector in nvic["vectors"]:
+                _add(vector["isr"], f"{vector['handler']}(&{block['handle']});")
+        dma = block.get("dma")
+        if dma:
+            for stream in dma.get("streams", []):
+                if stream.get("conflict"):
+                    continue
+                vector = stream["nvic"]
+                _add(vector["isr"], f"{vector['handler']}(&{stream['handle']});")
 
     if not order:
         return []
@@ -223,8 +257,65 @@ def _render_peripheral_init(block: dict) -> list[str]:
               "    {",
               "        Error_Handler();",
               "    }"]
+    lines += _render_dma(block)
     lines += _render_nvic_calls(block)
     lines += ["}", ""]
+    return lines
+
+
+def _render_dma(block: dict) -> list[str]:
+    """DMA handle init + __HAL_LINKDMA + DMA-stream NVIC enable, or an honest TODO.
+
+    Reuses the NVIC backbone for the transfer interrupt: every DMA stream gets its
+    own ``HAL_NVIC_SetPriority`` / ``HAL_NVIC_EnableIRQ`` and (via _render_isrs) an
+    ISR dispatching to ``HAL_DMA_IRQHandler``.
+    """
+    dma = block.get("dma")
+    if not dma or not dma.get("requested"):
+        return []
+
+    lines: list[str] = []
+    for miss in dma.get("unresolved", []):
+        lines.append(f"    /* TODO: {block['name']} {miss['direction']} DMA requested but stream "
+                     f"unknown -- {miss['reason']} */")
+
+    streams = [s for s in dma.get("streams", []) if not s.get("conflict")]
+    for conflicted in (s for s in dma.get("streams", []) if s.get("conflict")):
+        lines.append(f"    /* TODO: {block['name']} {conflicted['direction']} DMA {conflicted['instance']} "
+                     "collides with another peripheral; resolve before enabling. */")
+    if not streams:
+        return lines
+
+    lines.append("    /* DMA */")
+    seen_clocks: set = set()
+    for stream in streams:
+        if stream["clock_macro"] not in seen_clocks:
+            lines.append(f"    {stream['clock_macro']}();")
+            seen_clocks.add(stream["clock_macro"])
+
+    note = "  /* default priority -- review preemption for your app/RTOS */"
+    for stream in streams:
+        hdma = stream["handle"]
+        lines += [
+            f"    {hdma}.Instance = {stream['instance']};",
+            f"    {hdma}.Init.{stream['select_field']} = {stream['select_value']};",
+            f"    {hdma}.Init.Direction = {stream['direction_macro']};",
+            f"    {hdma}.Init.PeriphInc = DMA_PINC_DISABLE;",
+            f"    {hdma}.Init.MemInc = DMA_MINC_ENABLE;",
+            f"    {hdma}.Init.PeriphDataAlignment = {stream['periph_align']};",
+            f"    {hdma}.Init.MemDataAlignment = {stream['mem_align']};",
+            f"    {hdma}.Init.Mode = DMA_NORMAL;",
+            f"    {hdma}.Init.Priority = {stream['priority_macro']};",
+            f"    if (HAL_DMA_Init(&{hdma}) != HAL_OK)",
+            "    {",
+            "        Error_Handler();",
+            "    }",
+            f"    __HAL_LINKDMA(&{block['handle']}, {stream['link_field']}, {hdma});",
+        ]
+        vector = stream["nvic"]
+        lines.append(f"    HAL_NVIC_SetPriority({vector['irqn']}, {vector['preempt']}, {vector['sub']});{note}")
+        lines.append(f"    HAL_NVIC_EnableIRQ({vector['irqn']});")
+        note = ""  # annotate only the first stream
     return lines
 
 

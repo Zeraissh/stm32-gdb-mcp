@@ -1860,6 +1860,45 @@ def test_design_framework_nvic_unknown_vector_is_surfaced_not_guessed():
     assert "TODO: enable TIM1 interrupt" in source
     assert "HAL_NVIC_EnableIRQ" not in source
 
+# --- DMA association (Pillar D Tier 3) --------------------------------------
+
+
+def test_design_framework_dma_renders_streams_link_and_isr():
+    sid = "dma-happy"
+    asyncio.run(handle_call_tool("import_netlist", {"text": _KICAD_NETLIST, "session": sid}))
+    design = {"USART1": {"baud": 115200, "dma": True}, "I2C1": {"dma": True}}
+    designed = json.loads(asyncio.run(handle_call_tool(
+        "design_framework", {"design": design, "session": sid}))[0].text)
+    assert designed["ok"] is True
+    usart = next(p for p in designed["data"]["peripherals"] if p["name"] == "USART1")
+    assert {s["instance"] for s in usart["dma"]["streams"]} == {"DMA1_Channel5", "DMA1_Channel4"}
+
+    rendered = json.loads(asyncio.run(handle_call_tool("render_framework", {"session": sid}))[0].text)
+    source = next(f["content"] for f in rendered["data"]["files"] if f["path"] == "bsp_init.c")
+    assert "__HAL_RCC_DMA1_CLK_ENABLE();" in source
+    assert "hdma_usart1_rx.Init.Request = DMA_REQUEST_2;" in source
+    assert "__HAL_LINKDMA(&huart1, hdmarx, hdma_usart1_rx);" in source
+    assert "void DMA1_Channel5_IRQHandler(void)" in source
+    assert "HAL_DMA_IRQHandler(&hdma_usart1_rx);" in source
+    # I2C1 gets its own EV/ER-independent DMA channels too.
+    assert "__HAL_LINKDMA(&hi2c1, hdmarx, hdma_i2c1_rx);" in source
+
+
+def test_design_framework_dma_unmapped_is_surfaced_not_guessed():
+    sid = "dma-unresolved"
+    # USART2 is a real L4 peripheral deliberately left out of the built-in DMA table.
+    net = _KICAD_NETLIST.replace('(name "/USART1_TX")', '(name "/USART2_TX")')
+    asyncio.run(handle_call_tool("import_netlist", {"text": net, "session": sid}))
+    asyncio.run(handle_call_tool("design_framework", {"design": {"USART2": {"dma": True}}, "session": sid}))
+    unresolved = json.loads(asyncio.run(handle_call_tool(
+        "describe_framework", {"what": "unresolved", "session": sid}))[0].text)
+    assert any(u["type"] == "dma_unresolved" and u["peripheral"] == "USART2"
+               for u in unresolved["data"]["unresolved"])
+    rendered = json.loads(asyncio.run(handle_call_tool("render_framework", {"session": sid}))[0].text)
+    source = next(f["content"] for f in rendered["data"]["files"] if f["path"] == "bsp_init.c")
+    assert "USART2 rx DMA requested but stream unknown" in source
+    assert "HAL_DMA_Init" not in source
+
 # --- DB-derived GPIO alternate-function resolution (Pillar D Tier 3) ---------
 
 

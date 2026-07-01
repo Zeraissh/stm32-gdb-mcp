@@ -23,6 +23,7 @@ Everything is plain dicts so a plan serializes straight through the
 
 import re
 
+from .dma_solver import DMA_KEYS, build_dma
 from .interrupt_solver import NVIC_KEYS, build_nvic
 
 # --- Peripheral classification ----------------------------------------------
@@ -454,6 +455,30 @@ def build_framework_plan(board: dict, design: dict | None = None, af_map: dict |
         if nvic and nvic.get("requested") and not nvic.get("resolved"):
             unresolved.append({"type": "nvic_unresolved", "peripheral": name,
                                "detail": f"{name}: interrupt requested but vector unknown -- {nvic['unresolved_reason']}"})
+        dma = block.get("dma")
+        if dma and dma.get("requested"):
+            for miss in dma.get("unresolved", []):
+                unresolved.append({"type": "dma_unresolved", "peripheral": name, "direction": miss["direction"],
+                                   "detail": f"{name} {miss['direction']}: DMA requested but stream unknown -- {miss['reason']}"})
+
+    # A DMA stream is single-owner hardware: two peripherals on one Instance is
+    # impossible, so surface the collision honestly instead of emitting both inits.
+    seen_streams: dict[str, str] = {}
+    for block in peripheral_blocks:
+        dma = block.get("dma")
+        if not dma:
+            continue
+        for stream in dma.get("streams", []):
+            instance = stream["instance"]
+            owner = f"{block['name']} {stream['direction']}"
+            if instance in seen_streams:
+                stream["conflict"] = True
+                unresolved.append({"type": "dma_conflict", "peripheral": block["name"],
+                                   "direction": stream["direction"], "instance": instance,
+                                   "detail": f"{owner}: DMA {instance} already used by {seen_streams[instance]}; "
+                                             "resolve the collision (change one peripheral's DMA or free the stream)."})
+            else:
+                seen_streams[instance] = owner
 
     init_order = ["SystemClock_Config", "MX_GPIO_Init"] + [b["init_fn"] for b in peripheral_blocks]
 
@@ -490,6 +515,12 @@ def _build_peripheral_block(name: str, info: dict, config: dict | None, family: 
     nvic_args = {key: config.pop(key) for key in NVIC_KEYS if key in config}
     nvic = build_nvic(name, kind, family, nvic=nvic_args.get("nvic"),
                       nvic_priority=nvic_args.get("nvic_priority"), irqn=nvic_args.get("irqn"))
+
+    # DMA association is opt-in too: pop its directives before the .Init mapping and
+    # resolve the concrete stream(s) + the derived stream interrupt vector(s).
+    dma_args = {key: config.pop(key) for key in DMA_KEYS if key in config}
+    dma = build_dma(name, kind, family, dma=dma_args.get("dma"),
+                    dma_priority=dma_args.get("dma_priority"))
 
     # A timer's target frequency is intent, not a HAL field: record it and keep it out
     # of the unmapped pass-through so solve_timer can resolve PSC/ARR post clock-solve.
@@ -566,6 +597,7 @@ def _build_peripheral_block(name: str, info: dict, config: dict | None, family: 
         "has_config": bool(config_fields),
         "timer_target_hz": timer_target,
         "nvic": nvic,
+        "dma": dma,
     }
 
 
@@ -593,6 +625,20 @@ def _nvic_summary(nvic: dict | None) -> dict | None:
     }
 
 
+def _dma_summary(dma: dict | None) -> dict | None:
+    """Compact DMA view for a peripheral summary, or ``None`` when no DMA."""
+    if not dma:
+        return None
+    return {
+        "requested": dma.get("requested", False),
+        "resolved": dma.get("resolved", False),
+        "streams": [{"direction": s["direction"], "instance": s["instance"],
+                     "irqn": s["nvic"]["irqn"], "conflict": s.get("conflict", False)}
+                    for s in dma.get("streams", [])],
+        "unresolved_directions": [u["direction"] for u in dma.get("unresolved", [])],
+    }
+
+
 def summarize_framework(plan: dict) -> dict:
     """Compact, human-oriented overview of a FrameworkPlan."""
     return {
@@ -602,7 +648,8 @@ def summarize_framework(plan: dict) -> dict:
                          "pin_count": len(b["pins"]), "has_config": b["has_config"],
                          "config_sources": b.get("config_sources", {}),
                          "param_todo_count": len(b.get("param_todos", [])),
-                         "nvic": _nvic_summary(b.get("nvic"))}
+                         "nvic": _nvic_summary(b.get("nvic")),
+                         "dma": _dma_summary(b.get("dma"))}
                         for b in plan.get("peripherals", [])],
         "init_order": plan.get("init_order", []),
         "unresolved_count": plan.get("stats", {}).get("unresolved_count", 0),
