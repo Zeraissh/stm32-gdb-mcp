@@ -41,6 +41,7 @@ class DebugSession:
         self.last_session = {"server_type": None, "server_args": []}
         self.board = {"current": None}  # imported BoardDescription (netlist -> BSP model)
         self.acceptance = {"current": None, "last_result": None}  # loaded AcceptanceSpec + last verdict
+        self.loop = {"current": None}  # bounded acceptance-loop state (Pillar C)
 
     def teardown(self):
         for obj, method in ((self.gdb_client, "stop_gdb"), (self.gdb_manager, "stop"),

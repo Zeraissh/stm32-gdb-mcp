@@ -1393,3 +1393,88 @@ def test_run_acceptance_without_spec_errors():
 
     assert payload["ok"] is False
     assert payload["error"]["code"] == "no_spec"
+
+
+# --- Pillar C: bounded acceptance-loop orchestrator ------------------------
+
+
+def test_server_exposes_loop_tools():
+    tool_names = {tool.name for tool in asyncio.run(handle_list_tools())}
+
+    assert {"start_acceptance_loop", "run_acceptance_iteration", "acceptance_loop_status"} <= tool_names
+
+
+def test_start_acceptance_loop_requires_spec():
+    result = asyncio.run(handle_call_tool("start_acceptance_loop", {"session": "loop-nospec"}))
+    payload = json.loads(result[0].text)
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "no_spec"
+
+
+def test_loop_iterates_to_convergence(monkeypatch):
+    import mcp_server.server as server_module
+
+    sess = server_module.session_manager.get("loop-pass")
+    monkeypatch.setattr(sess, "gdb_client", _healthy_client())
+
+    asyncio.run(handle_call_tool("load_acceptance", {"spec": _ACCEPTANCE_SPEC, "session": "loop-pass"}))
+    asyncio.run(handle_call_tool("start_acceptance_loop", {"max_iterations": 5, "session": "loop-pass"}))
+    result = asyncio.run(handle_call_tool("run_acceptance_iteration", {"session": "loop-pass"}))
+    payload = json.loads(result[0].text)
+
+    assert payload["ok"] is True
+    assert payload["data"]["decision"]["converged"] is True
+    assert payload["data"]["iteration"]["ok"] is True
+
+    status = asyncio.run(handle_call_tool("acceptance_loop_status", {"session": "loop-pass"}))
+    status_payload = json.loads(status[0].text)
+    assert status_payload["data"]["summary"]["status"] == "converged"
+    assert status_payload["data"]["summary"]["iteration_count"] == 1
+
+
+def test_loop_iteration_reports_failure_and_stays_active(monkeypatch):
+    import mcp_server.server as server_module
+
+    sess = server_module.session_manager.get("loop-fail")
+    client = _healthy_client()
+    client.memory[0x40013800] = 0x0  # USART1 disabled -> usart1-on fails
+    monkeypatch.setattr(sess, "gdb_client", client)
+
+    asyncio.run(handle_call_tool("load_acceptance", {"spec": _ACCEPTANCE_SPEC, "session": "loop-fail"}))
+    asyncio.run(handle_call_tool("start_acceptance_loop", {"session": "loop-fail"}))
+    result = asyncio.run(handle_call_tool("run_acceptance_iteration", {"session": "loop-fail"}))
+    payload = json.loads(result[0].text)
+
+    assert payload["data"]["decision"]["should_continue"] is True
+    assert payload["data"]["iteration"]["unsatisfied_ids"] == ["usart1-on"]
+
+
+def test_terminal_loop_refuses_without_force(monkeypatch):
+    import mcp_server.server as server_module
+
+    sess = server_module.session_manager.get("loop-terminal")
+    monkeypatch.setattr(sess, "gdb_client", _healthy_client())
+
+    asyncio.run(handle_call_tool("load_acceptance", {"spec": _ACCEPTANCE_SPEC, "session": "loop-terminal"}))
+    asyncio.run(handle_call_tool("start_acceptance_loop", {"session": "loop-terminal"}))
+    asyncio.run(handle_call_tool("run_acceptance_iteration", {"session": "loop-terminal"}))  # -> converged
+
+    # A converged loop refuses another iteration unless forced.
+    refused = json.loads(asyncio.run(handle_call_tool(
+        "run_acceptance_iteration", {"session": "loop-terminal"}))[0].text)
+    assert refused["data"]["iteration"] is None
+    assert refused["data"]["decision"]["converged"] is True
+
+    forced = json.loads(asyncio.run(handle_call_tool(
+        "run_acceptance_iteration", {"force": True, "session": "loop-terminal"}))[0].text)
+    assert forced["data"]["iteration"] is not None
+    assert forced["data"]["summary"]["iteration_count"] == 2
+
+
+def test_run_acceptance_iteration_without_loop_errors():
+    result = asyncio.run(handle_call_tool("run_acceptance_iteration", {"session": "loop-none"}))
+    payload = json.loads(result[0].text)
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "no_loop"

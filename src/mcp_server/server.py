@@ -52,6 +52,8 @@ from .gdb_decode import registers_summary
 from .gdb_manager import GdbServerManager
 from .issue_reporter import DEFAULT_REPO, build_issue_body, file_issue, issue_fingerprint
 from .log_reader import FileLogReader, ProcessLogReader, SerialLogReader
+from .loop_control import loop_decision, new_loop_state, summarize_loop
+from .loop_orchestrator import GdbLoopSteps, run_iteration
 from .memory_guard import MemoryWriteGuard
 from .metrics import compute_metrics
 from .netlist_parser import load_netlist_file, parse_netlist
@@ -156,6 +158,7 @@ session_journal = SessionJournal()
 _last_session = {"server_type": None, "server_args": []}
 _board = {"current": None}  # imported BoardDescription (netlist -> BSP model) for the default session
 _acceptance = {"current": None, "last_result": None}  # loaded AcceptanceSpec + last verdict (default session)
+_loop = {"current": None}  # bounded acceptance-loop state (Pillar C) for the default session
 _reported_issues = {}  # fingerprint -> issue url (in-session dedup)
 
 # Phase 3: named per-target sessions for multi-board / CI. The "default" session reuses
@@ -165,9 +168,10 @@ session_manager = SessionManager()
 _SESSION_ATTRS = ("gdb_manager", "gdb_client", "svd_parser", "variable_tracker",
                   "debug_profile", "freertos_inspector", "rtt_log_reader", "swo_log_reader",
                   "swo_file_reader", "uart_log_reader", "memory_guard", "last_session", "board",
-                  "acceptance")
+                  "acceptance", "loop")
 # Session attrs whose "default" backing global is named differently from the attribute.
-_DEFAULT_SESSION_GLOBALS = {"last_session": "_last_session", "board": "_board", "acceptance": "_acceptance"}
+_DEFAULT_SESSION_GLOBALS = {"last_session": "_last_session", "board": "_board",
+                            "acceptance": "_acceptance", "loop": "_loop"}
 
 
 def _resolve_session(arguments: dict):
@@ -1402,6 +1406,50 @@ async def handle_list_tools() -> list[Tool]:
                     "session": {"type": "string", "description": "Target session id (default 'default')."}
                 }
             }
+        ),
+        Tool(
+            name="start_acceptance_loop",
+            description="Start a bounded spec-to-silicon acceptance loop (Pillar C) for the loaded "
+                        "AcceptanceSpec. Each run_acceptance_iteration does one build → flash → "
+                        "run-to-state → run_acceptance pass; the loop stops on convergence, on "
+                        "max_iterations, or on a stall (same checks failing repeatedly). Omit build/"
+                        "flash to run evaluate-only iterations (you flash manually). Load a spec first.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "max_iterations": {"type": "integer", "description": "Hard bound on iterations (default 10)."},
+                    "stall_patience": {"type": "integer", "description": "Stop if the same checks fail this many times in a row (default 3)."},
+                    "build": {"type": "object", "description": "Optional build_firmware config {kind, project|build_dir|directory, target, config, rebuild, command, cwd}."},
+                    "flash": {"type": "object", "description": "Optional flash+run config {file_path, run_to (default 'main'), timeout_sec}."},
+                    "session": {"type": "string", "description": "Target session id (default 'default')."}
+                }
+            }
+        ),
+        Tool(
+            name="run_acceptance_iteration",
+            description="Run one bounded loop iteration: (optional build) → (optional flash+run-to) → "
+                        "evaluate the AcceptanceSpec against live silicon, then record the verdict and "
+                        "return a decision (converged / should_continue / exhausted / stalled) plus the "
+                        "checks to fix. A build or run-to failure is recorded as a phase_error, not a "
+                        "crash. Refuses to run a terminal loop unless force=true. start_acceptance_loop first.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "force": {"type": "boolean", "description": "Run even if the loop already converged/exhausted/stalled."},
+                    "session": {"type": "string", "description": "Target session id (default 'default')."}
+                }
+            }
+        ),
+        Tool(
+            name="acceptance_loop_status",
+            description="Read the acceptance loop's trajectory (per-iteration pass/fail counts, status) "
+                        "and the current decision without running an iteration.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "session": {"type": "string", "description": "Target session id (default 'default')."}
+                }
+            }
         )
     ]
     # Compact mode (STM32_GDB_MCP_COMPACT=1): expose only a small core so nothing gets
@@ -1597,6 +1645,7 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
     _last_session = _sess.last_session
     session_board = _sess.board
     session_acceptance = _sess.acceptance
+    session_loop = _sess.loop
 
     try:
         # Action-dispatched families: translate to the underlying tool and reuse its handler.
@@ -2648,6 +2697,66 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
             return [content_error(
                 "what must be summary|checks|last_result", code="invalid_argument",
                 suggested_next_actions=["describe_acceptance (what=summary|checks|last_result)"])]
+
+        elif name == "start_acceptance_loop":
+            spec = session_acceptance.get("current")
+            if not spec:
+                return [content_error(
+                    "No acceptance spec loaded for this session. Run load_acceptance first.", code="no_spec",
+                    suggested_next_actions=["load_acceptance(spec={...})"])]
+            max_iterations = arguments.get("max_iterations", 10)
+            if not isinstance(max_iterations, int) or max_iterations < 1:
+                return [content_error(
+                    "max_iterations must be an integer >= 1.", code="invalid_argument",
+                    suggested_next_actions=["start_acceptance_loop(max_iterations=10)"])]
+            build_cfg = arguments.get("build")
+            flash_cfg = arguments.get("flash")
+            plan = {
+                "max_iterations": max_iterations,
+                "stall_patience": arguments.get("stall_patience", 3),
+                "has_build": bool(build_cfg),
+                "has_flash": bool(flash_cfg),
+                "build": build_cfg,
+                "flash": flash_cfg,
+                "acceptance_name": spec.get("name"),
+            }
+            state = new_loop_state(plan)
+            session_loop["current"] = state
+            return [content_success(
+                summarize_loop(state), suggested_next_actions=["run_acceptance_iteration"])]
+
+        elif name == "run_acceptance_iteration":
+            state = session_loop.get("current")
+            if not state:
+                return [content_error(
+                    "No acceptance loop started for this session. Run start_acceptance_loop first.", code="no_loop",
+                    suggested_next_actions=["start_acceptance_loop"])]
+            spec = session_acceptance.get("current")
+            if not spec:
+                return [content_error(
+                    "No acceptance spec loaded for this session. Run load_acceptance first.", code="no_spec",
+                    suggested_next_actions=["load_acceptance(spec={...})"])]
+            if state["status"] != "active" and not arguments.get("force"):
+                decision = loop_decision(state)
+                return [content_success(
+                    {"iteration": None, "decision": decision, "summary": summarize_loop(state)},
+                    suggested_next_actions=decision["next_actions"])]
+            plan = state["plan"]
+            steps = GdbLoopSteps(gdb_client, spec, build_cfg=plan.get("build"), flash_cfg=plan.get("flash"))
+            outcome = run_iteration(state, steps)
+            session_loop["current"] = state
+            decision = outcome["decision"]
+            return [content_success(
+                {"iteration": outcome["iteration"], "decision": decision, "summary": summarize_loop(state)},
+                suggested_next_actions=decision["next_actions"])]
+
+        elif name == "acceptance_loop_status":
+            state = session_loop.get("current")
+            if not state:
+                return [content_error(
+                    "No acceptance loop started for this session. Run start_acceptance_loop first.", code="no_loop",
+                    suggested_next_actions=["start_acceptance_loop"])]
+            return [content_success({"summary": summarize_loop(state), "decision": loop_decision(state)})]
 
         else:
             hint = _RENAMED_TOOLS.get(name)
