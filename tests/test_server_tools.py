@@ -635,7 +635,7 @@ def test_compact_mode_exposes_small_core_with_call(monkeypatch):
     # full mode exposes the consolidated surface (well under the old 87, lean like superpowers)
     monkeypatch.delenv("STM32_GDB_MCP_COMPACT")
     full = len(asyncio.run(handle_list_tools()))
-    assert 50 <= full <= 70
+    assert 50 <= full <= 80
 
 
 def test_batch_runs_steps_in_one_call_returning_full_results():
@@ -1478,3 +1478,66 @@ def test_run_acceptance_iteration_without_loop_errors():
 
     assert payload["ok"] is False
     assert payload["error"]["code"] == "no_loop"
+
+
+# --- Pillar D: design synthesis (framework/init-code solver) ----------------
+
+
+def test_server_exposes_design_tools():
+    tool_names = {tool.name for tool in asyncio.run(handle_list_tools())}
+
+    assert {"design_framework", "describe_framework", "render_framework"} <= tool_names
+
+
+def test_design_framework_requires_board():
+    result = asyncio.run(handle_call_tool("design_framework", {"session": "design-noboard"}))
+    payload = json.loads(result[0].text)
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "no_board"
+
+
+def test_design_then_describe_and_render_roundtrip():
+    sid = "design-roundtrip"
+    asyncio.run(handle_call_tool("import_netlist", {"text": _KICAD_NETLIST, "session": sid}))
+
+    design = {"USART1": {"baud": 115200, "word_length": "UART_WORDLENGTH_8B"}}
+    af_map = {"STM32L431": {"PA9": {"USART1_TX": 7}}}
+    designed = json.loads(asyncio.run(handle_call_tool(
+        "design_framework", {"design": design, "af_map": af_map, "session": sid}))[0].text)
+
+    assert designed["ok"] is True
+    assert "__HAL_RCC_USART1_CLK_ENABLE" in designed["data"]["clocks"]
+    assert {p["name"] for p in designed["data"]["peripherals"]} == {"I2C1", "USART1"}
+
+    # describe: the I2C1 peripheral has no config -> shows up as unresolved.
+    unresolved = json.loads(asyncio.run(handle_call_tool(
+        "describe_framework", {"what": "unresolved", "session": sid}))[0].text)
+    assert any(u["type"] == "no_config" and u["peripheral"] == "I2C1"
+               for u in unresolved["data"]["unresolved"])
+
+    # render: concrete facts for USART1, honest TODO for I2C1.
+    rendered = json.loads(asyncio.run(handle_call_tool(
+        "render_framework", {"session": sid}))[0].text)
+    assert rendered["ok"] is True
+    source = next(f["content"] for f in rendered["data"]["files"] if f["path"] == "bsp_init.c")
+    assert "GPIO_InitStruct.Alternate = GPIO_AF7_USART1;" in source
+    assert "huart1.Init.BaudRate = 115200;" in source
+    assert "TODO: no design config supplied for I2C1" in source
+    assert rendered["data"]["todo_count"] > 0
+
+
+def test_describe_framework_without_design_errors():
+    result = asyncio.run(handle_call_tool("describe_framework", {"session": "design-empty"}))
+    payload = json.loads(result[0].text)
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "no_design"
+
+
+def test_render_framework_without_design_errors():
+    result = asyncio.run(handle_call_tool("render_framework", {"session": "design-empty2"}))
+    payload = json.loads(result[0].text)
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "no_design"

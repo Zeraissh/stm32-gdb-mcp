@@ -46,6 +46,8 @@ from .debug_snapshot import collect_debug_snapshot
 from .error_taxonomy import classify_error
 from .exception_frame import build_fault_context
 from .fault_analysis import diagnose_fault_registers
+from .framework_render import render_framework
+from .framework_solver import build_framework_plan, framework_view, summarize_framework
 from .freertos_inspector import FreeRTOSInspector
 from .gdb_client import GdbClientManager
 from .gdb_decode import registers_summary
@@ -159,6 +161,7 @@ _last_session = {"server_type": None, "server_args": []}
 _board = {"current": None}  # imported BoardDescription (netlist -> BSP model) for the default session
 _acceptance = {"current": None, "last_result": None}  # loaded AcceptanceSpec + last verdict (default session)
 _loop = {"current": None}  # bounded acceptance-loop state (Pillar C) for the default session
+_design = {"current": None, "last_render": None}  # FrameworkPlan + last render (Pillar D) for default session
 _reported_issues = {}  # fingerprint -> issue url (in-session dedup)
 
 # Phase 3: named per-target sessions for multi-board / CI. The "default" session reuses
@@ -168,10 +171,10 @@ session_manager = SessionManager()
 _SESSION_ATTRS = ("gdb_manager", "gdb_client", "svd_parser", "variable_tracker",
                   "debug_profile", "freertos_inspector", "rtt_log_reader", "swo_log_reader",
                   "swo_file_reader", "uart_log_reader", "memory_guard", "last_session", "board",
-                  "acceptance", "loop")
+                  "acceptance", "loop", "design")
 # Session attrs whose "default" backing global is named differently from the attribute.
 _DEFAULT_SESSION_GLOBALS = {"last_session": "_last_session", "board": "_board",
-                            "acceptance": "_acceptance", "loop": "_loop"}
+                            "acceptance": "_acceptance", "loop": "_loop", "design": "_design"}
 
 
 def _resolve_session(arguments: dict):
@@ -1450,6 +1453,52 @@ async def handle_list_tools() -> list[Tool]:
                     "session": {"type": "string", "description": "Target session id (default 'default')."}
                 }
             }
+        ),
+        Tool(
+            name="design_framework",
+            description="Synthesize a deterministic FrameworkPlan (Pillar D) from the session's imported "
+                        "board: which clocks to enable, how each pin must be muxed, and which peripheral "
+                        "init blocks to emit, in dependency order. Supply per-peripheral HAL .Init "
+                        "parameters via design={'USART1': {'baud': 115200, ...}} and optional AF numbers "
+                        "via af_map. Anything not supplied is surfaced as unresolved, never guessed. "
+                        "Import a netlist first (import_netlist).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "design": {"type": "object", "description": "Per-peripheral config, e.g. {'USART1': {'baud': 115200, 'word_length': 'UART_WORDLENGTH_8B'}}."},
+                    "af_map": {"type": "object", "description": "Optional alternate-function numbers: {line_or_family: {port_pin: {'USART1_TX': 7}}}."},
+                    "session": {"type": "string", "description": "Target session id (default 'default')."}
+                }
+            }
+        ),
+        Tool(
+            name="describe_framework",
+            description="Read the synthesized FrameworkPlan. what=summary (mcu + clocks + peripherals), "
+                        "clocks, gpio (per-pin config), peripherals (init blocks), init_order, or "
+                        "unresolved (the TODO holes that need target data or a design decision). "
+                        "Run design_framework first.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "what": {"type": "string", "description": "summary|clocks|gpio|peripherals|init_order|unresolved (default summary)."},
+                    "session": {"type": "string", "description": "Target session id (default 'default')."}
+                }
+            }
+        ),
+        Tool(
+            name="render_framework",
+            description="Render the synthesized FrameworkPlan to a HAL C init skeleton (bsp_init.c + "
+                        "bsp_init.h). Every derived fact (clock enables, GPIO modes, mapped .Init fields) "
+                        "is concrete; every unresolved value is a clearly marked TODO — nothing is "
+                        "fabricated. Returns the files, their content, and a todo_count. Run "
+                        "design_framework first.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "style": {"type": "string", "description": "Code style (default 'hal')."},
+                    "session": {"type": "string", "description": "Target session id (default 'default')."}
+                }
+            }
         )
     ]
     # Compact mode (STM32_GDB_MCP_COMPACT=1): expose only a small core so nothing gets
@@ -1646,6 +1695,7 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
     session_board = _sess.board
     session_acceptance = _sess.acceptance
     session_loop = _sess.loop
+    session_design = _sess.design
 
     try:
         # Action-dispatched families: translate to the underlying tool and reuse its handler.
@@ -2757,6 +2807,55 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                     "No acceptance loop started for this session. Run start_acceptance_loop first.", code="no_loop",
                     suggested_next_actions=["start_acceptance_loop"])]
             return [content_success({"summary": summarize_loop(state), "decision": loop_decision(state)})]
+
+        elif name == "design_framework":
+            board = session_board.get("current")
+            if not board:
+                return [content_error(
+                    "No board imported for this session. Run import_netlist first.", code="no_board",
+                    suggested_next_actions=["import_netlist(path='board.net')"])]
+            design = arguments.get("design")
+            if design is not None and not isinstance(design, dict):
+                return [content_error(
+                    "design must be an object mapping peripheral name -> config.", code="invalid_argument",
+                    suggested_next_actions=["design_framework(design={'USART1': {'baud': 115200}})"])]
+            af_map = arguments.get("af_map")
+            if af_map is not None and not isinstance(af_map, dict):
+                return [content_error(
+                    "af_map must be an object {line_or_family: {port_pin: {'PERIPH_SIG': af}}}.",
+                    code="invalid_argument", suggested_next_actions=["design_framework"])]
+            plan = build_framework_plan(board, design=design, af_map=af_map)
+            session_design["current"] = plan
+            session_design["last_render"] = None
+            return [content_success(
+                summarize_framework(plan),
+                suggested_next_actions=["describe_framework (what=unresolved)", "render_framework"])]
+
+        elif name == "describe_framework":
+            plan = session_design.get("current")
+            if not plan:
+                return [content_error(
+                    "No framework plan for this session. Run design_framework first.", code="no_design",
+                    suggested_next_actions=["design_framework"])]
+            what = arguments.get("what", "summary")
+            view = framework_view(plan, what)
+            if view is None:
+                return [content_error(
+                    f"Unknown view '{what}'.", code="invalid_argument",
+                    suggested_next_actions=["describe_framework (what=summary|clocks|gpio|peripherals|init_order|unresolved)"])]
+            return [content_success(view)]
+
+        elif name == "render_framework":
+            plan = session_design.get("current")
+            if not plan:
+                return [content_error(
+                    "No framework plan for this session. Run design_framework first.", code="no_design",
+                    suggested_next_actions=["design_framework"])]
+            rendered = render_framework(plan, style=arguments.get("style", "hal"))
+            session_design["last_render"] = rendered
+            return [content_success(
+                rendered,
+                suggested_next_actions=["load_acceptance (define pass/fail checks)", "build_firmware"])]
 
         else:
             hint = _RENAMED_TOOLS.get(name)
