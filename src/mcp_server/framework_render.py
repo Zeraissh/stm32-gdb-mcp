@@ -1,12 +1,14 @@
 """Render a FrameworkPlan (Pillar D) into a HAL C init skeleton.
 
-Deterministic string templating only — no inference lives here; every fact comes
+Deterministic string templating only -- no inference lives here; every fact comes
 from the plan produced by ``framework_solver``. Values the solver could not resolve
 (an unknown alternate function, a peripheral with no design config) are emitted as
 explicit ``TODO`` comments, never guessed. The result is a ``bsp_init.c`` /
 ``bsp_init.h`` pair the agent completes, flashes, and verifies via the acceptance
 loop (Pillar C).
 """
+
+from .clock_solver import render_system_clock_config
 
 
 def render_framework(plan: dict, style: str = "hal") -> dict:
@@ -91,7 +93,7 @@ def _render_source(plan: dict) -> str:
         lines.append("")
 
     lines += _render_bsp_init(plan)
-    lines += _render_system_clock()
+    lines += _render_system_clock(plan)
     lines += _render_gpio_init(plan)
     for block in plan.get("peripherals", []):
         lines += _render_peripheral_init(block)
@@ -106,12 +108,16 @@ def _render_bsp_init(plan: dict) -> list[str]:
     return lines
 
 
-def _render_system_clock() -> list[str]:
+def _render_system_clock(plan: dict) -> list[str]:
+    clock_config = plan.get("clock_config")
+    if clock_config:
+        # The clock-tree solver resolved a concrete configuration -> emit real code.
+        return render_system_clock_config(clock_config)
     return [
         "void SystemClock_Config(void)",
         "{",
         "    /* TODO: configure the clock tree (HSE/HSI, PLL, bus prescalers) for your",
-        "     * board. A clock-tree solver is out of scope for the generator; set this",
+        "     * board. Run solve_clock_tree to synthesize this automatically, or set it",
         "     * up (e.g. in CubeMX) so the baud/timing values below resolve correctly. */",
         "}",
         "",

@@ -127,3 +127,36 @@ def test_generated_code_is_pure_ascii():
     result, _, _ = _render(design={"USART1": {"baud": 115200}})
     for f in result["files"]:
         f["content"].encode("ascii")  # raises if any non-ASCII leaked into generated C
+
+
+def _render_with_clock(request):
+    from mcp_server.clock_solver import resolve_profile, solve_clock_tree
+    plan = build_framework_plan(_board(_pins()), design={"USART1": {"baud": 115200}})
+    profile = resolve_profile(plan["mcu"]["line"], plan["mcu"]["family"])
+    plan["clock_config"] = solve_clock_tree(profile, request)["solution"]
+    result = render_framework(plan)
+    source = next(f["content"] for f in result["files"] if f["path"] == "bsp_init.c")
+    return result, source
+
+
+def test_clock_config_renders_real_system_clock():
+    result, source = _render_with_clock({"source": "HSI", "target_sysclk_hz": 80_000_000})
+
+    # The honest TODO stub is gone; a concrete configuration is emitted instead.
+    assert "TODO: configure the clock tree" not in source
+    assert "RCC_OscInitStruct.PLL.PLLN = 10;" in source
+    assert "RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;" in source
+    assert "FLASH_LATENCY_4" in source
+    assert "HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4)" in source
+
+
+def test_clock_config_generated_code_is_pure_ascii():
+    result, _ = _render_with_clock({"source": "HSI", "target_sysclk_hz": 80_000_000})
+    for f in result["files"]:
+        f["content"].encode("ascii")
+
+
+def test_clock_stub_remains_without_clock_config():
+    _, source, _ = _render()
+    assert "TODO: configure the clock tree" in source
+    assert "RCC_OscInitTypeDef" not in source

@@ -20,6 +20,7 @@ from .acceptance_model import summarize_acceptance, validate_acceptance_spec
 from .acceptance_synth import derive_acceptance_spec, dict_clock_resolver, svd_clock_resolver
 from .board_model import board_view, summarize_board
 from .board_validation import load_capability_db, validate_board
+from .clock_solver import resolve_profile, solve_clock_tree, summarize_clock_solution
 from .composites import capture_state, debug_until, flash_and_run
 from .debug_config import (
     load_debug_config as load_debug_config_file,
@@ -1521,6 +1522,30 @@ async def handle_list_tools() -> list[Tool]:
                     "session": {"type": "string", "description": "Target session id (default 'default')."}
                 }
             }
+        ),
+        Tool(
+            name="solve_clock_tree",
+            description="Synthesize a concrete SystemClock_Config() for the session's FrameworkPlan "
+                        "(Pillar D Tier 3) - the last hand-written gap in generated init code. Given a "
+                        "clock source (HSE + crystal Hz, or HSI) and a target SYSCLK, it computes the exact "
+                        "PLL dividers (M/N/P or R, Q for 48 MHz USB), AHB/APB bus prescalers, and flash "
+                        "wait-states via pure datasheet math, then stores the result so the next "
+                        "render_framework emits real clock code instead of a TODO stub. Deterministic and "
+                        "honest: an unmodelled device or an infeasible target is surfaced, never guessed. "
+                        "Built-in profiles: STM32F401/F407/F411 and mainstream L4 (<=80 MHz); pass an "
+                        "explicit profile for others. Run design_framework first.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "sysclk_hz": {"type": "integer", "description": "Target SYSCLK in Hz (e.g. 168000000)."},
+                    "source": {"type": "string", "description": "Clock source: 'HSE' or 'HSI' (default 'HSI')."},
+                    "source_hz": {"type": "integer", "description": "HSE crystal frequency in Hz (required when source=HSE)."},
+                    "need_48mhz": {"type": "boolean", "description": "Require an exact 48 MHz PLL output for USB/SDIO/RNG (default false)."},
+                    "profile": {"type": "object", "description": "Optional explicit device profile; overrides the built-in table."},
+                    "load": {"type": "boolean", "description": "Store the solution into the plan so render_framework uses it (default true)."},
+                    "session": {"type": "string", "description": "Target session id (default 'default')."}
+                }
+            }
         )
     ]
     # Compact mode (STM32_GDB_MCP_COMPACT=1): expose only a small core so nothing gets
@@ -2927,6 +2952,57 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                 "placement_source": source,
                 "loaded": loaded,
             }, suggested_next_actions=next_actions)]
+
+        elif name == "solve_clock_tree":
+            plan = session_design.get("current")
+            if not plan:
+                return [content_error(
+                    "No framework plan for this session. Run design_framework first.", code="no_design",
+                    suggested_next_actions=["design_framework"])]
+            profile_arg = arguments.get("profile")
+            if profile_arg is not None and not isinstance(profile_arg, dict):
+                return [content_error(
+                    "profile must be an object (a device clock profile).", code="invalid_argument",
+                    suggested_next_actions=["solve_clock_tree(sysclk_hz=...)"])]
+            target = arguments.get("sysclk_hz") or arguments.get("target_sysclk_hz")
+            if not target:
+                return [content_error(
+                    "Provide sysclk_hz (target SYSCLK in Hz).", code="missing_argument",
+                    suggested_next_actions=["solve_clock_tree(sysclk_hz=80000000)"])]
+            mcu = plan.get("mcu") or {}
+            profile = profile_arg or resolve_profile(mcu.get("line"), mcu.get("family"))
+            if not profile:
+                return [content_success({
+                    "feasible": False,
+                    "unresolved": [{"type": "device_unmodelled", "line": mcu.get("line"),
+                                    "family": mcu.get("family"),
+                                    "detail": "No built-in clock profile for this device; pass an explicit "
+                                              "profile with the datasheet PLL/bus limits."}],
+                    "notes": [],
+                }, suggested_next_actions=["solve_clock_tree(profile={...})"])]
+            request = {
+                "source": arguments.get("source"),
+                "source_hz": arguments.get("source_hz"),
+                "target_sysclk_hz": int(target),
+                "need_48mhz": bool(arguments.get("need_48mhz")),
+            }
+            result = solve_clock_tree(profile, request)
+            if not result["feasible"]:
+                return [content_success({
+                    "feasible": False,
+                    "unresolved": result["unresolved"],
+                    "notes": result["notes"],
+                }, suggested_next_actions=["solve_clock_tree (adjust sysclk_hz / provide source_hz)"])]
+            loaded = arguments.get("load", True)
+            if loaded:
+                plan["clock_config"] = result["solution"]  # persisted in the session plan
+            return [content_success({
+                "feasible": True,
+                "clock": summarize_clock_solution(result),
+                "solution": result["solution"],
+                "notes": result["notes"],
+                "loaded": loaded,
+            }, suggested_next_actions=["render_framework", "synthesize_acceptance"])]
 
         else:
             hint = _RENAMED_TOOLS.get(name)

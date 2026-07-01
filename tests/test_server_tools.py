@@ -1630,3 +1630,86 @@ def test_synthesize_acceptance_no_load_leaves_session_untouched():
     describe = json.loads(asyncio.run(handle_call_tool(
         "describe_acceptance", {"what": "checks", "session": sid}))[0].text)
     assert describe["ok"] is False
+
+
+# --- solve_clock_tree (Pillar D Tier 3: SystemClock_Config synthesis) --------
+
+_H7_NETLIST = (
+    '(export (version "E")'
+    '  (components'
+    '    (comp (ref "U1") (value "STM32H750VBT6") (footprint "LQFP-100")))'
+    '  (nets'
+    '    (net (code "1") (name "/USART1_TX")'
+    '      (node (ref "U1") (pin "42") (pinfunction "PA9")))))'
+)
+
+
+def test_solve_clock_tree_requires_design():
+    result = asyncio.run(handle_call_tool("solve_clock_tree", {"sysclk_hz": 80_000_000, "session": "clk-nodesign"}))
+    payload = json.loads(result[0].text)
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "no_design"
+
+
+def test_solve_clock_tree_requires_target():
+    sid = "clk-notarget"
+    _seed_design(sid)
+    result = json.loads(asyncio.run(handle_call_tool("solve_clock_tree", {"session": sid}))[0].text)
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "missing_argument"
+
+
+def test_solve_clock_tree_unmodelled_device_is_surfaced_not_guessed():
+    sid = "clk-h7"
+    asyncio.run(handle_call_tool("import_netlist", {"text": _H7_NETLIST, "session": sid}))
+    asyncio.run(handle_call_tool("design_framework", {"session": sid}))
+    result = json.loads(asyncio.run(handle_call_tool(
+        "solve_clock_tree", {"sysclk_hz": 400_000_000, "session": sid}))[0].text)
+
+    assert result["ok"] is True
+    assert result["data"]["feasible"] is False
+    assert result["data"]["unresolved"][0]["type"] == "device_unmodelled"
+
+
+def test_solve_clock_tree_happy_path_stores_config_and_renders_real_code():
+    sid = "clk-happy"
+    _seed_design(sid)
+    solved = json.loads(asyncio.run(handle_call_tool(
+        "solve_clock_tree", {"source": "HSI", "sysclk_hz": 80_000_000, "session": sid}))[0].text)
+
+    assert solved["ok"] is True
+    assert solved["data"]["feasible"] is True
+    assert solved["data"]["loaded"] is True
+    assert solved["data"]["clock"]["sysclk_mhz"] == 80.0
+
+    # render_framework now emits a real SystemClock_Config instead of the TODO stub.
+    rendered = json.loads(asyncio.run(handle_call_tool("render_framework", {"session": sid}))[0].text)
+    source = next(f["content"] for f in rendered["data"]["files"] if f["path"] == "bsp_init.c")
+    assert "TODO: configure the clock tree" not in source
+    assert "RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;" in source
+    assert "FLASH_LATENCY_4" in source
+
+
+def test_solve_clock_tree_infeasible_target_is_honest():
+    sid = "clk-infeasible"
+    _seed_design(sid)
+    result = json.loads(asyncio.run(handle_call_tool(
+        "solve_clock_tree", {"source": "HSI", "sysclk_hz": 200_000_000, "session": sid}))[0].text)
+
+    assert result["ok"] is True
+    assert result["data"]["feasible"] is False
+    assert result["data"]["unresolved"][0]["type"] == "target_exceeds_max_sysclk"
+
+
+def test_solve_clock_tree_no_load_leaves_stub():
+    sid = "clk-noload"
+    _seed_design(sid)
+    solved = json.loads(asyncio.run(handle_call_tool(
+        "solve_clock_tree", {"source": "HSI", "sysclk_hz": 80_000_000, "load": False, "session": sid}))[0].text)
+    assert solved["data"]["loaded"] is False
+
+    rendered = json.loads(asyncio.run(handle_call_tool("render_framework", {"session": sid}))[0].text)
+    source = next(f["content"] for f in rendered["data"]["files"] if f["path"] == "bsp_init.c")
+    assert "TODO: configure the clock tree" in source
