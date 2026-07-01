@@ -1,7 +1,10 @@
 import asyncio
 import json
+import threading
+import time
 
 from mcp_server.server import handle_call_tool, handle_list_tools
+from mcp_server.tool_response import content_success
 
 
 def test_server_provides_workflow_instructions():
@@ -1060,3 +1063,103 @@ def test_run_and_wait_returns_structured_stop_event(monkeypatch):
     assert payload["ok"] is True
     assert payload["data"]["reason"] == "breakpoint-hit"
     assert payload["data"]["frame"]["line"] == 42
+
+
+def test_same_session_dispatch_is_serialized(monkeypatch):
+    """Two concurrent calls to the SAME session must not touch its GDB pipe at once."""
+    import mcp_server.server as server_module
+
+    overlap = {"active": 0, "max": 0}
+    guard = threading.Lock()
+
+    def fake_dispatch(name, arguments):
+        with guard:
+            overlap["active"] += 1
+            overlap["max"] = max(overlap["max"], overlap["active"])
+        time.sleep(0.05)
+        with guard:
+            overlap["active"] -= 1
+        return [content_success({"name": name})]
+
+    monkeypatch.setattr(server_module, "_dispatch_tool", fake_dispatch)
+
+    async def run_two():
+        return await asyncio.gather(
+            handle_call_tool("read_core_registers", {}),
+            handle_call_tool("read_core_registers", {}),
+        )
+
+    asyncio.run(run_two())
+
+    # Both target the default session -> one shared per-session lock -> never overlap.
+    assert overlap["max"] == 1
+
+
+def test_different_sessions_dispatch_concurrently(monkeypatch):
+    """Calls to DIFFERENT sessions (boards) must run in parallel, not block each other."""
+    import mcp_server.server as server_module
+
+    overlap = {"active": 0, "max": 0}
+    guard = threading.Lock()
+
+    def fake_dispatch(name, arguments):
+        with guard:
+            overlap["active"] += 1
+            overlap["max"] = max(overlap["max"], overlap["active"])
+        time.sleep(0.05)
+        with guard:
+            overlap["active"] -= 1
+        return [content_success({"name": name})]
+
+    class _StubSessions:
+        def get(self, sid):
+            return None
+
+    monkeypatch.setattr(server_module, "_dispatch_tool", fake_dispatch)
+    monkeypatch.setattr(server_module, "session_manager", _StubSessions())
+
+    async def run_two():
+        return await asyncio.gather(
+            handle_call_tool("read_core_registers", {"session": "boardA"}),
+            handle_call_tool("read_core_registers", {"session": "boardB"}),
+        )
+
+    asyncio.run(run_two())
+
+    # Distinct sessions -> distinct locks -> both dispatches overlap in worker threads.
+    assert overlap["max"] == 2
+
+
+def test_blocking_dispatch_does_not_block_event_loop(monkeypatch):
+    """A blocking GDB dispatch must run off the event loop so it stays responsive."""
+    import mcp_server.server as server_module
+
+    def slow_dispatch(name, arguments):
+        time.sleep(0.2)
+        return [content_success({"name": name})]
+
+    monkeypatch.setattr(server_module, "_dispatch_tool", slow_dispatch)
+
+    async def run():
+        ticks = 0
+
+        async def ticker():
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.01)
+                ticks += 1
+
+        task = asyncio.create_task(ticker())
+        await handle_call_tool("read_core_registers", {})
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        return ticks
+
+    ticks = asyncio.run(run())
+
+    # If dispatch ran inline on the loop, the ticker could not advance during the 0.2s
+    # blocking sleep. Run off-loop it ticks ~20 times; allow generous slack.
+    assert ticks > 5

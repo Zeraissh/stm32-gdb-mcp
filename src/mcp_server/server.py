@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import types
 
@@ -167,6 +168,24 @@ def _resolve_session(arguments: dict):
         return types.SimpleNamespace(id="default", **{a: g[a if a != "last_session" else "_last_session"]
                                                        for a in _SESSION_ATTRS})
     return session_manager.get(sid)
+
+
+# One threading.Lock per session id. GDB dispatch is synchronous and blocking, and every
+# session owns a single GdbController pipe, so calls targeting the SAME session must be
+# serialized to avoid interleaving on that pipe; different sessions (boards) still run
+# concurrently. The lock is acquired inside the dispatch worker thread (see handle_call_tool),
+# so a waiting call blocks that thread — never the event loop — and it stays loop-agnostic
+# (module-global asyncio.Locks would break across the many event loops the tests create).
+# _lock_for_session is only ever called from the event-loop thread, so the dict needs no guard.
+_session_locks: dict[str, threading.Lock] = {}
+
+
+def _lock_for_session(session_id: str) -> threading.Lock:
+    lock = _session_locks.get(session_id)
+    if lock is None:
+        lock = threading.Lock()
+        _session_locks[session_id] = lock
+    return lock
 
 
 def _mcp_version() -> str:
@@ -1458,7 +1477,7 @@ def _stop_event_next_actions(event: dict) -> list[str]:
     return []
 
 
-async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
+def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
     if arguments is None:
         arguments = {}
 
@@ -1493,7 +1512,7 @@ async def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]
                 )]
             forwarded = {k: v for k, v in arguments.items() if k != disc}
             forwarded["session"] = _sess.id  # preserve session across the internal hop
-            return await _dispatch_tool(mapping[choice], forwarded)
+            return _dispatch_tool(mapping[choice], forwarded)
 
         if name == "start_debug_session":
             server_type = arguments["server_type"]
@@ -2457,8 +2476,22 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
                 "call needs a 'tool' name (not call/batch/run_scenario).", code="invalid_call")]
         return await handle_call_tool(inner, arguments.get("args", {}))
 
+    sid = arguments.get("session") or "default"
+    if sid != "default":
+        session_manager.get(sid)  # create on the loop thread (race-free) before threading out
+    lock = _lock_for_session(sid)
     start = time.monotonic()
-    result = await _dispatch_tool(name, arguments)
+
+    def _locked_dispatch():
+        # Hold the per-session lock for the whole blocking dispatch so concurrent calls to the
+        # same session can't interleave on its single GDB pipe. Waiting happens on this worker
+        # thread, so the event loop keeps servicing other sessions and protocol messages.
+        with lock:
+            return _dispatch_tool(name, arguments)
+
+    # GDB dispatch is synchronous and blocking (pipe IO, TCP port polling, multi-second waits
+    # like run_and_wait/verify_flash); run it off the event loop so the loop stays responsive.
+    result = await asyncio.to_thread(_locked_dispatch)
     duration_ms = round((time.monotonic() - start) * 1000, 1)
 
     if name not in _JOURNAL_SKIP:
