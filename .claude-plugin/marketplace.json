@@ -9,7 +9,7 @@
       "name": "stm32-debug-kit",
       "source": "./",
       "description": "STM32 hardware debugging for AI agents: the stm32-gdb-mcp server plus the stm32-debug and stm32-instrument skills, with a SessionStart hook that locks the golden rules in at conversation start.",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "category": "development",
       "tags": ["stm32", "embedded", "debugging", "gdb", "openocd", "cortex-m"]
     }
