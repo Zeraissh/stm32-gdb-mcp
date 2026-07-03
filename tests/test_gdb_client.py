@@ -69,6 +69,16 @@ def test_read_core_registers_uses_gdb_cli_info_registers():
     assert client.gdb.commands == [("info registers", 2.0)]
 
 
+def test_halt_execution_uses_configured_halt_timeout():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+    client.timeouts.set({"halt": 4.5})
+
+    client.halt_execution()
+
+    assert client.gdb.commands == [("-exec-interrupt", 4.5)]
+
+
 def test_write_typed_memory_uses_explicit_c_width():
     client = GdbClientManager()
     client.gdb = FakeGdb()

@@ -1027,6 +1027,7 @@ def test_server_exposes_composite_tools():
     assert "debug_until" in tool_names
     assert "capture_state" in tool_names
     assert "flash_and_run" in tool_names
+    assert "run_for_duration" in tool_names
 
 
 def test_read_core_registers_returns_decoded_map_and_summary(monkeypatch):
@@ -1064,6 +1065,41 @@ def test_run_and_wait_returns_structured_stop_event(monkeypatch):
     assert payload["ok"] is True
     assert payload["data"]["reason"] == "breakpoint-hit"
     assert payload["data"]["frame"]["line"] == 42
+
+
+def test_run_for_duration_tool_halts_and_returns_captured_expressions(monkeypatch):
+    import mcp_server.composites as composites_module
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def continue_execution(self):
+            return [{"message": "running"}]
+
+        def halt_execution(self):
+            return [{"message": "stopped"}]
+
+        def read_call_stack_decoded(self):
+            return [{"level": 0, "func": "poll_sensors", "file": "main.c", "line": 88, "addr": "0x08001000"}]
+
+        def read_frame_variables_decoded(self, level=None):
+            return {"state": "polling"}
+
+        def read_variable(self, expression):
+            assert expression == "rx_count"
+            return [{"payload": {"value": "7"}}]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    monkeypatch.setattr(composites_module.time, "sleep", lambda _: None)
+    payload = _payload(asyncio.run(handle_call_tool(
+        "run_for_duration",
+        {"duration_sec": 2.0, "capture": {"expressions": ["rx_count"]}},
+    )))
+
+    assert payload["ok"] is True
+    assert payload["data"]["duration_sec"] == 2.0
+    assert payload["data"]["halt"]["method"] == "halt_execution"
+    assert payload["data"]["final_frame"]["func"] == "poll_sensors"
+    assert payload["data"]["capture"]["expressions"]["values"][0]["value"] == 7
 
 
 def test_same_session_dispatch_is_serialized(monkeypatch):

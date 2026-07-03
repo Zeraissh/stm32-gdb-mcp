@@ -7,6 +7,9 @@ agent gets "set a trap, run, here is the full halted context" or "where am I /
 what happened" in a single invocation instead of five.
 """
 
+import time
+
+from .debug_experiments import capture_expressions
 from .gdb_decode import registers_summary
 
 
@@ -58,4 +61,66 @@ def flash_and_run(gdb_client, file_path, run_to="main", timeout_sec=10.0) -> dic
     gdb_client.reset_halt()
     result = debug_until(gdb_client, location=run_to, temporary=True, timeout_sec=timeout_sec)
     result["flashed"] = file_path
+    return result
+
+
+def run_for_duration(
+    gdb_client,
+    duration_sec: float,
+    then: str = "halt",
+    capture: dict | None = None,
+    resume_after: bool = False,
+    recover=None,
+    sleep=time.sleep,
+    monotonic=time.monotonic,
+) -> dict:
+    """Run naturally for a wall-clock duration, halt, then return captured state."""
+    if duration_sec < 0:
+        raise ValueError("duration_sec must be >= 0")
+    if then != "halt":
+        raise ValueError("then must be 'halt'")
+
+    started = monotonic()
+    run_response = gdb_client.continue_execution()
+    sleep(float(duration_sec))
+    elapsed = monotonic() - started
+
+    halt_method = "halt_execution"
+    halt_error = None
+    try:
+        halt_response = gdb_client.halt_execution()
+    except Exception as exc:
+        halt_error = str(exc)
+        if recover is None:
+            raise
+        recover()
+        halt_response = gdb_client.halt_execution()
+        halt_method = "recover_session+halt_execution"
+
+    context = _halted_context(gdb_client)
+    result = {
+        "duration_sec": float(duration_sec),
+        "elapsed_sec": round(elapsed, 3),
+        "run": {"method": "continue_execution", "raw_response": run_response},
+        "halt": {"method": halt_method, "raw_response": halt_response},
+        "final_frame": context["backtrace"][0] if context["backtrace"] else None,
+        "backtrace": context["backtrace"],
+        "locals": context["locals"],
+        "capture": {},
+        "resume_after": bool(resume_after),
+    }
+    if halt_error is not None:
+        result["halt"]["first_error"] = halt_error
+
+    requested = capture or {}
+    expressions = requested.get("expressions") or []
+    if expressions:
+        result["capture"]["expressions"] = capture_expressions(gdb_client, expressions)
+
+    if resume_after:
+        result["resume"] = {
+            "method": "continue_execution",
+            "raw_response": gdb_client.continue_execution(),
+        }
+
     return result

@@ -23,7 +23,7 @@ the way a senior embedded engineer would. The model is a loop:
   breakpoint *earlier* on the path (or where the flag is set), *drive* the precondition
   (write the flag/variable, send the UART/input stimulus), or use a *conditional* breakpoint.
 - **Prefer composites over manual sequences** (fewest round-trips): `flash_and_run`,
-  `debug_until`, `capture_state`.
+  `debug_until`, `capture_state`, `run_for_duration`.
 - **Writes are guarded.** Option bytes, IWDG, WWDG are blocked by default. Use
   `write_guard(action=policy)` to allow specific regions, or `dry_run` to simulate. All
   writes are audited (`write_guard(action=audit)`).

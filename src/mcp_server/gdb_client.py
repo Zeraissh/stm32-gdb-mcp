@@ -132,7 +132,7 @@ class GdbClientManager:
         return self.execute_command("-exec-continue", timeout_sec=1.0)
 
     def halt_execution(self):
-        return self.execute_command("-exec-interrupt", timeout_sec=1.0)
+        return self.execute_command("-exec-interrupt", timeout_sec=self.timeouts.get("halt"))
 
     def step_over(self):
         return self.execute_command("-exec-next", timeout_sec=1.0)

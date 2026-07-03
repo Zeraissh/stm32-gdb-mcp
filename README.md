@@ -12,7 +12,7 @@ HardFaults, and profile — and get back **decoded, structured** evidence instea
 | | |
 |---|---|
 | **Bring-up & flash** | `suggest_server_args`, `build_firmware`, `flash_and_run`, `self_check`, `reset_target` |
-| **Execution** | `run_and_wait` (structured stop events), `breakpoint`, `step`, `halt`/`continue`, `debug_until` |
+| **Execution** | `run_and_wait` (structured stop events), `run_for_duration` (soak then halt/capture), `breakpoint`, `step`, `halt`/`continue`, `debug_until` |
 | **Inspect** (halted) | `capture_state`, `read_memory`/`read_variable`, `read_registers`, `frame`, `read_peripheral_register` |
 | **Fault triage** | `reconstruct_fault_context` (faulting PC → source), `diagnose_fault`, `analyze_stack` |
 | **RTOS** | `detect_rtos`, `read_freertos`, `snapshot(scope=rtos)` |
@@ -49,6 +49,7 @@ debug_profile(action=set, mcu="STM32L431", elf_path="build/app.elf", svd_path="S
 flash_and_run(file_path="build/app.elf", run_to="main")
 breakpoint(action=set, location="my_func", condition="state == BAD")
 run_and_wait()                                         # structured stop event + next actions
+run_for_duration(duration_sec=30, capture={"expressions": ["rx_count"]})
 reconstruct_fault_context()                            # on a crash: faulting PC → file:line
 ```
 

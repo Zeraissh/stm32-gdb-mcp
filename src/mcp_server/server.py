@@ -30,7 +30,7 @@ from .acceptance_synth import (
 from .board_model import board_view, summarize_board
 from .board_validation import load_capability_db, validate_board
 from .clock_solver import resolve_profile, solve_clock_tree, summarize_clock_solution
-from .composites import capture_state, debug_until, flash_and_run
+from .composites import capture_state, debug_until, flash_and_run, run_for_duration
 from .debug_config import (
     load_debug_config as load_debug_config_file,
 )
@@ -532,6 +532,32 @@ async def handle_list_tools() -> list[Tool]:
                 },
                 "required": ["file_path"]
             }
+        ),
+        Tool(
+            name="run_for_duration",
+            description="Runs the target freely for a wall-clock duration, halts it, and returns "
+                        "one structured report with final frame/context and optional expression "
+                        "captures. Useful for counters, telemetry buffers, polling loops, and "
+                        "timing-sensitive bus diagnostics without breakpoint perturbation.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "duration_sec": {"type": "number", "description": "Seconds to let the target run freely."},
+                    "then": {"type": "string", "enum": ["halt"], "description": "Action after duration (default halt)."},
+                    "capture": {
+                        "type": "object",
+                        "properties": {
+                            "expressions": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Optional GDB/C expressions to capture after halting.",
+                            }
+                        },
+                    },
+                    "resume_after": {"type": "boolean", "description": "Resume execution after capture (default false)."},
+                },
+                "required": ["duration_sec"],
+            },
         ),
         Tool(
             name="wait_for_stop",
@@ -1716,7 +1742,7 @@ _CORE_TOOLS = {
     "suggest_server_args", "start_debug_session", "stop_debug_session", "recover_session",
     "self_check", "debug_profile", "load_symbols",
     "build_firmware", "flash_firmware", "flash_and_run",
-    "reset_target", "halt_execution", "run_and_wait", "breakpoint",
+    "reset_target", "halt_execution", "run_and_wait", "run_for_duration", "breakpoint",
     "debug_until", "capture_state",
     "read_memory", "write_memory", "read_variable", "read_call_stack",
     "reconstruct_fault_context", "analyze_stack",
@@ -1833,6 +1859,32 @@ def _autoload_symbols(sess) -> bool:
         return True
     except Exception:
         return False
+
+
+def _recover_current_session(gdb_client, gdb_manager, last_session: dict, sess) -> dict:
+    if not last_session.get("server_type"):
+        raise RuntimeError("No prior session to recover; call start_debug_session first.")
+    for teardown in (gdb_client.stop_gdb, gdb_manager.stop):
+        try:
+            teardown()
+        except Exception:
+            pass
+
+    port = retry_call(
+        lambda: gdb_manager.start(last_session["server_type"], last_session["server_args"]),
+        attempts=3,
+        backoff_base=0.8,
+    )
+    gdb_client.start_gdb()
+    resp = gdb_client.connect("localhost", port)
+    symbols = _autoload_symbols(sess)
+    return {
+        "message": "Session recovered",
+        "server_type": last_session["server_type"],
+        "port": port,
+        "symbols_loaded": symbols,
+        "raw_response": resp,
+    }
 
 
 def _stop_event_next_actions(event: dict) -> list[str]:
@@ -1997,22 +2049,15 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                     code="no_session",
                     suggested_next_actions=["start_debug_session"],
                 )]
-            for teardown in (gdb_client.stop_gdb, gdb_manager.stop):
-                try:
-                    teardown()
-                except Exception:
-                    pass
-
-            def _restart():
-                return gdb_manager.start(_last_session["server_type"], _last_session["server_args"])
-
-            port = retry_call(_restart, attempts=3, backoff_base=0.8)
-            gdb_client.start_gdb()
-            resp = gdb_client.connect("localhost", port)
-            symbols = _autoload_symbols(_sess)
+            recovered = _recover_current_session(gdb_client, gdb_manager, _last_session, _sess)
             return [content_success(
-                {"message": "Session recovered", "server_type": _last_session["server_type"], "port": port, "symbols_loaded": symbols},
-                raw_response=resp,
+                {
+                    "message": recovered["message"],
+                    "server_type": recovered["server_type"],
+                    "port": recovered["port"],
+                    "symbols_loaded": recovered["symbols_loaded"],
+                },
+                raw_response=recovered["raw_response"],
                 suggested_next_actions=["self_check", "check_session_health"],
             )]
 
@@ -2204,6 +2249,20 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                 timeout_sec=arguments.get("timeout_sec", 10.0),
             )
             return [content_success(result, suggested_next_actions=["capture_state", "debug_until"])]
+
+        elif name == "run_for_duration":
+            result = run_for_duration(
+                gdb_client,
+                duration_sec=arguments["duration_sec"],
+                then=arguments.get("then", "halt"),
+                capture=arguments.get("capture"),
+                resume_after=arguments.get("resume_after", False),
+                recover=lambda: _recover_current_session(gdb_client, gdb_manager, _last_session, _sess),
+            )
+            next_actions = ["capture_state", "read_memory"]
+            if result.get("resume_after"):
+                next_actions = ["wait_for_stop", "halt_execution"]
+            return [content_success(result, suggested_next_actions=next_actions)]
 
         elif name == "run_and_wait":
             event = gdb_client.run_and_wait(timeout_sec=arguments.get("timeout_sec", 10.0))

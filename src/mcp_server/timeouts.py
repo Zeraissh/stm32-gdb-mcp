@@ -10,6 +10,7 @@ DEFAULTS = {
     "default": 1.0,
     "connect": 5.0,
     "reset": 5.0,
+    "halt": 5.0,
     "memory": 2.0,
     "registers": 2.0,
     "source": 2.0,

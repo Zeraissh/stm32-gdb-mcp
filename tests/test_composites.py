@@ -1,4 +1,4 @@
-from mcp_server.composites import capture_state, debug_until, flash_and_run
+from mcp_server.composites import capture_state, debug_until, flash_and_run, run_for_duration
 
 
 class FakeClient:
@@ -7,6 +7,7 @@ class FakeClient:
     def __init__(self, stop_reason="breakpoint-hit"):
         self.calls = []
         self._stop_reason = stop_reason
+        self.expressions = {"rx_count": "42"}
 
     def set_breakpoint(self, location, condition=None, temporary=False, ignore_count=None):
         self.calls.append(("set_breakpoint", location, condition, temporary, ignore_count))
@@ -40,6 +41,18 @@ class FakeClient:
     def reset_halt(self, command="monitor reset halt"):
         self.calls.append(("reset_halt", command))
         return [{"message": "reset"}]
+
+    def continue_execution(self):
+        self.calls.append(("continue_execution",))
+        return [{"message": "running"}]
+
+    def halt_execution(self):
+        self.calls.append(("halt_execution",))
+        return [{"message": "stopped"}]
+
+    def read_variable(self, expression):
+        self.calls.append(("read_variable", expression))
+        return [{"payload": {"value": self.expressions[expression]}}]
 
 
 def test_debug_until_sets_temp_conditional_breakpoint_runs_and_gathers_context():
@@ -88,3 +101,55 @@ def test_flash_and_run_flashes_resets_breaks_at_entry_and_runs():
     assert ("set_breakpoint", "main", None, True, None) in client.calls
     assert result["flashed"] == "fw.elf"
     assert result["stop"]["frame"]["func"] == "trigger_divzero"
+
+
+def test_run_for_duration_continues_sleeps_halts_and_captures_expressions():
+    client = FakeClient()
+    sleeps = []
+    clock = iter([10.0, 55.0])
+
+    result = run_for_duration(
+        client,
+        duration_sec=45.0,
+        capture={"expressions": ["rx_count"]},
+        sleep=sleeps.append,
+        monotonic=lambda: next(clock),
+    )
+
+    assert client.calls[:2] == [("continue_execution",), ("halt_execution",)]
+    assert sleeps == [45.0]
+    assert result["elapsed_sec"] == 45.0
+    assert result["halt"]["method"] == "halt_execution"
+    assert result["final_frame"]["func"] == "trigger_divzero"
+    assert result["capture"]["expressions"]["values"][0]["value"] == 42
+
+
+def test_run_for_duration_can_recover_after_halt_failure_before_capture():
+    class FlakyHaltClient(FakeClient):
+        def __init__(self):
+            super().__init__()
+            self.halt_attempts = 0
+
+        def halt_execution(self):
+            self.halt_attempts += 1
+            self.calls.append(("halt_execution", self.halt_attempts))
+            if self.halt_attempts == 1:
+                raise RuntimeError("target_unresponsive")
+            return [{"message": "stopped"}]
+
+    client = FlakyHaltClient()
+    recoveries = []
+
+    result = run_for_duration(
+        client,
+        duration_sec=1.0,
+        capture={"expressions": ["rx_count"]},
+        recover=lambda: recoveries.append("recover_session"),
+        sleep=lambda _: None,
+        monotonic=lambda: 0.0,
+    )
+
+    assert recoveries == ["recover_session"]
+    assert client.halt_attempts == 2
+    assert result["halt"]["method"] == "recover_session+halt_execution"
+    assert result["capture"]["expressions"]["values"][0]["expression"] == "rx_count"

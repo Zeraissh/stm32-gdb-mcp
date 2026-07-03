@@ -18,7 +18,7 @@ The surface is lean: related ops are **action-dispatched families** — pass the
 - `debug_config` (action = load | save | validate)
 
 ## Execution control
-- `continue_execution`, `halt_execution`, `run_and_wait`, `wait_for_stop`
+- `continue_execution`, `halt_execution`, `run_and_wait`, `run_for_duration`, `wait_for_stop`
 - `step` (kind = over | into | out | instruction), `run_to_line`
 - `breakpoint` (action = set | delete | list | watch; set takes condition/temporary/ignore_count)
 
@@ -53,6 +53,7 @@ The surface is lean: related ops are **action-dispatched families** — pass the
 
 ## Hypothesis & verify
 - `debug_until` (trap + run + decoded context)
+- `run_for_duration` (natural run for counters/telemetry, then halt + optional expression capture)
 - `expressions` (action = capture | assert | compare)
 - `track_variable` (action = start | stop | get), `breakpoint` (action = watch)
 
