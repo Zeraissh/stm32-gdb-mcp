@@ -551,8 +551,33 @@ async def handle_list_tools() -> list[Tool]:
                                 "type": "array",
                                 "items": {"type": "string"},
                                 "description": "Optional GDB/C expressions to capture after halting.",
-                            }
+                            },
+                            "table": {
+                                "type": "object",
+                                "description": "Optional indexed table capture after halting: {index_range:[start,end], columns:[prefix,...]}.",
+                            },
                         },
+                    },
+                    "sample": {
+                        "type": "object",
+                        "properties": {
+                            "interval_sec": {"type": "number", "description": "Low-rate polling interval in seconds."},
+                            "interval_ms": {"type": "number", "description": "Low-rate polling interval in milliseconds."},
+                            "expressions": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "GDB/C expressions to poll while the target runs.",
+                            },
+                            "table": {
+                                "type": "object",
+                                "description": "Optional indexed table to poll: {index_range:[start,end], columns:[prefix,...]}.",
+                            },
+                            "max_samples": {
+                                "type": "integer",
+                                "description": "Safety cap on generated samples (default 10000).",
+                            },
+                        },
+                        "description": "Best-effort low-rate debugger polling while running; does not halt the target.",
                     },
                     "resume_after": {"type": "boolean", "description": "Resume execution after capture (default false)."},
                 },
@@ -2272,6 +2297,7 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                 duration_sec=arguments["duration_sec"],
                 then=arguments.get("then", "halt"),
                 capture=arguments.get("capture"),
+                sample=arguments.get("sample"),
                 resume_after=arguments.get("resume_after", False),
                 recover=lambda: _recover_current_session(gdb_client, gdb_manager, _last_session, _sess),
             )

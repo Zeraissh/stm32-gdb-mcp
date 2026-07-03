@@ -11,6 +11,7 @@ import time
 
 from .debug_experiments import capture_expressions
 from .gdb_decode import registers_summary
+from .sampling import sample_expressions, sample_interval_from_config
 
 
 def _halted_context(gdb_client) -> dict:
@@ -69,10 +70,11 @@ def run_for_duration(
     duration_sec: float,
     then: str = "halt",
     capture: dict | None = None,
+    sample: dict | None = None,
     resume_after: bool = False,
     recover=None,
-    sleep=time.sleep,
-    monotonic=time.monotonic,
+    sleep=None,
+    monotonic=None,
 ) -> dict:
     """Run naturally for a wall-clock duration, halt, then return captured state."""
     if duration_sec < 0:
@@ -80,10 +82,25 @@ def run_for_duration(
     if then != "halt":
         raise ValueError("then must be 'halt'")
 
-    started = monotonic()
+    sleep_fn = sleep or time.sleep
+    monotonic_fn = monotonic or time.monotonic
+    started = monotonic_fn()
     run_response = gdb_client.continue_execution()
-    sleep(float(duration_sec))
-    elapsed = monotonic() - started
+    sample_result = None
+    if sample:
+        sample_result = sample_expressions(
+            gdb_client,
+            duration_sec=duration_sec,
+            interval_sec=sample_interval_from_config(sample),
+            expressions=sample.get("expressions"),
+            table=sample.get("table"),
+            max_samples=sample.get("max_samples", 10_000),
+            sleep=sleep_fn,
+            monotonic=monotonic_fn,
+        )
+    else:
+        sleep_fn(float(duration_sec))
+    elapsed = monotonic_fn() - started
 
     halt_method = "halt_execution"
     halt_error = None
@@ -109,13 +126,16 @@ def run_for_duration(
         "capture": {},
         "resume_after": bool(resume_after),
     }
+    if sample_result is not None:
+        result["sample"] = sample_result
     if halt_error is not None:
         result["halt"]["first_error"] = halt_error
 
     requested = capture or {}
     expressions = requested.get("expressions") or []
-    if expressions:
-        result["capture"]["expressions"] = capture_expressions(gdb_client, expressions)
+    table = requested.get("table")
+    if expressions or table:
+        result["capture"]["expressions"] = capture_expressions(gdb_client, expressions, table=table)
 
     if resume_after:
         result["resume"] = {

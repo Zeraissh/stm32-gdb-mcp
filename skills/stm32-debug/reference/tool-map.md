@@ -53,9 +53,14 @@ The surface is lean: related ops are **action-dispatched families** — pass the
 
 ## Hypothesis & verify
 - `debug_until` (trap + run + decoded context)
-- `run_for_duration` (natural run for counters/telemetry, then halt + optional expression capture)
+- `run_for_duration` (natural run for counters/telemetry, optional low-rate `sample`, then halt + optional expression capture)
 - `expressions` (action = capture | assert | compare; capture also accepts `table={index_range,columns}`)
 - `track_variable` (action = start | stop | get), `breakpoint` (action = watch)
+
+`run_for_duration(sample={"interval_ms": 500, "expressions": [...]})` returns a time series
+and summary without setting breakpoints or intentionally halting during the sample window. It is
+best-effort debugger polling, not a high-speed trace path; use SWO or firmware ring buffers when
+the target must guarantee capture rate or preserve tight timing.
 
 ## Safety
 - `write_guard` (action = policy | audit)

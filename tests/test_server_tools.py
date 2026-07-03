@@ -1102,6 +1102,41 @@ def test_run_for_duration_tool_halts_and_returns_captured_expressions(monkeypatc
     assert payload["data"]["capture"]["expressions"]["values"][0]["value"] == 7
 
 
+def test_run_for_duration_tool_accepts_low_rate_sampling(monkeypatch):
+    import mcp_server.server as server_module
+
+    captured = {}
+
+    def fake_run_for_duration(gdb_client, **kwargs):
+        captured["kwargs"] = kwargs
+        return {
+            "duration_sec": kwargs["duration_sec"],
+            "halt": {"method": "halt_execution"},
+            "resume_after": False,
+            "sample": {
+                "mode": "debugger_polling",
+                "series": [{"index": 0, "t_sec": 0.0, "values": {"rx_count": 1}, "raw": {"rx_count": "1"}, "errors": {}}],
+                "summary": {"rx_count": {"sample_count": 1, "error_count": 0, "first": 1, "last": 1}},
+                "timing": {"sample_count": 1},
+            },
+        }
+
+    monkeypatch.setattr(server_module, "run_for_duration", fake_run_for_duration)
+
+    tool = next(tool for tool in asyncio.run(handle_list_tools()) if tool.name == "run_for_duration")
+    assert "sample" in tool.inputSchema["properties"]
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "run_for_duration",
+        {"duration_sec": 0.5, "sample": {"interval_ms": 250, "expressions": ["rx_count"]}},
+    )))
+
+    assert payload["ok"] is True
+    assert captured["kwargs"]["sample"] == {"interval_ms": 250, "expressions": ["rx_count"]}
+    assert payload["data"]["sample"]["mode"] == "debugger_polling"
+    assert payload["data"]["sample"]["series"][0]["values"]["rx_count"] == 1
+
+
 def test_expressions_capture_accepts_indexed_table_via_merged_family(monkeypatch):
     import mcp_server.server as server_module
 

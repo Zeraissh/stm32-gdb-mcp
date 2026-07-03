@@ -122,8 +122,11 @@ See `scenarios/peripheral_check.json`.
 
 1. **FreeRTOS:** `read_freertos(what="heap")` → free bytes and minimum-ever-free. If min-ever-free
    is near zero, the heap is (or was) exhausted.
-2. **Trend it:** `track_variable(action="start")` on the free-heap metric (e.g. `xFreeBytesRemaining`),
-   run the workload, `track_variable(action="get")` → a monotonic decline is a leak.
+2. **Trend it:** use `run_for_duration(duration_sec=60, sample={"interval_ms": 1000,
+   "expressions": ["xFreeBytesRemaining"]})` during the workload. A monotonic decline in the
+   returned `sample.summary` / `sample.series` is a leak signal. This is low-rate debugger
+   polling; if reads fail while running or the loop is timing-sensitive, use SWO/ring-buffer
+   telemetry instead.
 3. **Pin the leak:** breakpoint the allocator (`pvPortMalloc`/`malloc`) and the matching free,
    or `breakpoint(action=watch)` on the free-heap counter, to find allocations that are never released.
 

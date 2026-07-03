@@ -89,7 +89,10 @@ def compare_expressions_after_action(gdb_client, expressions: list[str], action_
 
 
 def _read_expression(gdb_client, expression: str) -> dict:
-    response = gdb_client.read_variable(expression)
+    try:
+        response = gdb_client.read_variable(expression)
+    except Exception as exc:
+        return {"expression": expression, "error": str(exc)}
     raw_value = _extract_value(response)
     if raw_value is None:
         return {"expression": expression, "error": "No value returned"}

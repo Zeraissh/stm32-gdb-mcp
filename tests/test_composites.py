@@ -1,4 +1,7 @@
+import pytest
+
 from mcp_server.composites import capture_state, debug_until, flash_and_run, run_for_duration
+from mcp_server.sampling import sample_expressions
 
 
 class FakeClient:
@@ -153,3 +156,126 @@ def test_run_for_duration_can_recover_after_halt_failure_before_capture():
     assert client.halt_attempts == 2
     assert result["halt"]["method"] == "recover_session+halt_execution"
     assert result["capture"]["expressions"]["values"][0]["expression"] == "rx_count"
+
+
+def test_sample_expressions_collects_time_series_and_summary_without_halting():
+    client = FakeClient()
+    client.expressions["rx_count"] = "10"
+    sleeps = []
+    times = iter([100.0, 100.5, 101.0])
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        client.expressions["rx_count"] = str(int(client.expressions["rx_count"]) + 2)
+
+    result = sample_expressions(
+        client,
+        duration_sec=1.0,
+        interval_sec=0.5,
+        expressions=["rx_count"],
+        sleep=sleep,
+        monotonic=lambda: next(times),
+    )
+
+    assert sleeps == [0.5, 0.5]
+    assert [sample["t_sec"] for sample in result["series"]] == [0.0, 0.5, 1.0]
+    assert [sample["values"]["rx_count"] for sample in result["series"]] == [10, 12, 14]
+    assert result["summary"]["rx_count"] == {
+        "sample_count": 3,
+        "error_count": 0,
+        "first": 10,
+        "last": 14,
+        "min": 10,
+        "max": 14,
+        "delta": 4,
+    }
+    assert result["timing"]["requested_interval_sec"] == 0.5
+    assert result["timing"]["sample_count"] == 3
+    assert not any(call[0] == "halt_execution" for call in client.calls)
+
+
+def test_sample_expressions_records_read_errors_per_expression():
+    class RunningReadBlockedClient(FakeClient):
+        def read_variable(self, expression):
+            self.calls.append(("read_variable", expression))
+            raise RuntimeError("target_unresponsive")
+
+    client = RunningReadBlockedClient()
+
+    result = sample_expressions(
+        client,
+        duration_sec=0.0,
+        interval_sec=0.25,
+        expressions=["rx_count"],
+        sleep=lambda _: None,
+        monotonic=lambda: 10.0,
+    )
+
+    assert result["series"] == [
+        {
+            "index": 0,
+            "t_sec": 0.0,
+            "values": {},
+            "raw": {},
+            "errors": {"rx_count": "target_unresponsive"},
+        }
+    ]
+    assert result["summary"]["rx_count"]["sample_count"] == 1
+    assert result["summary"]["rx_count"]["error_count"] == 1
+
+
+def test_sample_expressions_budget_counts_final_partial_interval_sample():
+    client = FakeClient()
+    times = iter([10.0, 10.3, 10.6, 10.9, 11.0])
+
+    with pytest.raises(ValueError, match="5 samples requested"):
+        sample_expressions(
+            client,
+            duration_sec=1.0,
+            interval_sec=0.3,
+            expressions=["rx_count"],
+            max_samples=4,
+            sleep=lambda _: None,
+            monotonic=lambda: next(times),
+        )
+
+
+def test_sample_expressions_requires_expressions_or_table():
+    client = FakeClient()
+
+    with pytest.raises(ValueError, match="expressions or table"):
+        sample_expressions(
+            client,
+            duration_sec=0.0,
+            interval_sec=0.5,
+            sleep=lambda _: None,
+            monotonic=lambda: 10.0,
+        )
+
+
+def test_run_for_duration_samples_before_final_halt_and_capture():
+    client = FakeClient()
+    sleeps = []
+    times = iter([10.0, 10.0, 10.25, 10.5, 10.5])
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        client.expressions["rx_count"] = str(int(client.expressions["rx_count"]) + 1)
+
+    result = run_for_duration(
+        client,
+        duration_sec=0.5,
+        sample={"interval_sec": 0.25, "expressions": ["rx_count"]},
+        capture={"expressions": ["rx_count"]},
+        sleep=sleep,
+        monotonic=lambda: next(times),
+    )
+
+    first_halt = client.calls.index(("halt_execution",))
+    sample_reads = [index for index, call in enumerate(client.calls) if call == ("read_variable", "rx_count")]
+    assert client.calls[0] == ("continue_execution",)
+    assert all(index < first_halt for index in sample_reads[:3])
+    assert sample_reads[-1] > first_halt
+    assert result["sample"]["series"][0]["values"]["rx_count"] == 42
+    assert result["sample"]["summary"]["rx_count"]["sample_count"] == 3
+    assert result["capture"]["expressions"]["values"][0]["value"] == 44

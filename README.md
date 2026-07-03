@@ -12,7 +12,7 @@ HardFaults, and profile — and get back **decoded, structured** evidence instea
 | | |
 |---|---|
 | **Bring-up & flash** | `suggest_server_args`, `build_firmware`, `flash_and_run`, `self_check`, `reset_target` |
-| **Execution** | `run_and_wait` (structured stop events), `run_for_duration` (soak then halt/capture), `breakpoint`, `step`, `halt`/`continue`, `debug_until` |
+| **Execution** | `run_and_wait` (structured stop events), `run_for_duration` (soak/sample then halt/capture), `breakpoint`, `step`, `halt`/`continue`, `debug_until` |
 | **Inspect** (halted) | `capture_state`, `read_memory`/`read_variable`, `read_registers`, `frame`, `read_peripheral_register` |
 | **Fault triage** | `reconstruct_fault_context` (faulting PC → source), `diagnose_fault`, `analyze_stack` |
 | **RTOS** | `detect_rtos`, `read_freertos`, `snapshot(scope=rtos)` |
@@ -50,6 +50,7 @@ flash_and_run(file_path="build/app.elf", run_to="main")
 breakpoint(action=set, location="my_func", condition="state == BAD")
 run_and_wait()                                         # structured stop event + next actions
 run_for_duration(duration_sec=30, capture={"expressions": ["rx_count"]})
+run_for_duration(duration_sec=60, sample={"interval_ms": 500, "expressions": ["rx_count", "state"]})
 reconstruct_fault_context()                            # on a crash: faulting PC → file:line
 ```
 
@@ -60,6 +61,9 @@ also ships always-on `instructions`, so any MCP client gets the debug loop witho
 ## Key rules (the target must cooperate) / 关键规则
 
 - **Reads need a HALTED core.** If a read says `target_unresponsive`, `halt_execution` first.
+- `run_for_duration(sample=...)` is best-effort low-rate debugger polling. It does not halt
+  the target itself, but running-target expression reads may fail on some probes/MCUs; use
+  SWO/ring-buffer firmware telemetry for higher-rate or guaranteed capture.
 - **A breakpoint TIMEOUT means the path was NOT reached** — don't just retry. Halt, `capture_state`,
   `breakpoint(action=list)` (hit_count=0 confirms), read the gating flag, set an earlier breakpoint
   or drive the precondition.
