@@ -107,3 +107,15 @@ def test_extract_first_memory_word_only_uses_first_word_of_a_block():
     response = [{"payload": {"memory": [{"contents": "3564011000000000"}]}}]
 
     assert client._extract_first_memory_word(response) == 0x10016435
+
+
+def test_extract_first_memory_word_prefers_structured_memory_over_stop_console():
+    client = GdbClientManager()
+
+    response = [
+        {"type": "console", "payload": "0x08000108 in ?? ()\n"},
+        {"type": "notify", "message": "stopped", "payload": {"frame": {"addr": "0x08000108"}}},
+        {"type": "result", "payload": {"memory": [{"contents": "30c22f41"}]}},
+    ]
+
+    assert client._extract_first_memory_word(response) == 0x412FC230

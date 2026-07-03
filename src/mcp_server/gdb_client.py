@@ -391,6 +391,9 @@ class GdbClientManager:
         return int.from_bytes(bytes.fromhex(word), "little")
 
     def _extract_first_memory_word(self, response):
+        # GDB can emit async connection/stop records before the actual memory result.
+        # Prefer structured MI memory payloads across the whole response so a console
+        # line such as "0x08000108 in ?? ()" is never mistaken for the read value.
         for record in response:
             payload = record.get("payload")
             if isinstance(payload, dict):
@@ -402,6 +405,8 @@ class GdbClientManager:
                 contents = payload.get("contents")
                 if contents:
                     return self._le_hex_word_to_int(contents)
+        for record in response:
+            payload = record.get("payload")
             if isinstance(payload, str) and "0x" in payload:
                 token = payload.split("0x", 1)[1].split()[0].rstrip(":,")
                 return int(token, 16)
