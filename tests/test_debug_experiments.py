@@ -11,6 +11,10 @@ class FakeGdbClient:
             "counter": "0x2a",
             "state": '"RUN"',
             "temperature": "37",
+            "s_diag_cb_count[2]": "10",
+            "s_diag_ack_count[2]": "8",
+            "s_diag_cb_count[3]": "11",
+            "s_diag_ack_count[3]": "9",
         }
         self.queries = []
 
@@ -33,6 +37,43 @@ def test_capture_expressions_parses_values_and_errors():
             {"expression": "missing", "error": "No value returned"},
         ]
     }
+
+
+def test_capture_expressions_builds_indexed_table_and_preserves_values():
+    client = FakeGdbClient()
+
+    result = capture_expressions(
+        client,
+        table={"index_range": [2, 3], "columns": ["s_diag_cb_count", "s_diag_ack_count"]},
+    )
+
+    assert [item["expression"] for item in result["values"]] == [
+        "s_diag_cb_count[2]",
+        "s_diag_ack_count[2]",
+        "s_diag_cb_count[3]",
+        "s_diag_ack_count[3]",
+    ]
+    assert result["tables"] == [
+        {
+            "kind": "indexed",
+            "index_range": [2, 3],
+            "columns": ["s_diag_cb_count", "s_diag_ack_count"],
+            "rows": [
+                {
+                    "index": 2,
+                    "values": {"s_diag_cb_count": 10, "s_diag_ack_count": 8},
+                    "raw": {"s_diag_cb_count": "10", "s_diag_ack_count": "8"},
+                    "errors": {},
+                },
+                {
+                    "index": 3,
+                    "values": {"s_diag_cb_count": 11, "s_diag_ack_count": 9},
+                    "raw": {"s_diag_cb_count": "11", "s_diag_ack_count": "9"},
+                    "errors": {},
+                },
+            ],
+        }
+    ]
 
 
 def test_assert_expressions_evaluates_numeric_and_string_conditions():

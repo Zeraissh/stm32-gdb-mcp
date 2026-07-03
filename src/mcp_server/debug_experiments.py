@@ -11,10 +11,20 @@ OPERATORS = {
 }
 
 
-def capture_expressions(gdb_client, expressions: list[str]) -> dict:
-    return {
-        "values": [_read_expression(gdb_client, expression) for expression in expressions]
-    }
+def capture_expressions(gdb_client, expressions: list[str] | None = None, table: dict | None = None) -> dict:
+    expression_list = list(expressions or [])
+    table_plan = _build_table_plan(table)
+    seen = set(expression_list)
+    for expression in table_plan["expressions"]:
+        if expression not in seen:
+            expression_list.append(expression)
+            seen.add(expression)
+
+    values = [_read_expression(gdb_client, expression) for expression in expression_list]
+    result = {"values": values}
+    if table_plan["table"] is not None:
+        result["tables"] = [_build_table_result(table_plan["table"], values)]
+    return result
 
 
 def assert_expressions(gdb_client, assertions: list[dict]) -> dict:
@@ -118,3 +128,51 @@ def _normalize_expected(value):
         parsed, _ = _parse_value(value)
         return parsed
     return value
+
+
+def _build_table_plan(table):
+    if table is None:
+        return {"table": None, "expressions": []}
+    start, end = _validate_index_range(table.get("index_range"))
+    columns = table.get("columns")
+    if not isinstance(columns, list) or not columns or not all(isinstance(column, str) and column for column in columns):
+        raise ValueError("table.columns must be a non-empty list of expression prefixes")
+    expressions = [f"{column}[{index}]" for index in range(start, end + 1) for column in columns]
+    return {
+        "table": {"kind": "indexed", "index_range": [start, end], "columns": columns},
+        "expressions": expressions,
+    }
+
+
+def _validate_index_range(value):
+    if (
+        not isinstance(value, list)
+        or len(value) != 2
+        or isinstance(value[0], bool)
+        or isinstance(value[1], bool)
+        or not isinstance(value[0], int)
+        or not isinstance(value[1], int)
+    ):
+        raise ValueError("table.index_range must be [start, end] integers")
+    start, end = value
+    if end < start:
+        raise ValueError("table.index_range end must be >= start")
+    return start, end
+
+
+def _build_table_result(table, values):
+    by_expression = {item["expression"]: item for item in values}
+    start, end = table["index_range"]
+    rows = []
+    for index in range(start, end + 1):
+        row = {"index": index, "values": {}, "raw": {}, "errors": {}}
+        for column in table["columns"]:
+            expression = f"{column}[{index}]"
+            item = by_expression[expression]
+            if "error" in item:
+                row["errors"][column] = item["error"]
+                continue
+            row["values"][column] = item.get("value")
+            row["raw"][column] = item.get("raw")
+        rows.append(row)
+    return {**table, "rows": rows}

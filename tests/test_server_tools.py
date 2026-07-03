@@ -1102,6 +1102,40 @@ def test_run_for_duration_tool_halts_and_returns_captured_expressions(monkeypatc
     assert payload["data"]["capture"]["expressions"]["values"][0]["value"] == 7
 
 
+def test_expressions_capture_accepts_indexed_table_via_merged_family(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def __init__(self):
+            self.values = {
+                "s_diag_cb_count[2]": "10",
+                "s_diag_ack_count[2]": "8",
+            }
+
+        def read_variable(self, expression):
+            return [{"payload": {"value": self.values[expression]}}]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool(
+        "expressions",
+        {
+            "action": "capture",
+            "table": {"index_range": [2, 2], "columns": ["s_diag_cb_count", "s_diag_ack_count"]},
+        },
+    )))
+
+    assert payload["ok"] is True
+    assert payload["data"]["values"][0]["expression"] == "s_diag_cb_count[2]"
+    assert payload["data"]["tables"][0]["rows"] == [
+        {
+            "index": 2,
+            "values": {"s_diag_cb_count": 10, "s_diag_ack_count": 8},
+            "raw": {"s_diag_cb_count": "10", "s_diag_ack_count": "8"},
+            "errors": {},
+        }
+    ]
+
+
 def test_same_session_dispatch_is_serialized(monkeypatch):
     """Two concurrent calls to the SAME session must not touch its GDB pipe at once."""
     import mcp_server.server as server_module

@@ -54,7 +54,7 @@ The surface is lean: related ops are **action-dispatched families** — pass the
 ## Hypothesis & verify
 - `debug_until` (trap + run + decoded context)
 - `run_for_duration` (natural run for counters/telemetry, then halt + optional expression capture)
-- `expressions` (action = capture | assert | compare)
+- `expressions` (action = capture | assert | compare; capture also accepts `table={index_range,columns}`)
 - `track_variable` (action = start | stop | get), `breakpoint` (action = watch)
 
 ## Safety

@@ -903,13 +903,29 @@ async def handle_list_tools() -> list[Tool]:
         ),
         Tool(
             name="capture_expressions",
-            description="Reads a batch of GDB expressions and returns parsed values.",
+            description="Reads GDB expressions and returns parsed values. Optionally builds an indexed table from "
+                        "array-like expression prefixes while preserving the raw per-expression values.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "expressions": {"type": "array", "items": {"type": "string"}, "description": "GDB/C expressions to evaluate."}
+                    "expressions": {"type": "array", "items": {"type": "string"}, "description": "GDB/C expressions to evaluate."},
+                    "table": {
+                        "type": "object",
+                        "description": "Optional indexed table request, e.g. columns=['count'], index_range=[2,6].",
+                        "properties": {
+                            "index_range": {
+                                "type": "array",
+                                "items": {"type": "integer"},
+                                "description": "Inclusive [start, end] index range.",
+                            },
+                            "columns": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Expression prefixes; each cell reads prefix[index].",
+                            },
+                        },
+                    },
                 },
-                "required": ["expressions"]
             }
         ),
         Tool(
@@ -1768,7 +1784,7 @@ _MERGED = {
     "expressions": ("action",
         {"assert": "assert_expressions", "capture": "capture_expressions", "compare": "compare_expressions_after_action"},
         "Evaluate C/GDB expressions.",
-        "action=assert(expressions) | capture(expressions) | compare(expressions, action_to_run_between)."),
+        "action=assert(expressions) | capture(expressions or table={index_range,columns}) | compare(expressions, action_to_run_between)."),
     "coredump": ("action",
         {"capture": "capture_coredump", "load": "load_coredump"},
         "Core-dump capture / load.",
@@ -2572,7 +2588,11 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
             return [content_success({"message": f"{arguments['channel']} log buffer cleared", "channel": arguments["channel"]})]
 
         elif name == "capture_expressions":
-            result = run_expression_capture(gdb_client, arguments["expressions"])
+            result = run_expression_capture(
+                gdb_client,
+                expressions=arguments.get("expressions"),
+                table=arguments.get("table"),
+            )
             return [content_success(result)]
 
         elif name == "assert_expressions":
