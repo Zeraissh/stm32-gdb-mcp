@@ -50,7 +50,7 @@ STM32_DEV_ID = {
     # H7 / WB / WL / U5
     0x450: "STM32H74x/75x", 0x480: "STM32H7A3/B3", 0x483: "STM32H72x/73x",
     0x495: "STM32WB55", 0x496: "STM32WB35", 0x497: "STM32WLEx/WL5x",
-    0x482: "STM32U575/585", 0x481: "STM32U59x/5Ax",
+    0x455: "STM32U535/U545", 0x482: "STM32U575/585", 0x481: "STM32U59x/5Ax",
 }
 
 
@@ -85,7 +85,13 @@ def evaluate_self_check(cpuid: int, dbgmcu_idcode: int, expected_family: str | N
     if expected_family:
         prefix = expected_family[:7].lower()  # e.g. "stm32l4"
         dev_ok = device is not None and prefix in device.lower()
-        if not dev_ok:
+        if not dev_ok and _is_advisory_u5_dbgmcu_miss(dev_id, expected_family, core):
+            dev_ok = True
+            detail += (
+                f"; DBGMCU IDCODE unavailable, but CPUID reports {core} "
+                "which is consistent with STM32U5"
+            )
+        elif not dev_ok:
             detail += f"; does not match expected '{expected_family}'"
     checks.append({"name": "dbgmcu_dev_id", "ok": dev_ok, "detail": detail})
 
@@ -97,3 +103,7 @@ def evaluate_self_check(cpuid: int, dbgmcu_idcode: int, expected_family: str | N
         "device": device,
         "checks": checks,
     }
+
+
+def _is_advisory_u5_dbgmcu_miss(dev_id: int, expected_family: str, core: str | None) -> bool:
+    return dev_id == 0 and expected_family.upper().startswith("STM32U5") and core == "Cortex-M33"

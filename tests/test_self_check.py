@@ -36,6 +36,34 @@ def test_stm32l151_dev_id_0x427_is_recognized():
     assert dev["ok"] is True
 
 
+def test_stm32u535_dev_id_0x455_is_recognized():
+    result = evaluate_self_check(0x410FD214, 0x10000455, expected_family="STM32U535")
+
+    assert result["ok"] is True
+    assert result["core"] == "Cortex-M33"
+    assert "U535" in result["device"]
+    dev = next(c for c in result["checks"] if c["name"] == "dbgmcu_dev_id")
+    assert dev["ok"] is True
+
+
+def test_stm32u535_zero_dbgmcu_idcode_is_advisory_when_cpuid_matches():
+    result = evaluate_self_check(0x410FD214, 0x00000000, expected_family="STM32U535")
+
+    assert result["ok"] is True
+    assert result["core"] == "Cortex-M33"
+    dev = next(c for c in result["checks"] if c["name"] == "dbgmcu_dev_id")
+    assert dev["ok"] is True
+    assert "unavailable" in dev["detail"]
+
+
+def test_zero_dbgmcu_idcode_still_fails_for_non_u5_expected_family():
+    result = evaluate_self_check(L431_CPUID, 0x00000000, expected_family="STM32L431")
+
+    assert result["ok"] is False
+    dev = next(c for c in result["checks"] if c["name"] == "dbgmcu_dev_id")
+    assert dev["ok"] is False
+
+
 def test_expected_family_mismatch_is_flagged():
     result = evaluate_self_check(L431_CPUID, L431_IDCODE, expected_family="STM32F407")
 

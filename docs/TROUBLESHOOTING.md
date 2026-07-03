@@ -61,6 +61,10 @@ The DBGMCU dev_id wasn't in the lookup table. The table now covers the full STM3
 MCP** and restart it. Flashing/debugging is unaffected either way — it's only the friendly
 device-name check.
 
+For STM32U5 targets, a DBGMCU IDCODE read of `0x00000000` is treated as advisory when
+CPUID still reports Cortex-M33 and `expected_family` starts with `STM32U5`; this avoids
+failing an otherwise usable session solely because the U5 debug ID register was unavailable.
+
 ## A tool returns `missing_argument`
 
 You omitted a required argument; the message names it (e.g. "Missing required argument:
