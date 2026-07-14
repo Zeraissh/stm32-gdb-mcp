@@ -71,6 +71,7 @@ from .memory_guard import MemoryWriteGuard
 from .metrics import compute_metrics
 from .netlist_parser import load_netlist_file, parse_netlist
 from .openocd_config import find_openocd_scripts, suggest_server_args
+from .probe_detector import detect_probes, format_probe_list
 from .project_inspector import inspect_project
 from .provenance import annotate_spec_sources
 from .reliability import retry_call
@@ -295,6 +296,17 @@ async def handle_list_tools() -> list[Tool]:
                     "probe": {"type": "string", "description": "Debug probe: stlink, jlink, or cmsis-dap."}
                 },
                 "required": ["mcu", "probe"]
+            }
+        ),
+        Tool(
+            name="detect_probe",
+            description="Auto-detects connected debug probes via USB enumeration (ST-Link, CMSIS-DAP/DAPLink, J-Link). "
+                        "Returns a list of detected probes with type, serial number, and manufacturer. "
+                        "If exactly one probe is found, it is recommended for use with suggest_server_args. "
+                        "If multiple probes are found, use the serial number to disambiguate in start_debug_session.",
+            inputSchema={
+                "type": "object",
+                "properties": {}
             }
         ),
         Tool(
@@ -1780,7 +1792,7 @@ _RENAMED_TOOLS = {
 
 # Core tools kept visible in compact mode; everything else is reached via `call`.
 _CORE_TOOLS = {
-    "suggest_server_args", "start_debug_session", "stop_debug_session", "recover_session",
+    "detect_probe", "suggest_server_args", "start_debug_session", "stop_debug_session", "recover_session",
     "self_check", "debug_profile", "load_symbols",
     "build_firmware", "flash_firmware", "flash_and_run",
     "reset_target", "halt_execution", "run_and_wait", "run_for_duration", "breakpoint",
@@ -2078,6 +2090,43 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
             scripts_dir = find_openocd_scripts()
             result = suggest_server_args(arguments["mcu"], arguments["probe"], scripts_dir=scripts_dir)
             return [content_success(result, suggested_next_actions=["start_debug_session", "self_check"])]
+
+        elif name == "detect_probe":
+            probes = detect_probes()
+            probe_list = [p.to_dict() for p in probes]
+            
+            if not probes:
+                return [content_success({
+                    "message": "No debug probes detected.",
+                    "probes": [],
+                    "details": "Check that:\n- A debug probe (ST-Link, CMSIS-DAP, J-Link) is connected via USB\n"
+                              "- Drivers are installed (esp. libusb on Linux, WinUSB driver on Windows for CMSIS-DAP)\n"
+                              "- USB permissions are correct (may need 'sudo' on Linux)",
+                    "suggested_next_actions": ["start_debug_session"],
+                })]
+            
+            single = probes[0] if len(probes) == 1 else None
+            message = format_probe_list(probes, verbose=True)
+            result = {
+                "message": message,
+                "probes": probe_list,
+                "count": len(probes),
+            }
+            
+            if single:
+                result["single"] = single.to_dict()
+                result["suggested_probe_type"] = single.type
+                if single.serial:
+                    result["suggested_serial"] = single.serial
+                return [content_success(
+                    result,
+                    suggested_next_actions=["suggest_server_args"],
+                )]
+            else:
+                return [content_success(
+                    result,
+                    suggested_next_actions=["detect_probe"],
+                )]
 
         elif name == "set_adapter_speed":
             resp = gdb_client.set_adapter_speed(arguments["khz"])
