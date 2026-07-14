@@ -100,3 +100,61 @@ def find_openocd_scripts(openocd_path: str | None = None) -> str | None:
         if os.path.isdir(os.path.join(candidate, "interface")):
             return candidate
     return None
+
+
+def detect_and_suggest(mcu: str, serial: str | None = None, scripts_dir: str | None = None, 
+                      speed_khz: int = 4000) -> dict:
+    """Auto-detect probe type and return OpenOCD server_args for the given MCU.
+
+    Enumerates connected USB debug probes and uses the detected probe type to
+    automatically select the correct interface config. If multiple probes are
+    found, optionally filters by serial number.
+
+    Args:
+        mcu: MCU or family (e.g. 'STM32L431' or 'STM32F4').
+        serial: Optional serial number to select a specific probe (required if multiple probes found).
+        scripts_dir: Optional OpenOCD scripts directory for validation.
+        speed_khz: Adapter speed in kHz (default 4000).
+
+    Returns:
+        Dict with server_args and probe info, or error dict if detection fails.
+
+    Raises:
+        ValueError: If MCU is unknown/unsupported, or probe detection is inconclusive.
+    """
+    from .probe_detector import detect_probes
+
+    probes = detect_probes()
+    
+    if not probes:
+        raise ValueError("No debug probes detected. Check USB connection and drivers.")
+    
+    # Filter by serial if specified
+    if serial:
+        matching = [p for p in probes if p.serial and p.serial.lower() == serial.lower()]
+        if not matching:
+            raise ValueError(
+                f"No probe found with serial '{serial}'. Available: "
+                f"{[p.serial for p in probes if p.serial]}"
+            )
+        probes = matching
+    
+    if len(probes) > 1:
+        serials = [p.serial or p.product or p.manufacturer or "(unknown)" for p in probes]
+        raise ValueError(
+            f"Found {len(probes)} probes, need serial to disambiguate: {serials}. "
+            f"Pass serial=<serial> to detect_and_suggest."
+        )
+    
+    probe = probes[0]
+    # Normalize probe type for suggest_server_args (it expects "stlink", "jlink", or "cmsis-dap")
+    probe_map = {
+        "st-link": "stlink",
+        "daplink": "cmsis-dap",
+    }
+    probe_type = probe_map.get(probe.type, probe.type)
+    
+    result = suggest_server_args(mcu, probe_type, scripts_dir=scripts_dir, speed_khz=speed_khz)
+    result["detected_probe"] = probe.to_dict()
+    return result
+
