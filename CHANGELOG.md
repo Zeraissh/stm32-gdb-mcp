@@ -2,6 +2,10 @@
 
 ## Unreleased / 未发布
 
+- No changes yet. / 暂无变更。
+
+## [0.4.0] - 2026-07-14
+
 ### Tooling / 工具链
 
 - Added `.github/workflows/release.yml`: pushing a `v*` tag now runs the quality gate (ruff / pytest / compileall), builds the sdist + wheel, checks the metadata with `twine`, and publishes to **PyPI via Trusted Publishing (OIDC)** — no API token is stored in the repo. `workflow_dispatch` runs everything except the publish step for a safe dry run. One-time PyPI trusted-publisher + `pypi` environment setup is documented in `docs/release.md`. 新增 `.github/workflows/release.yml`：推送 `v*` 标签即跑质量门禁、构建 sdist + wheel、用 `twine` 校验元数据，并通过 **PyPI 可信发布 (OIDC)** 发布（仓库不存 token）；`workflow_dispatch` 可做除发布外的安全演练；一次性配置见 `docs/release.md`。
