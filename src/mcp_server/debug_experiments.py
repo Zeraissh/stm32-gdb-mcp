@@ -1,6 +1,8 @@
 import operator as operator_module
 import re
 
+from .gdb_decode import decode_evaluated_value
+
 OPERATORS = {
     "==": operator_module.eq,
     "!=": operator_module.ne,
@@ -106,15 +108,7 @@ def _read_expression(gdb_client, expression: str) -> dict:
 
 
 def _extract_value(response):
-    for record in response:
-        if record.get("message") == "error":
-            continue
-        payload = record.get("payload")
-        if isinstance(payload, dict) and "value" in payload:
-            return payload["value"]
-        if isinstance(payload, str):
-            return payload
-    return None
+    return decode_evaluated_value(response)
 
 
 def _parse_value(value):

@@ -13,6 +13,9 @@ The session ended (or never started). To recover:
    arguments (with retry/backoff). Use it after `probe_unavailable` / `connection_lost`.
 3. If `start_debug_session` **isn't in your tool list** (see compact mode below), invoke it
    via the escape hatch: `call(tool="start_debug_session", args={...})`.
+4. For OpenOCD, if you omit `server_args`, set profile `mcu` + `probe` first
+   (`set_debug_profile` / `load_debug_config`) so `start_debug_session` can infer the
+   interface/target config automatically.
 
 You should never need to restart the whole MCP server to start a new session.
 

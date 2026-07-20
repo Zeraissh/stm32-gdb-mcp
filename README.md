@@ -42,10 +42,10 @@ file into your firmware project. Per-client config snippets + the rules template
 ## 30-second quickstart / 快速上手
 
 ```text
-suggest_server_args(mcu="STM32L431", probe="stlink")   # → the -f interface/target cfgs
-start_debug_session(server_type="openocd", server_args=[...])
+debug_profile(action=set, mcu="STM32L431", probe="stlink", elf_path="build/app.elf", svd_path="STM32L4.svd")
+suggest_server_args(mcu="STM32L431")                  # probe omitted -> use profile probe
+start_debug_session(server_type="openocd")            # server_args omitted -> infer from profile mcu/probe
 self_check()                                           # ALWAYS first: byte order, core, family
-debug_profile(action=set, mcu="STM32L431", elf_path="build/app.elf", svd_path="STM32L4.svd")
 flash_and_run(file_path="build/app.elf", run_to="main")
 breakpoint(action=set, location="my_func", condition="state == BAD")
 run_and_wait()                                         # structured stop event + next actions
