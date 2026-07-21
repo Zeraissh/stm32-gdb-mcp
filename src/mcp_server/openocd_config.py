@@ -7,8 +7,13 @@ common STM32 family + probe to the right config files and validates them against
 the actual OpenOCD install.
 """
 
+import json
 import os
+import platform
+import re
 import shutil
+import subprocess
+from pathlib import Path
 
 # STM32 family key (letter+digit) -> OpenOCD target config.
 _TARGET_CFG = {
@@ -40,6 +45,204 @@ _INTERFACE_CFG = {
     "cmsisdap": "cmsis-dap.cfg",
     "dap": "cmsis-dap.cfg",
 }
+
+_STLINK_PIDS = {
+    "3744", "3748", "374a", "374b", "374d", "374e", "374f", "3752", "3753", "3754",
+}
+
+
+def _classify_usb_probe(vid: str, pid: str, product: str = "", manufacturer: str = "", serial: str = ""):
+    vid = (vid or "").lower().removeprefix("0x")
+    pid = (pid or "").lower().removeprefix("0x")
+    product = (product or "").strip()
+    manufacturer = (manufacturer or "").strip()
+    serial = (serial or "").strip()
+    text = f"{manufacturer} {product}".lower()
+
+    if vid == "0483" and pid in _STLINK_PIDS:
+        probe_type = "stlink"
+        default_product = "ST-Link"
+    elif vid == "1366" or "j-link" in text or "jlink" in text:
+        probe_type = "jlink"
+        default_product = "J-Link"
+    elif "cmsis-dap" in text or "cmsis dap" in text or "daplink" in text:
+        probe_type = "cmsis-dap"
+        default_product = "CMSIS-DAP"
+    else:
+        return None
+
+    result = {
+        "type": probe_type,
+        "product": product or default_product,
+        "vid": vid,
+        "pid": pid,
+    }
+    if manufacturer:
+        result["manufacturer"] = manufacturer
+    if serial:
+        result["serial"] = serial
+    return result
+
+
+def _deduplicate_probes(probes: list[dict]) -> list[dict]:
+    unique = []
+    seen = set()
+    for probe in probes:
+        key = (
+            probe.get("type"),
+            probe.get("serial") or probe.get("instance_id") or probe.get("location") or probe.get("product"),
+        )
+        if key not in seen:
+            seen.add(key)
+            unique.append(probe)
+    return unique
+
+
+def _parse_windows_pnp(payload: str) -> list[dict]:
+    try:
+        devices = json.loads(payload or "[]")
+    except json.JSONDecodeError:
+        return []
+    if isinstance(devices, dict):
+        devices = [devices]
+
+    probes = []
+    for device in devices:
+        instance_id = str(device.get("InstanceId") or "")
+        upper = instance_id.upper()
+        if "&MI_" in upper:
+            continue
+        vid_match = re.search(r"VID_([0-9A-F]{4})", upper)
+        pid_match = re.search(r"PID_([0-9A-F]{4})", upper)
+        if not vid_match or not pid_match:
+            continue
+        serial = instance_id.rsplit("\\", 1)[-1] if "\\" in instance_id else ""
+        if "&" in serial:
+            serial = ""
+        probe = _classify_usb_probe(
+            vid_match.group(1),
+            pid_match.group(1),
+            str(device.get("FriendlyName") or ""),
+            str(device.get("Manufacturer") or ""),
+            serial,
+        )
+        if probe:
+            probe["instance_id"] = instance_id
+            probes.append(probe)
+    return _deduplicate_probes(probes)
+
+
+def _read_usb_attr(path: Path, name: str) -> str:
+    try:
+        return (path / name).read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+
+
+def _detect_linux_sysfs(root: str | Path = "/sys/bus/usb/devices") -> list[dict]:
+    root = Path(root)
+    if not root.is_dir():
+        return []
+    probes = []
+    for device in sorted(root.iterdir()):
+        vid = _read_usb_attr(device, "idVendor")
+        pid = _read_usb_attr(device, "idProduct")
+        if not vid or not pid:
+            continue
+        probe = _classify_usb_probe(
+            vid,
+            pid,
+            _read_usb_attr(device, "product"),
+            _read_usb_attr(device, "manufacturer"),
+            _read_usb_attr(device, "serial"),
+        )
+        if probe:
+            probe["location"] = device.name
+            probes.append(probe)
+    return _deduplicate_probes(probes)
+
+
+def _parse_macos_usb(payload: str) -> list[dict]:
+    try:
+        tree = json.loads(payload or "{}")
+    except json.JSONDecodeError:
+        return []
+    probes = []
+
+    def visit(value):
+        if isinstance(value, dict):
+            vid_match = re.search(r"0x([0-9a-fA-F]{4})", str(value.get("vendor_id") or ""))
+            pid_match = re.search(r"0x([0-9a-fA-F]{4})", str(value.get("product_id") or ""))
+            if vid_match and pid_match:
+                probe = _classify_usb_probe(
+                    vid_match.group(1),
+                    pid_match.group(1),
+                    str(value.get("_name") or ""),
+                    str(value.get("manufacturer") or ""),
+                    str(value.get("serial_num") or ""),
+                )
+                if probe:
+                    probes.append(probe)
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(tree)
+    return _deduplicate_probes(probes)
+
+
+def detect_probe(platform_name: str | None = None, sysfs_root: str | Path = "/sys/bus/usb/devices", runner=None) -> dict:
+    """Enumerate connected debug probes from OS USB device state."""
+    system = platform_name or platform.system()
+    runner = runner or subprocess.run
+    probes = []
+    method = "none"
+    error = None
+    try:
+        if system == "Windows":
+            command = (
+                "Get-PnpDevice -PresentOnly | Where-Object { $_.InstanceId -match '^USB\\\\VID_' } | "
+                "Select-Object InstanceId,FriendlyName,Manufacturer | ConvertTo-Json -Compress"
+            )
+            result = runner(
+                ["powershell", "-NoProfile", "-Command", command],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            method = "windows_pnp"
+            if result.returncode:
+                error = (result.stderr or "Windows USB enumeration failed").strip()
+            else:
+                probes = _parse_windows_pnp(result.stdout)
+        elif system == "Linux":
+            probes = _detect_linux_sysfs(sysfs_root)
+            method = "linux_sysfs"
+        elif system == "Darwin":
+            result = runner(
+                ["system_profiler", "SPUSBDataType", "-json"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            method = "macos_system_profiler"
+            if result.returncode:
+                error = (result.stderr or "macOS USB enumeration failed").strip()
+            else:
+                probes = _parse_macos_usb(result.stdout)
+        else:
+            error = f"Unsupported host platform: {system}"
+    except (OSError, subprocess.SubprocessError) as exc:
+        error = str(exc)
+
+    response = {"probes": probes, "count": len(probes), "method": method}
+    if error:
+        response["error"] = error
+    if len(probes) == 1:
+        response["suggested_probe"] = probes[0]["type"]
+    return response
 
 
 def _family_key(mcu: str) -> str:

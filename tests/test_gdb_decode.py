@@ -109,3 +109,17 @@ def test_decode_evaluated_value_prefers_structured_payload():
 def test_decode_memory_bytes_reads_mi_memory_contents():
     records = [{"type": "result", "payload": {"memory": [{"contents": "00112233"}]}}]
     assert decode_memory_bytes(records) == "00112233"
+
+
+def test_decoded_values_ignore_empty_strings_and_continue_searching():
+    values = [
+        {"type": "result", "payload": {"value": "  "}},
+        {"type": "result", "payload": {"value": "42"}},
+    ]
+    memory = [
+        {"type": "result", "payload": {"memory": [{"contents": "  "}]}},
+        {"type": "result", "payload": {"memory": [{"contents": "DEADBEEF"}]}},
+    ]
+
+    assert decode_evaluated_value(values) == "42"
+    assert decode_memory_bytes(memory) == "DEADBEEF"

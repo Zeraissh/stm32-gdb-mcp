@@ -36,3 +36,42 @@ def test_manager_list_and_close():
     assert m.close("rackA") is True
     assert m.close("rackA") is False     # already gone
     assert {row["session"] for row in m.list()} == {"rackB"}
+
+
+def test_manager_does_not_reuse_a_live_sessions_port_after_middle_close():
+    m = SessionManager()
+    m.get("default")
+    m.get("rackA")
+    rack_b_port = m.get("rackB").gdb_port
+
+    assert m.close("rackA") is True
+
+    assert m.get("rackC").gdb_port != rack_b_port
+
+
+def test_session_teardown_stops_debug_and_all_log_readers():
+    session = DebugSession("rack")
+    stopped = []
+
+    class Stopper:
+        def __init__(self, name):
+            self.name = name
+
+        def stop(self):
+            stopped.append(self.name)
+
+    class GdbStopper:
+        def stop_gdb(self):
+            stopped.append("gdb")
+
+    session.gdb_client = GdbStopper()
+    session.gdb_manager = Stopper("server")
+    session.variable_tracker = Stopper("tracker")
+    session.rtt_log_reader = Stopper("rtt")
+    session.swo_log_reader = Stopper("swo")
+    session.swo_file_reader = Stopper("swo_file")
+    session.uart_log_reader = Stopper("uart")
+
+    session.teardown()
+
+    assert set(stopped) == {"gdb", "server", "tracker", "rtt", "swo", "swo_file", "uart"}

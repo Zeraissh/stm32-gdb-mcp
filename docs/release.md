@@ -15,6 +15,7 @@ python -m pytest -q
 python -m compileall src tests
 python -m build
 python scripts/check_dist_contents.py dist/*
+cd dist && sha256sum *.whl *.tar.gz > SHA256SUMS.txt
 ```
 
 - Run hardware-in-the-loop validation for hardware-facing changes. / 对影响硬件行为的变更运行硬件在环验证。
@@ -69,9 +70,11 @@ git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
-Pushing a `v*` tag triggers `.github/workflows/release.yml`, which runs the
-quality gate, builds the sdist + wheel, and publishes them to PyPI. 推送 `v*`
-标签会触发 `.github/workflows/release.yml`：跑质量门禁、构建 sdist + wheel 并发布到 PyPI。
+Pushing a `v*` tag triggers `.github/workflows/release.yml`, which runs the quality gate,
+builds the sdist + wheel, publishes them to PyPI, verifies `SHA256SUMS.txt`, and then creates
+or updates the GitHub Release with all three assets. / 推送 `v*` 标签会触发
+`.github/workflows/release.yml`：运行质量门禁、构建 sdist + wheel、发布到 PyPI、验证
+`SHA256SUMS.txt`，随后创建或更新 GitHub Release 并附上三项资产。
 
 ## Publishing to PyPI / 发布到 PyPI
 
@@ -102,7 +105,8 @@ stored in the repo. 发布通过 **PyPI 可信发布 (OIDC)** 自动完成，仓
 Release → Run workflow* (`workflow_dispatch`). It runs the quality gate and
 build but **skips the publish step** (that step only runs for `v*` tag pushes),
 so you can verify the pipeline without releasing. 通过 *Actions → Release → Run
-workflow* 手动触发只会跑质量门禁与构建、**跳过发布步骤**（发布仅在 `v*` 标签推送时执行），可用于在不发布的情况下验证流水线。
+workflow* 手动触发只会跑质量门禁、构建和校验和生成，**跳过 PyPI 与 GitHub 发布步骤**
+（发布仅在 `v*` 标签推送时执行），可用于在不发布的情况下验证流水线。
 
 **Existing tags / 已存在的标签**: a tag pushed before this workflow existed
 (e.g. `v0.3.0`) will not have triggered it. To publish that version, either

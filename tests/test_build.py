@@ -4,6 +4,7 @@ import pytest
 
 from mcp_server.build import (
     is_build_success,
+    parse_keil_built_target,
     resolve_build_command,
     run_build,
 )
@@ -17,6 +18,16 @@ def test_keil_build_uses_uv4_batch_flags():
 def test_keil_rebuild_uses_dash_r():
     cmd = resolve_build_command("keil", project="fw.uvprojx", rebuild=True, uv4_path="UV4.exe")
     assert cmd[:3] == ["UV4.exe", "-r", "fw.uvprojx"]
+
+
+def test_keil_build_forwards_requested_target():
+    cmd = resolve_build_command("keil", project="fw.uvprojx", target="Release", uv4_path="UV4.exe")
+    assert cmd == ["UV4.exe", "-b", "fw.uvprojx", "-j0", "-t", "Release"]
+
+
+def test_keil_log_reports_actual_built_target():
+    assert parse_keil_built_target("Rebuild target 'Release'\n") == "Release"
+    assert parse_keil_built_target("no target line") is None
 
 
 def test_cmake_build_with_target_and_config():

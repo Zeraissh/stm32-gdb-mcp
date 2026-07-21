@@ -178,6 +178,10 @@ def _validate_hil(hil, errors: list[str]):
         value = hil.get(field)
         if value is not None and not isinstance(value, bool):
             errors.append(f"hil.{field} must be a boolean")
+    for field in ("expected_core", "expected_device"):
+        value = hil.get(field)
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            errors.append(f"hil.{field} must be a non-empty string")
 
 
 def _is_string_list(value):

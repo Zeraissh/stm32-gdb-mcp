@@ -1,0 +1,23 @@
+mcu: STM32L151CCT6
+board: Custom STM32L151 board
+probe: stlink
+server_type: openocd
+server_args:
+  - -f
+  - interface/stlink.cfg
+  - -f
+  - target/stm32l1.cfg
+  - -c
+  - adapter speed 1000
+project_root: .
+reset:
+  strategy: default
+  halt: true
+hil:
+  halt: true
+  read_cpuid: true
+  read_dbgmcu_idcode: true
+  flash: false
+  expected_core: Cortex-M3
+  expected_device: STM32L151
+notes: "STM32L151 OpenOCD/ST-Link identity smoke config. / STM32L151 OpenOCD/ST-Link 身份烟测配置。"

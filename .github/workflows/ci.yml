@@ -8,10 +8,21 @@ on:
 
 jobs:
   test:
-    runs-on: windows-latest
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        include:
+          - os: windows-latest
+            python-version: "3.10"
+          - os: windows-latest
+            python-version: "3.11"
+          - os: windows-latest
+            python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.13"
+          - os: ubuntu-latest
+            python-version: "3.13"
 
     steps:
       - uses: actions/checkout@v7
@@ -49,6 +60,7 @@ jobs:
         run: python scripts/check_dist_contents.py dist/*
 
       - name: Smoke clean wheel install
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $wheel = (Get-ChildItem -Path dist -Filter *.whl | Select-Object -First 1).FullName
@@ -60,3 +72,14 @@ jobs:
           .\.wheel-venv\Scripts\stm32-gdb-mcp-install.exe --help
           .\.wheel-venv\Scripts\stm32-gdb-mcp-deploy.exe --help
           .\.wheel-venv\Scripts\stm32-gdb-mcp-install.exe codex --print | .\.wheel-venv\Scripts\python.exe -c "import sys; text = sys.stdin.read(); assert text.startswith('[mcp_servers.stm32-gdb-mcp]') and 'command = ' in text"
+
+      - name: Smoke clean wheel install (POSIX)
+        if: runner.os != 'Windows'
+        run: |
+          python -m venv .wheel-venv
+          .wheel-venv/bin/python -m pip install --disable-pip-version-check dist/*.whl
+          .wheel-venv/bin/python -c "from importlib.metadata import entry_points; expected = {'stm32-gdb-mcp', 'stm32-gdb-mcp-check-env', 'stm32-gdb-mcp-install', 'stm32-gdb-mcp-deploy'}; scripts = {entry.name: entry for entry in entry_points(group='console_scripts')}; assert expected <= set(scripts); [scripts[name].load() for name in expected]"
+          .wheel-venv/bin/stm32-gdb-mcp-check-env --help
+          .wheel-venv/bin/stm32-gdb-mcp-install --help
+          .wheel-venv/bin/stm32-gdb-mcp-deploy --help
+          .wheel-venv/bin/stm32-gdb-mcp-install codex --print | .wheel-venv/bin/python -c "import sys, tomllib; data = tomllib.loads(sys.stdin.read()); assert 'stm32-gdb-mcp' in data['mcp_servers']"

@@ -22,6 +22,7 @@ schema with `tool_help`.
 - `flash_firmware`, `flash_and_run`, `verify_flash`, `reset_target`
 - `inspect_project`, `debug_profile(action=get|set)`
 - `debug_config(action=load|save|validate)`
+- `detect_probe`: physical USB probe inventory with serials; never guesses among multiple probes / 读取带序列号的物理 USB 探针；多探针时不猜测
 - `suggest_server_args`: validated backend arguments / 生成已验证的 GDB Server 参数
 
 ## Execution control / 执行控制

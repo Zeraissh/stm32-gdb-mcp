@@ -66,12 +66,14 @@ batch(steps=[
 ], stop_on_error=true)
 ```
 
-If no config exists, obtain validated OpenOCD arguments with `suggest_server_args`, start
-the session, run `self_check`, then set `debug_profile(action=set, mcu=..., elf_path=...,
-svd_path=...)`. Only call `flash_and_run` after flashing is explicitly intended.
+If no config exists, call `detect_probe`, then obtain validated OpenOCD arguments with
+`suggest_server_args`, start the session, run `self_check`, and set
+`debug_profile(action=set, mcu=..., elf_path=..., svd_path=...)`. Auto-selection is allowed
+only for one detected probe. Only call `flash_and_run` after flashing is explicitly intended.
 
-若没有配置文件，先用 `suggest_server_args` 获取已验证的 OpenOCD 参数，启动后立即
-`self_check`，再设置 MCU、ELF 和 SVD profile。只有明确要烧录时才调用 `flash_and_run`。
+若没有配置文件，先调用 `detect_probe`，再用 `suggest_server_args` 获取已验证的 OpenOCD 参数，
+启动后立即 `self_check`，再设置 MCU、ELF 和 SVD profile。只有检测到唯一探针时才允许自动选择；
+只有明确要烧录时才调用 `flash_and_run`。
 
 See / 参见：`scenarios/bringup.json`。
 

@@ -1,41 +1,57 @@
 from __future__ import annotations
 
 import argparse
-import importlib.metadata
 import os
 import re
 import shutil
 import subprocess
 import sys
 import time
+from importlib import metadata
 from pathlib import Path
 
+from . import __version__ as PACKAGE_VERSION
+from .env_check import CONSOLE_SCRIPTS
 from .install_mcp import CLIENTS, SERVER_NAME, install_codex, install_json
 from .project_inspector import inspect_project
 
 REPO = Path(__file__).resolve().parents[2]
 
 
-def ensure_server_installed(no_install: bool) -> bool:
+def _server_installation_state() -> dict:
     try:
-        importlib.metadata.version(SERVER_NAME)
-        package_installed = True
-    except importlib.metadata.PackageNotFoundError:
-        package_installed = False
-    if package_installed or shutil.which(SERVER_NAME):
-        print("[ok] server present")
+        installed_version = metadata.version(SERVER_NAME)
+    except metadata.PackageNotFoundError:
+        installed_version = None
+    scripts = {name: shutil.which(name) for name in CONSOLE_SCRIPTS}
+    return {
+        "version": installed_version,
+        "version_match": installed_version == PACKAGE_VERSION,
+        "scripts": scripts,
+        "entrypoints_ready": all(scripts.values()),
+    }
+
+
+def ensure_server_installed(no_install: bool, upgrade: bool = False) -> bool:
+    state = _server_installation_state()
+    complete = state["version_match"] and state["entrypoints_ready"]
+    if complete and not upgrade:
+        print(f"[ok] server {PACKAGE_VERSION} present")
         return True
     if no_install:
-        print(f"! server not found. Install it: pip install -e \"{REPO}\"")
+        print(
+            f"! server install is stale or incomplete (installed={state['version']!r}, "
+            f"expected={PACKAGE_VERSION!r}). Re-run without --no-install."
+        )
         return False
-    print("Installing the MCP server (pip install -e .) ...")
-    result = subprocess.run([sys.executable, "-m", "pip", "install", "-e", str(REPO)], check=False)
-    try:
-        importlib.metadata.version(SERVER_NAME)
-        package_installed = True
-    except importlib.metadata.PackageNotFoundError:
-        package_installed = False
-    ok = result.returncode == 0 and (package_installed or shutil.which(SERVER_NAME))
+
+    source_checkout = (REPO / "pyproject.toml").is_file()
+    target = ["-e", str(REPO)] if source_checkout else [SERVER_NAME]
+    command = [sys.executable, "-m", "pip", "install", "--upgrade", *target]
+    print("Installing or upgrading the MCP server ...")
+    result = subprocess.run(command, check=False)
+    refreshed = _server_installation_state()
+    ok = result.returncode == 0 and refreshed["version_match"] and refreshed["entrypoints_ready"]
     print("[ok] server installed" if ok else "! install failed - install it manually")
     return bool(ok)
 
@@ -164,6 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--project", required=True, help="firmware project directory")
     parser.add_argument("--ide", default="", help="comma-separated: cursor,vscode,codex,windsurf,trae,claude-desktop")
     parser.add_argument("--no-install", action="store_true", help="do not pip-install the server")
+    parser.add_argument("--upgrade", action="store_true", help="reinstall/upgrade the server and console scripts")
     parser.add_argument("--no-rules", action="store_true", help="do not write AGENTS.md / copilot-instructions")
     parser.add_argument("--force", action="store_true", help="overwrite existing rules files")
     args = parser.parse_args(argv)
@@ -174,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     print("== 1. server ==")
-    if not ensure_server_installed(args.no_install):
+    if not ensure_server_installed(args.no_install, upgrade=args.upgrade):
         return 1
 
     ides = [client.strip() for client in args.ide.split(",") if client.strip()]

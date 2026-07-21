@@ -3,10 +3,19 @@ name: Hardware-in-the-loop
 on:
   workflow_dispatch:
     inputs:
+      board:
+        description: "Connected board profile / 当前连接的板卡配置"
+        required: true
+        default: "l431"
+        type: choice
+        options:
+          - l151
+          - l431
+          - u535
       config_path:
-        description: "Debug config to validate before running board smoke checks / 运行板卡烟测前要校验的调试配置"
+        description: "Optional config override / 可选的配置路径覆盖"
         required: false
-        default: "examples/configs/stm32l431_openocd.yaml"
+        default: ""
       smoke_command:
         description: "Optional command to run on the self-hosted STM32 runner / 在自托管 STM32 runner 上运行的可选命令"
         required: false
@@ -19,7 +28,8 @@ jobs:
     timeout-minutes: 30
     env:
       STM32_GDB_MCP_HIL: "1"
-      STM32_GDB_MCP_HIL_CONFIG: ${{ inputs.config_path }}
+      STM32_GDB_MCP_HIL_CONFIG: ${{ inputs.config_path || format('examples/configs/stm32{0}_openocd.yaml', inputs.board) }}
+      STM32_GDB_MCP_HIL_REPORT: artifacts/hil-${{ inputs.board }}.json
 
     steps:
       - uses: actions/checkout@v7
@@ -37,16 +47,20 @@ jobs:
         run: python setup_env.py
 
       - name: Validate debug config
-        run: >
-          python -c "from mcp_server.debug_config import load_debug_config;
-          import json, sys;
-          result = load_debug_config(r'${{ inputs.config_path }}');
-          print(json.dumps(result['validation'], indent=2));
-          sys.exit(0 if result['validation']['valid'] else 1)"
+        run: python -c "from mcp_server.debug_config import load_debug_config; import json, os, sys; result = load_debug_config(os.environ['STM32_GDB_MCP_HIL_CONFIG']); print(json.dumps(result['validation'], indent=2)); sys.exit(0 if result['validation']['valid'] else 1)"
 
       - name: Run HIL smoke tests
-        run: python -m pytest -q tests/hil -m hil
+        run: python -m pytest -q tests/hil -m hil --junitxml=artifacts/hil-${{ inputs.board }}-junit.xml
 
       - name: Run optional board smoke command
         if: ${{ inputs.smoke_command != '' }}
         run: ${{ inputs.smoke_command }}
+
+      - name: Upload HIL evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hil-${{ inputs.board }}-${{ github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 30

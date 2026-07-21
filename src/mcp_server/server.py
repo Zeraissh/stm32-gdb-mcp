@@ -51,7 +51,7 @@ from .debug_experiments import (
 from .debug_freeze import plan_freeze_writes, resolve_freeze_targets, supported_families
 from .debug_profile import DebugProfileStore
 from .debug_report import build_report, write_report
-from .debug_session import SessionManager
+from .debug_session import SessionManager, teardown_debug_session
 from .debug_snapshot import collect_debug_snapshot
 from .error_taxonomy import classify_error
 from .exception_frame import build_fault_context
@@ -69,7 +69,7 @@ from .loop_orchestrator import GdbLoopSteps, run_iteration
 from .memory_guard import MemoryWriteGuard
 from .metrics import compute_metrics
 from .netlist_parser import load_netlist_file, parse_netlist
-from .openocd_config import find_openocd_scripts, suggest_server_args
+from .openocd_config import detect_probe, find_openocd_scripts, suggest_server_args
 from .project_inspector import inspect_project
 from .provenance import annotate_spec_sources
 from .reliability import retry_call
@@ -170,6 +170,21 @@ if not logger.handlers:
     logger.addHandler(_handler)
     logger.setLevel(logging.INFO)
 
+
+def _probe_selection(arguments: dict, profile: dict) -> tuple[str | None, str | None, dict | None, dict | None]:
+    probe = arguments.get("probe")
+    if probe:
+        return probe, "argument", None, None
+    probe = profile.get("probe")
+    if probe:
+        return probe, "profile", None, None
+
+    detection = detect_probe()
+    probes = detection.get("probes") or []
+    if len(probes) == 1:
+        return probes[0].get("type"), "detected", probes[0], detection
+    return None, None, None, detection
+
 @server.list_tools()
 async def handle_list_tools() -> list[Tool]:
     global _tool_catalog
@@ -186,13 +201,15 @@ async def handle_list_tools() -> list[Tool]:
                 "properties": {
                     "server_type": {"type": "string", "enum": ["openocd", "stlink", "jlink"], "description": "Type of debug server backend."},
                     "server_args": {"type": "array", "items": {"type": "string"}, "description": "Optional args for the server e.g. ['-f', 'interface/stlink.cfg', '-f', 'target/stm32f4x.cfg']"},
-                    "serial": {"type": "string", "description": "Probe/ST-Link serial to select a specific board (for concurrent multi-target). Auto-added as 'adapter serial <serial>'."}
+                    "probe": {"type": "string", "description": "Optional OpenOCD probe type: stlink, jlink, or cmsis-dap. Falls back to the profile, then a unique detected probe."},
+                    "serial": {"type": "string", "description": "Probe/ST-Link serial to select a specific board (for concurrent multi-target). Auto-added as 'adapter serial <serial>'."},
+                    "speed_khz": {"type": "integer", "description": "OpenOCD adapter clock used when server_args are inferred (default 4000)."}
                 }
             }
         ),
         Tool(
             name="stop_debug_session",
-            description="Stops the GDB client and server.",
+            description="Stops the GDB client/server, variable tracking, and all active RTT/SWO/UART readers.",
             inputSchema={"type": "object", "properties": {}}
         ),
         Tool(
@@ -209,6 +226,12 @@ async def handle_list_tools() -> list[Tool]:
                     "halt": {"type": "boolean", "description": "Halt the core before reading (default true)."}
                 }
             }
+        ),
+        Tool(
+            name="detect_probe",
+            description="Lists physical ST-Link, J-Link, and CMSIS-DAP probes currently connected over USB. "
+                        "Preserves serial numbers so multiple identical probes are never silently collapsed.",
+            inputSchema={"type": "object", "properties": {}}
         ),
         Tool(
             name="suggest_server_args",
@@ -326,7 +349,7 @@ async def handle_list_tools() -> list[Tool]:
                     "uv4_path": {"type": "string", "description": "keil: path to UV4.exe (auto-detected if omitted)."},
                     "build_dir": {"type": "string", "description": "cmake: the configured build directory."},
                     "directory": {"type": "string", "description": "make: directory containing the Makefile."},
-                    "target": {"type": "string", "description": "cmake/make: build target."},
+                    "target": {"type": "string", "description": "Keil/CMake/make build target."},
                     "config": {"type": "string", "description": "cmake: build config, e.g. Debug/Release."},
                     "command": {"type": "array", "items": {"type": "string"}, "description": "custom: full argv to run."},
                     "cwd": {"type": "string", "description": "Working directory for the build."},
@@ -1891,12 +1914,18 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                 configured_args = profile.get("server_args", [])
                 server_args_source = "profile" if configured_args else "arguments"
             args = list(configured_args or [])
+            detected_probe = None
             if server_type == "openocd" and not args:
                 mcu = profile.get("mcu")
-                probe = profile.get("probe")
+                probe, probe_source, detected_probe, detection = _probe_selection(arguments, profile)
                 if mcu and probe:
                     try:
-                        inferred = suggest_server_args(mcu, probe, scripts_dir=find_openocd_scripts())
+                        inferred = suggest_server_args(
+                            mcu,
+                            probe,
+                            scripts_dir=find_openocd_scripts(),
+                            speed_khz=arguments.get("speed_khz", 4000),
+                        )
                     except ValueError as exc:
                         return [content_error(
                             f"Could not infer openocd server_args from debug profile: {exc}",
@@ -1904,9 +1933,17 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                             suggested_next_actions=["set_debug_profile", "load_debug_config", "suggest_server_args"],
                         )]
                     args = list(inferred["server_args"])
-                    server_args_source = "profile"
+                    server_args_source = probe_source
                 else:
-                    missing = [field for field in ("mcu", "probe") if not profile.get(field)]
+                    if detection and detection.get("count", 0) > 1:
+                        return [content_error(
+                            "Multiple debug probes are connected. Select one with profile probe/serial or pass "
+                            "explicit server_args; no probe was chosen automatically.",
+                            code="multiple_probes",
+                            raw_response=detection,
+                            suggested_next_actions=["detect_probe", "set_debug_profile", "start_debug_session"],
+                        )]
+                    missing = [field for field, value in (("mcu", mcu), ("probe", probe)) if not value]
                     return [content_error(
                         "openocd requires server_args naming the probe interface and target, e.g. "
                         "['-f','interface/stlink.cfg','-f','target/stm32l4x.cfg']. Pass server_args, "
@@ -1926,7 +1963,12 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                         args += ["-c", "telnet_port disabled"]
                     if "tcl_port" not in _argstr:
                         args += ["-c", "tcl_port disabled"]
-                serial = arguments.get("serial") or profile.get("serial") or getattr(_sess, "serial", None)
+                serial = (
+                    arguments.get("serial")
+                    or profile.get("serial")
+                    or (detected_probe or {}).get("serial")
+                    or getattr(_sess, "serial", None)
+                )
                 if serial and "adapter serial" not in _argstr:
                     args += ["-c", f"adapter serial {serial}"]
                     _sess.serial = serial
@@ -1978,19 +2020,40 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                     "port": port,
                     "symbols_loaded": symbols,
                     "server_args_source": server_args_source,
+                    "detected_probe": detected_probe,
                 },
                 raw_response=resp,
             )]
 
+        elif name == "detect_probe":
+            detected = detect_probe()
+            if detected.get("error"):
+                return [content_error(
+                    f"Could not enumerate host USB debug probes: {detected['error']}",
+                    code="probe_detection_failed",
+                    raw_response=detected,
+                    suggested_next_actions=["set_debug_profile", "suggest_server_args"],
+                )]
+            actions = ["suggest_server_args", "start_debug_session"] if detected.get("count") == 1 else []
+            return [content_success(detected, suggested_next_actions=actions)]
+
         elif name == "suggest_server_args":
             scripts_dir = find_openocd_scripts()
             profile = debug_profile.get()
-            probe = arguments.get("probe") or profile.get("probe")
+            probe, probe_source, detected_probe, detection = _probe_selection(arguments, profile)
             if not probe:
+                if detection and detection.get("count", 0) > 1:
+                    return [content_error(
+                        "Multiple debug probes are connected. Pass probe explicitly or select one in the debug profile.",
+                        code="multiple_probes",
+                        raw_response=detection,
+                        suggested_next_actions=["detect_probe", "set_debug_profile", "suggest_server_args"],
+                    )]
                 return [content_error(
                     "Missing required argument: 'probe'. Provide it directly, or set debug profile probe "
-                    "first (set_debug_profile/load_debug_config). Known probes: stlink, jlink, cmsis-dap.",
+                    "first, or connect exactly one supported probe. Known probes: stlink, jlink, cmsis-dap.",
                     code="missing_argument",
+                    raw_response=detection,
                     suggested_next_actions=["set_debug_profile", "load_debug_config", "suggest_server_args"],
                 )]
             result = suggest_server_args(
@@ -2000,7 +2063,9 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                 speed_khz=arguments.get("speed_khz", 4000),
             )
             result["probe"] = probe
-            result["probe_source"] = "argument" if arguments.get("probe") else "profile"
+            result["probe_source"] = probe_source
+            if detected_probe:
+                result["detected_probe"] = detected_probe
             return [content_success(result, suggested_next_actions=["start_debug_session", "self_check"])]
 
         elif name == "set_adapter_speed":
@@ -2027,9 +2092,7 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
             )]
 
         elif name == "stop_debug_session":
-            gdb_client.stop_gdb()
-            gdb_manager.stop()
-            variable_tracker.stop()
+            teardown_debug_session(_sess)
             return [content_success({"message": "Debug session stopped"})]
 
         elif name == "self_check":
@@ -2090,21 +2153,35 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                 cmd, timeout=arguments.get("timeout_sec", 600), cwd=arguments.get("cwd"), log_path=log_path
             )
             success = build_mod.is_build_success(kind, result["returncode"])
+            built_target = build_mod.parse_keil_built_target(result["output"]) if kind == "keil" else None
+            requested_target = arguments.get("target")
+            target_mismatch = bool(requested_target and built_target and requested_target != built_target)
             payload = {
                 "kind": kind,
                 "command": cmd,
                 "returncode": result["returncode"],
                 "success": success,
                 "log_tail": result["output"][-4000:],
+                "requested_target": requested_target,
+                "built_target": built_target,
+                "target_mismatch": target_mismatch,
             }
-            if success:
-                return [content_success(payload, suggested_next_actions=["flash_firmware", "flash_and_run"])]
-            return [content_error(
-                f"Build failed (exit {result['returncode']})",
-                code="build_failed",
-                raw_response=payload,
-                suggested_next_actions=["get_session"],
-            )]
+            if not success:
+                return [content_error(
+                    f"Build failed (exit {result['returncode']})",
+                    code="build_failed",
+                    raw_response=payload,
+                    suggested_next_actions=["get_session"],
+                )]
+            if target_mismatch:
+                payload["success"] = False
+                return [content_error(
+                    f"Keil built target '{built_target}', not requested target '{requested_target}'.",
+                    code="build_target_mismatch",
+                    raw_response=payload,
+                    suggested_next_actions=["inspect_project", "build_firmware"],
+                )]
+            return [content_success(payload, suggested_next_actions=["flash_firmware", "flash_and_run"])]
 
         elif name == "load_symbols":
             elf_path = arguments.get("elf_path") or debug_profile.get().get("elf_path")
