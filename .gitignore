@@ -4,6 +4,9 @@ __pycache__/
 *.pyd
 .Python
 .pytest_cache/
+.codegraph/
+.claude/
+.vs/
 .mypy_cache/
 .ruff_cache/
 .coverage
