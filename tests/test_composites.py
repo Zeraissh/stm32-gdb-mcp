@@ -97,10 +97,17 @@ def test_capture_state_bundles_registers_backtrace_and_locals_in_one_call():
 def test_flash_and_run_flashes_resets_breaks_at_entry_and_runs():
     client = FakeClient()
 
-    result = flash_and_run(client, file_path="fw.elf", run_to="main", timeout_sec=8.0)
+    result = flash_and_run(
+        client,
+        file_path="fw.elf",
+        run_to="main",
+        timeout_sec=8.0,
+        reset_command="monitor soft_reset_halt",
+    )
 
     names = [c[0] for c in client.calls]
     assert names.index("load_firmware") < names.index("reset_halt") < names.index("run_and_wait")
+    assert ("reset_halt", "monitor soft_reset_halt") in client.calls
     assert ("set_breakpoint", "main", None, True, None) in client.calls
     assert result["flashed"] == "fw.elf"
     assert result["stop"]["frame"]["func"] == "trigger_divzero"

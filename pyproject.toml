@@ -1,6 +1,6 @@
 [project]
 name = "stm32-gdb-mcp"
-version = "0.3.0"
+version = "0.4.0"
 description = "MCP server for STM32 debugging with GDB"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -26,8 +26,26 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/mcp_server"]
 
+[tool.hatch.build.targets.sdist]
+exclude = [
+    ".claude/**",
+    ".codegraph/**",
+    ".mypy_cache/**",
+    ".pytest_cache/**",
+    ".ruff_cache/**",
+    ".venv/**",
+    ".vs/**",
+    "__pycache__/**",
+    "build/**",
+    "dist/**",
+    "venv/**",
+]
+
 [project.scripts]
 stm32-gdb-mcp = "mcp_server.server:cli_main"
+stm32-gdb-mcp-check-env = "mcp_server.env_check:main"
+stm32-gdb-mcp-install = "mcp_server.install_mcp:main"
+stm32-gdb-mcp-deploy = "mcp_server.deploy:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

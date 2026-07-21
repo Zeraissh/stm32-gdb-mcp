@@ -5,7 +5,7 @@ def test_gdb_timeout_maps_to_unresponsive_with_halt_suggestion():
     c = classify_error("Did not get response from gdb after 1.0 seconds")
 
     assert c["code"] == "target_unresponsive"
-    assert c["retryable"] is True
+    assert c["retryable"] is False
     assert "halt_execution" in c["suggested_next_actions"]
 
 
@@ -33,7 +33,7 @@ def test_memory_access_error_suggests_halt():
 def test_probe_open_failure_is_retryable_with_recover_suggestion():
     c = classify_error("Error: open failed")
 
-    assert c["code"] == "probe_unavailable"
+    assert c["code"] == "probe_busy"
     assert c["retryable"] is True
     assert "recover_session" in c["suggested_next_actions"]
 
@@ -46,9 +46,35 @@ def test_openocd_missing_config_is_a_non_retryable_config_error():
     c = classify_error(msg)
 
     # Must NOT be misclassified as a retryable probe issue — retrying won't help.
-    assert c["code"] == "invalid_server_args"
+    assert c["code"] == "invalid_target_config"
     assert c["retryable"] is False
     assert "load_debug_config" in c["suggested_next_actions"]
+
+
+def test_u535_target_failure_is_not_misreported_or_retried():
+    c = classify_error(
+        "Error: init mode failed (unable to connect to target)\n"
+        "Error: target stm32u5x.cpu examination failed\n"
+        "Error: open failed"
+    )
+
+    assert c["code"] == "target_unreachable"
+    assert c["retryable"] is False
+    assert "recover_session" not in c["suggested_next_actions"]
+
+
+def test_debug_authentication_failure_is_actionable_and_not_retried():
+    c = classify_error("STM32U5 device is locked. Debug Authentication is required.")
+
+    assert c["code"] == "debug_auth_required"
+    assert c["retryable"] is False
+
+
+def test_missing_backend_executable_is_not_retried():
+    c = classify_error("[WinError 2] The system cannot find the file specified: 'openocd'")
+
+    assert c["code"] == "tool_missing"
+    assert c["retryable"] is False
 
 
 def test_unknown_error_falls_back():

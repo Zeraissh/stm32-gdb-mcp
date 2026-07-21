@@ -26,3 +26,15 @@ def test_debug_profile_store_rejects_unknown_fields():
         assert "unexpected" in str(exc)
     else:
         raise AssertionError("Expected ValueError")
+
+
+def test_debug_profile_store_retains_probe_and_logging_defaults():
+    store = DebugProfileStore()
+    defaults = {
+        "serial": "066BFF",
+        "rtt": {"command": "RTTClient", "args": ["--device", "STM32L431"]},
+        "uart": {"port": "COM7", "baudrate": 921600, "timeout": 0.2},
+        "swo": {"file": "logs/swo.log"},
+    }
+
+    assert store.update(defaults) == defaults

@@ -1,2 +1,2 @@
 # MCP Server for STM32 debugging with GDB
-__version__ = "0.3.0"
+__version__ = "0.4.0"

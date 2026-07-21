@@ -75,3 +75,41 @@ def test_validate_debug_config_rejects_invalid_reset_and_hil_sections():
     assert "reset.strategy must be a string" in result["errors"]
     assert "reset.halt must be a boolean" in result["errors"]
     assert "hil.flash must be a boolean" in result["errors"]
+
+
+def test_load_resolves_runtime_paths_relative_to_config_file(tmp_path):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    path = config_dir / "debug.yaml"
+    path.write_text(
+        "\n".join([
+            "serial: 066BFF",
+            "elf_path: ../build/app.elf",
+            "svd_path: svd/device.svd",
+            "project_root: ..",
+            "swo:",
+            "  file: logs/swo.log",
+        ]),
+        encoding="utf-8",
+    )
+
+    loaded = load_debug_config(str(path))
+
+    assert loaded["path"] == str(path.resolve())
+    assert loaded["config"]["elf_path"] == str((config_dir / "../build/app.elf").resolve())
+    assert loaded["config"]["svd_path"] == str((config_dir / "svd/device.svd").resolve())
+    assert loaded["config"]["project_root"] == str(tmp_path.resolve())
+    assert loaded["config"]["swo"]["file"] == str((config_dir / "logs/swo.log").resolve())
+    assert loaded["validation"] == {"valid": True, "errors": [], "warnings": []}
+
+
+def test_validate_debug_config_rejects_invalid_serial_and_swo():
+    result = validate_debug_config({
+        "serial": "",
+        "swo": {"file": 123, "args": "--raw"},
+    })
+
+    assert result["valid"] is False
+    assert "serial must not be empty when provided" in result["errors"]
+    assert "swo.file must be a string" in result["errors"]
+    assert "swo.args must be a list of strings" in result["errors"]

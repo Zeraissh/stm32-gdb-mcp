@@ -1,6 +1,40 @@
 import json
 
-from mcp.types import TextContent
+from mcp.types import CallToolResult, TextContent
+
+OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ok": {"type": "boolean"},
+        "data": {},
+        "error": {
+            "anyOf": [
+                {"type": "null"},
+                {
+                    "type": "object",
+                    "properties": {
+                        "message": {"type": "string"},
+                        "code": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                    },
+                    "required": ["message", "code"],
+                    "additionalProperties": False,
+                },
+            ],
+        },
+        "raw_response": {},
+        "suggested_next_actions": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+    },
+    "required": ["ok", "data", "error", "raw_response", "suggested_next_actions"],
+    "additionalProperties": False,
+}
+
+
+class _CompatibleCallToolResult(CallToolResult):
+    def __getitem__(self, index):
+        return self.content[index]
 
 
 def success_response(data=None, raw_response=None, suggested_next_actions=None):
@@ -24,6 +58,15 @@ def content_error(message: str, code: str | None = None, raw_response=None, sugg
     return TextContent(
         type="text",
         text=json.dumps(error_response(message, code, raw_response, suggested_next_actions), indent=2),
+    )
+
+
+def call_tool_result(content: list[TextContent]) -> CallToolResult:
+    payload = parse_content_text(content[0])
+    return _CompatibleCallToolResult(
+        content=content,
+        structuredContent=payload,
+        isError=not bool(payload.get("ok")),
     )
 
 

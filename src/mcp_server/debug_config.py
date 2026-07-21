@@ -7,6 +7,7 @@ TOP_LEVEL_FIELDS = {
     "mcu",
     "board",
     "probe",
+    "serial",
     "server_type",
     "server_args",
     "elf_path",
@@ -14,6 +15,7 @@ TOP_LEVEL_FIELDS = {
     "project_root",
     "rtt",
     "uart",
+    "swo",
     "reset",
     "hil",
     "notes",
@@ -21,10 +23,21 @@ TOP_LEVEL_FIELDS = {
 
 
 def load_debug_config(path: str) -> dict:
-    config_path = Path(path)
+    config_path = Path(path).expanduser().resolve()
     data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict):
         data = {}
+    else:
+        data = dict(data)
+        for field in ("elf_path", "svd_path", "project_root"):
+            value = data.get(field)
+            if isinstance(value, str) and value.strip():
+                data[field] = _resolve_path(value, config_path.parent)
+        if isinstance(data.get("swo"), dict):
+            data["swo"] = dict(data["swo"])
+            value = data["swo"].get("file")
+            if isinstance(value, str) and value.strip():
+                data["swo"]["file"] = _resolve_path(value, config_path.parent)
     return {
         "path": str(config_path),
         "config": data,
@@ -62,6 +75,7 @@ def validate_debug_config(config: dict) -> dict:
     if server_type is not None and server_type not in ALLOWED_SERVER_TYPES:
         errors.append("server_type must be one of: jlink, openocd, stlink")
 
+    _validate_non_empty_string(config, "serial", errors)
     _validate_non_empty_string(config, "elf_path", errors)
     _validate_non_empty_string(config, "svd_path", errors)
     _validate_non_empty_string(config, "project_root", errors)
@@ -72,6 +86,7 @@ def validate_debug_config(config: dict) -> dict:
 
     _validate_rtt(config.get("rtt"), errors)
     _validate_uart(config.get("uart"), errors)
+    _validate_swo(config.get("swo"), errors)
     _validate_reset(config.get("reset"), errors)
     _validate_hil(config.get("hil"), errors)
 
@@ -119,6 +134,23 @@ def _validate_uart(uart, errors: list[str]):
         errors.append("uart.timeout must be a number")
 
 
+def _validate_swo(swo, errors: list[str]):
+    if swo is None:
+        return
+    if not isinstance(swo, dict):
+        errors.append("swo must be an object")
+        return
+    command = swo.get("command")
+    if command is not None and (not isinstance(command, str) or not command.strip()):
+        errors.append("swo.command must not be empty when provided")
+    file = swo.get("file")
+    if file is not None and not isinstance(file, str):
+        errors.append("swo.file must be a string")
+    args = swo.get("args")
+    if args is not None and not _is_string_list(args):
+        errors.append("swo.args must be a list of strings")
+
+
 def _validate_reset(reset, errors: list[str]):
     if reset is None:
         return
@@ -150,3 +182,8 @@ def _validate_hil(hil, errors: list[str]):
 
 def _is_string_list(value):
     return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def _resolve_path(value: str, base: Path) -> str:
+    path = Path(value).expanduser()
+    return str((path if path.is_absolute() else base / path).resolve())

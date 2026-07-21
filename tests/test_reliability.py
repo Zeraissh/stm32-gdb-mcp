@@ -24,7 +24,7 @@ def test_retries_retryable_errors_then_succeeds():
     def fn():
         state["n"] += 1
         if state["n"] < 3:
-            raise RuntimeError("Did not get response from gdb after 1.0 seconds")
+            raise RuntimeError("LIBUSB_ERROR_BUSY: device or resource busy")
         return "recovered"
 
     result = retry_call(fn, attempts=4, backoff_base=0.1, sleep=sleeps.append)
@@ -60,3 +60,21 @@ def test_gives_up_after_attempts_on_persistent_retryable_error():
         retry_call(fn, attempts=3, backoff_base=0.1, sleep=sleeps.append)
 
     assert len(sleeps) == 2  # attempts-1 backoffs
+
+
+def test_does_not_retry_target_unreachable_with_generic_open_failed_tail():
+    sleeps = []
+    calls = []
+
+    def fn():
+        calls.append(1)
+        raise RuntimeError(
+            "init mode failed: unable to connect to target; "
+            "target stm32u5x.cpu examination failed; open failed"
+        )
+
+    with pytest.raises(RuntimeError):
+        retry_call(fn, attempts=3, sleep=sleeps.append)
+
+    assert calls == [1]
+    assert sleeps == []

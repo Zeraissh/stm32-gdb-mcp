@@ -9,9 +9,39 @@ clear "halt the target first" signal.
 
 # Ordered (substring, classification) rules; first match wins.
 _RULES = [
+    (("[winerror 2]", "no such file or directory", "not recognized as an internal or external command",
+      "executable not found", "requires st-util or st-link_gdbserver.exe on path"), {
+        "code": "tool_missing",
+        "retryable": False,
+        "suggested_next_actions": ["run stm32-gdb-mcp-check-env", "install missing host tool"],
+        "hint": "A required GDB or GDB-server executable is not installed or not on PATH.",
+    }),
+    (("debug authentication", "debug auth", "device is locked", "debug access is disabled",
+      "rdp level 2"), {
+        "code": "debug_auth_required",
+        "retryable": False,
+        "suggested_next_actions": ["check device security/debug authentication state"],
+        "hint": "The MCU security state blocks debug access. Authentication or an explicit security-state change is required.",
+    }),
+    (("can't find openocd.cfg", "no config files specified", "debug adapter has to be specified",
+      "adapter driver", "unknown config", "invalid command name", "unknown target",
+      "unexpected idcode"), {
+        "code": "invalid_target_config",
+        "retryable": False,
+        "suggested_next_actions": ["suggest_server_args", "load_debug_config"],
+        "hint": "The selected probe/target configuration does not match the requested debug target.",
+    }),
+    (("unable to connect to target", "target examination failed", "examination failed",
+      "init mode failed", "failed to read idcode", "target not examined yet",
+      "failed to examine target"), {
+        "code": "target_unreachable",
+        "retryable": False,
+        "suggested_next_actions": ["check target power/SWD wiring/reset state", "suggest_server_args"],
+        "hint": "The probe opened, but the MCU debug port could not be reached or examined.",
+    }),
     (("did not get response from gdb", "timed out", "timeout"), {
         "code": "target_unresponsive",
-        "retryable": True,
+        "retryable": False,
         "suggested_next_actions": ["halt_execution", "check_session_health"],
         "hint": "The target may be running (reads require a halted core) or the probe is wedged.",
     }),
@@ -29,21 +59,18 @@ _RULES = [
         "suggested_next_actions": ["check_session_health", "start_debug_session"],
         "hint": "The link to the GDB server dropped.",
     }),
-    # Config errors must be checked before the generic probe rule below, because the
-    # message also contains "failed to start" — but retrying/recovering won't help here.
-    (("can't find openocd.cfg", "no config files specified", "debug adapter has to be specified",
-      "adapter driver", "unknown config", "invalid command name"), {
-        "code": "invalid_server_args",
-        "retryable": False,
-        "suggested_next_actions": ["load_debug_config", "start_debug_session"],
-        "hint": "OpenOCD has no probe/target config. Pass server_args, e.g. "
-                "['-f','interface/stlink.cfg','-f','target/stm32l4x.cfg'], or load a debug config.",
+    (("open failed", "libusb_error_busy", "resource busy", "device or resource busy",
+      "already in use", "cannot claim interface"), {
+        "code": "probe_busy",
+        "retryable": True,
+        "suggested_next_actions": ["recover_session", "check_session_health"],
+        "hint": "The debug probe is busy or its USB interface is still claimed by another process.",
     }),
-    (("open failed", "failed to start", "unable to open", "libusb", "no device found"), {
+    (("unable to open", "libusb", "no device found"), {
         "code": "probe_unavailable",
         "retryable": True,
         "suggested_next_actions": ["recover_session", "check_session_health"],
-        "hint": "The debug probe could not be opened — it may be busy or need a physical replug.",
+        "hint": "The debug probe is missing or its USB connection is temporarily unavailable.",
     }),
     (("no symbol", "no symbol table"), {
         "code": "no_symbols",

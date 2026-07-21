@@ -3,7 +3,6 @@ import copy
 import json
 import logging
 import os
-import subprocess
 import sys
 import tempfile
 import threading
@@ -12,7 +11,7 @@ import types
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Tool
+from mcp.types import CallToolResult, TextContent, Tool
 
 from . import build as build_mod
 from . import device_packs, pipeline, swo_config
@@ -77,86 +76,27 @@ from .reliability import retry_call
 from .reset_strategy import resolve_reset_command
 from .scenario import load_scenario, replay_scenario, step_summary
 from .self_check import evaluate_self_check
+from .server_metadata import SERVER_INSTRUCTIONS
+from .server_metadata import mcp_version as _mcp_version
 from .session_journal import SessionJournal
 from .spec_model import build_design
 from .stack_analysis import stack_report
 from .svd_parser import SVDParser
 from .timer_solver import solve_timers_in_plan
-from .tool_response import content_error, content_success
+from .tool_response import call_tool_result, content_error, content_success
+from .tool_surface import (
+    CORE_TOOLS as _CORE_TOOLS,
+)
+from .tool_surface import (
+    MERGED as _MERGED,
+)
+from .tool_surface import (
+    RENAMED_TOOLS as _RENAMED_TOOLS,
+)
+from .tool_surface import (
+    advertised_tools as _advertised_tools,
+)
 from .tracker import VariableTracker
-
-SERVER_INSTRUCTIONS = """\
-STM32 on-chip debugging over GDB + OpenOCD/ST-Link/J-Link. Drive it as a loop:
-observe -> orient (symbolize) -> hypothesize -> act safely -> verify.
-
-Tool not in your list? Some clients cap how many tools they expose, so a tool you need
-(e.g. start_debug_session) may be hidden. Reach ANY tool via call(tool="<name>", args={...}),
-or run several with batch — these always work even when the tool isn't directly listed.
-
-The surface is lean: related ops are action-dispatched families — pass the discriminator.
-breakpoint(action=set|delete|list|watch), logging(action=start|stop|get|clear, channel=…),
-expressions(action=assert|capture|compare), debug_profile(action=get|set),
-debug_config(action=load|save|validate), read_registers(what=core|fault|cycle),
-inspect_symbol(what=size|type|address|resolve|functions|variables), frame(action=select|source|
-variables), write_guard(action=policy|audit), coredump, timeouts, typed_memory, snapshot,
-session_diagnostics. (Old standalone names still work if you call them.)
-
-Core workflow:
-0. Need OpenOCD server_args? Call suggest_server_args(mcu, probe) — it returns the
-   right -f interface/target cfgs (validated against OpenOCD's bundled scripts).
-   NEVER search the disk for .cfg files; OpenOCD resolves them from its scripts dir.
-1. start_debug_session, then ALWAYS run self_check first — it validates byte order,
-   the Cortex-M core, and the device family, catching link/config faults early.
-2. Set debug_profile(action=set, mcu, elf_path, svd_path) — symbols then auto-load on every
-   connect/recover_session (symbols are per-session). To load symbols mid-session without
-   flashing, call load_symbols. Without symbols, breakpoints on function names won't resolve.
-3. Reproduce with the fewest calls: prefer the composites over manual sequences —
-   flash_and_run (ELF -> halted at entry), debug_until (conditional breakpoint + run +
-   decoded backtrace/locals in one call), capture_state ("where am I" in one call).
-4. Diagnose a crash with reconstruct_fault_context: it unwinds the stacked exception
-   frame and resolves the true faulting PC to source file:line.
-5. Verify a fix with expressions(action=compare) / expressions(action=assert).
-
-Key rules (the target must cooperate):
-- Reads (registers/memory/frames) require a HALTED core. If a read fails with
-  target_unresponsive, the core is running — call halt_execution first.
-- run_and_wait returns a structured stop event; on timeout it leaves the core RUNNING.
-- A breakpoint TIMEOUT means the code path was NOT reached — do NOT just retry run_and_wait.
-  The location is usually gated by a flag/state/stimulus. Instead: halt_execution, then
-  capture_state + breakpoint(action=list) (hit_count=0 confirms it was never reached); read the
-  gating flag; then either set a breakpoint EARLIER on the path (or where the flag is set),
-  drive the precondition (write the flag/variable, send the UART/input stimulus), or use a
-  conditional breakpoint. Forcing a flag via write_memory changes behavior — note it.
-- Memory writes are guarded: option bytes, IWDG, and WWDG are blocked by default;
-  use write_guard(action=policy) to allow, or dry_run to simulate. Every write is audited.
-- If halting causes mysterious resets, configure_debug_freeze (freeze IWDG/WWDG/timers).
-- On probe_unavailable / connection_lost, call recover_session; tune flaky probes with
-  timeouts(action=set).
-- The ST-Link SWD/debug interface is EXCLUSIVE: while this MCP session is active, never
-  start a second OpenOCD/GDB on the same probe (e.g. a verify script's own --reset will
-  fail with "ST-Link in use"). Reset via reset_target instead. The ST-Link virtual COM
-  port (e.g. COM3) is a SEPARATE USB endpoint and DOES coexist with debugging — read it
-  with logging(action=start, channel="uart"), or let an external serial script use it without resetting.
-
-Observability: to find where firmware spends time or what loop it is stuck in, use
-sample_pc — a non-intrusive statistical profiler that runs over SWD (no SWO pin / firmware
-change) and returns a symbolized hot-spot histogram. For printf-over-SWO, call
-setup_swo(hclk_hz, swo_hz) once (it configures TPIU+ITM from the debugger), then capture with
-logging(action=start, channel="swo", file=<output>) — no external decoder needed.
-
-Determinism & sharing: every call is journaled — review it with get_session(view=journal|
-timeline|metrics). Replay a repro with run_scenario; bundle a full, shareable report
-with export_debug_report. Most results carry suggested_next_actions — follow them.
-
-Self-reporting: if a tool behaves wrongly, gives a confusing result, or you get stuck on
-what looks like an MCP bug (not a target bug), call report_issue(title, description) — it
-files a structured GitHub issue auto-bundling this session's journal so the MCP can be fixed.
-
-Multiple boards: pass session="<name>" to ANY tool to target an isolated debug session
-(its own connection, profile, breakpoints, logs). Omit it for the single 'default' session.
-list_sessions / close_session manage them. For truly concurrent OpenOCD instances, give each
-session distinct server_args (gdb_port and adapter serial).
-"""
 
 server = Server("stm32-gdb-mcp", instructions=SERVER_INSTRUCTIONS)
 gdb_manager = GdbServerManager()
@@ -178,6 +118,7 @@ _loop = {"current": None}  # bounded acceptance-loop state (Pillar C) for the de
 _design = {"current": None, "last_render": None}  # FrameworkPlan + last render (Pillar D) for default session
 _spec = {"current": None}  # translated product spec (spec_model -> design params) for the default session
 _reported_issues = {}  # fingerprint -> issue url (in-session dedup)
+_tool_catalog = {}
 
 # Phase 3: named per-target sessions for multi-board / CI. The "default" session reuses
 # the module globals above (single-target back-compat + existing tests); named sessions get
@@ -221,19 +162,6 @@ def _lock_for_session(session_id: str) -> threading.Lock:
     return lock
 
 
-def _mcp_version() -> str:
-    try:
-        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        out = subprocess.run(
-            ["git", "-C", root, "rev-parse", "--short", "HEAD"],
-            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=5,
-        )
-        if out.returncode == 0 and out.stdout.strip():
-            return out.stdout.strip()
-    except Exception:
-        pass
-    return "unknown"
-
 # Structured logging to stderr (stdout is the MCP transport), correlated by run-id.
 logger = logging.getLogger("stm32-gdb-mcp")
 if not logger.handlers:
@@ -244,6 +172,7 @@ if not logger.handlers:
 
 @server.list_tools()
 async def handle_list_tools() -> list[Tool]:
+    global _tool_catalog
     _tools = [
         # --- Step 4: Basic Control and Flashing ---
         Tool(
@@ -251,15 +180,14 @@ async def handle_list_tools() -> list[Tool]:
             description="Starts the specified GDB Server (openocd, stlink, jlink) and connects the GDB Client to it. "
                         "openocd REQUIRES server_args naming the probe and target, e.g. "
                         "['-f','interface/stlink.cfg','-f','target/stm32l4x.cfg'] — without them OpenOCD cannot "
-                        "find a config or adapter. Or call load_debug_config first to supply them.",
+                        "find a config or adapter. Omitted values come from the active debug profile.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "server_type": {"type": "string", "enum": ["openocd", "stlink", "jlink"], "description": "Type of debug server backend."},
                     "server_args": {"type": "array", "items": {"type": "string"}, "description": "Optional args for the server e.g. ['-f', 'interface/stlink.cfg', '-f', 'target/stm32f4x.cfg']"},
                     "serial": {"type": "string", "description": "Probe/ST-Link serial to select a specific board (for concurrent multi-target). Auto-added as 'adapter serial <serial>'."}
-                },
-                "required": ["server_type"]
+                }
             }
         ),
         Tool(
@@ -292,7 +220,8 @@ async def handle_list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "mcu": {"type": "string", "description": "MCU or family, e.g. 'STM32L431' or 'STM32F4'."},
-                    "probe": {"type": "string", "description": "Debug probe: stlink, jlink, or cmsis-dap."}
+                    "probe": {"type": "string", "description": "Debug probe: stlink, jlink, or cmsis-dap."},
+                    "speed_khz": {"type": "integer", "description": "Adapter clock in kHz (default 4000; 0 keeps the config default)."}
                 },
                 "required": ["mcu", "probe"]
             }
@@ -349,6 +278,17 @@ async def handle_list_tools() -> list[Tool]:
                 },
                 "required": ["tool"]
             }
+        ),
+        Tool(
+            name="tool_help",
+            description="Returns descriptions and complete schemas for full-surface tools, including tools hidden in compact mode.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Exact tool name."},
+                    "query": {"type": "string", "description": "Case-insensitive name/description search."},
+                },
+            },
         ),
         Tool(
             name="recover_session",
@@ -1751,131 +1691,10 @@ async def handle_list_tools() -> list[Tool]:
     # truncated under tight client tool-count caps. Every other tool is still reachable
     # via call(tool, args).
     advertised = _advertised_tools(_tools)
+    _tool_catalog = {tool.name: tool for tool in advertised}
     if os.environ.get("STM32_GDB_MCP_COMPACT"):
         return [t for t in advertised if t.name in _CORE_TOOLS]
     return advertised
-
-
-# Tools consolidated in the slim-down: map old name -> new call form for clear errors.
-_RENAMED_TOOLS = {
-    **{f"{a}_{c}_log{s}": f'{a}_log{s}(channel="{c}")'
-       for c in ("rtt", "swo", "uart")
-       for a, s in (("start", "ging"), ("stop", "ging"), ("get", "s"), ("clear", "s"))},
-    "step_over": 'step(kind="over")', "step_into": 'step(kind="into")',
-    "step_out": 'step(kind="out")', "step_instruction": 'step(kind="instruction")',
-    "read_current_task": 'read_freertos(what="current_task")',
-    "read_freertos_tasks": 'read_freertos(what="tasks")',
-    "read_freertos_task_lists": 'read_freertos(what="task_lists")',
-    "read_freertos_queue": 'read_freertos(what="queue", handle=...)',
-    "read_freertos_mutex": 'read_freertos(what="mutex", handle=...)',
-    "read_freertos_heap": 'read_freertos(what="heap")',
-    "start_variable_tracking": 'track_variable(action="start")',
-    "stop_variable_tracking": 'track_variable(action="stop")',
-    "get_tracked_data": 'track_variable(action="get")',
-    "get_session_journal": 'get_session(view="journal")',
-    "get_session_timeline": 'get_session(view="timeline")',
-    "get_session_metrics": 'get_session(view="metrics")',
-}
-
-
-# Core tools kept visible in compact mode; everything else is reached via `call`.
-_CORE_TOOLS = {
-    "suggest_server_args", "start_debug_session", "stop_debug_session", "recover_session",
-    "self_check", "debug_profile", "load_symbols",
-    "build_firmware", "flash_firmware", "flash_and_run",
-    "reset_target", "halt_execution", "run_and_wait", "run_for_duration", "breakpoint",
-    "debug_until", "capture_state",
-    "read_memory", "write_memory", "read_variable", "read_call_stack",
-    "reconstruct_fault_context", "analyze_stack",
-    "logging", "read_peripheral_register",
-    "batch", "call", "run_scenario", "get_session", "report_issue",
-    "list_sessions", "close_session",
-}
-
-
-# Tool-surface consolidation: a dozen single-purpose tools collapse into action-dispatched
-# families (superpowers-style lean surface). Each merged tool routes to the existing,
-# already-tested handler, so every old name still works when called via `call` or directly.
-# Spec: merged_name -> (discriminator, {value: underlying_tool}, summary, arg_help).
-_MERGED = {
-    "logging": ("action",
-        {"start": "start_logging", "stop": "stop_logging", "get": "get_logs", "clear": "clear_logs"},
-        "Firmware log capture over a channel.",
-        "action=start|stop|get|clear; channel=rtt|swo|uart (start also takes the channel's config args)."),
-    "breakpoint": ("action",
-        {"set": "set_breakpoint", "delete": "delete_breakpoint", "list": "list_breakpoints", "watch": "set_watchpoint"},
-        "Breakpoint / watchpoint management.",
-        "action=set(location[,condition,temporary,commands]) | delete(number) | list | watch(expression)."),
-    "expressions": ("action",
-        {"assert": "assert_expressions", "capture": "capture_expressions", "compare": "compare_expressions_after_action"},
-        "Evaluate C/GDB expressions.",
-        "action=assert(expressions) | capture(expressions or table={index_range,columns}) | compare(expressions, action_to_run_between)."),
-    "coredump": ("action",
-        {"capture": "capture_coredump", "load": "load_coredump"},
-        "Core-dump capture / load.",
-        "action=capture(path) | load(path)."),
-    "timeouts": ("action",
-        {"get": "get_timeouts", "set": "set_timeouts"},
-        "GDB operation timeouts.",
-        "action=get | set(connect,reset,memory,...)."),
-    "debug_config": ("action",
-        {"load": "load_debug_config", "save": "save_debug_config", "validate": "validate_debug_config"},
-        "Debug-config file (.json) management.",
-        "action=load(path) | save(path) | validate(path)."),
-    "debug_profile": ("action",
-        {"get": "get_debug_profile", "set": "set_debug_profile"},
-        "Active debug profile (mcu/elf/svd/probe).",
-        "action=get | set(mcu,elf_path,svd_path,...)."),
-    "read_registers": ("what",
-        {"core": "read_core_registers", "fault": "read_fault_registers", "cycle": "read_cycle_counter"},
-        "Read CPU register groups.",
-        "what=core | fault(CFSR/HFSR decode) | cycle(DWT cycle counter)."),
-    "inspect_symbol": ("what",
-        {"size": "sizeof", "type": "lookup_type", "address": "address_of",
-         "resolve": "resolve_address", "functions": "list_functions", "variables": "list_variables"},
-        "Symbol / type introspection.",
-        "what=size(type) | type(name) | address(symbol) | resolve(address) | functions(regex) | variables."),
-    "typed_memory": ("action",
-        {"read": "read_typed_memory", "write": "write_typed_memory"},
-        "Typed (struct-aware) memory access.",
-        "action=read(address,type) | write(address,type,value)."),
-    "write_guard": ("action",
-        {"policy": "set_write_policy", "audit": "get_write_audit_log"},
-        "Memory-write guardrail.",
-        "action=policy(mode,allow) | audit."),
-    "snapshot": ("scope",
-        {"full": "capture_debug_snapshot", "rtos": "capture_rtos_snapshot"},
-        "One-shot diagnostic snapshot.",
-        "scope=full(regs+stack+faults) | rtos(task/queue state)."),
-    "frame": ("action",
-        {"select": "select_frame", "source": "list_source", "variables": "read_frame_variables"},
-        "Stack-frame navigation.",
-        "action=select(number) | source(around a frame) | variables(of selected frame)."),
-    "session_diagnostics": ("what",
-        {"health": "check_session_health", "events": "get_gdb_events", "server_logs": "get_gdb_server_logs"},
-        "Session/transport diagnostics.",
-        "what=health | events(recent GDB/MI) | server_logs(GDB-server stderr)."),
-}
-_MERGED_AWAY = {old for _, mapping, *_ in _MERGED.values() for old in mapping.values()}
-_MERGED_TOOLS = [
-    Tool(
-        name=mname,
-        description=f"{summary} {arg_help}",
-        inputSchema={
-            "type": "object",
-            "properties": {disc: {"type": "string", "enum": list(mapping),
-                                  "description": "Which operation to perform."}},
-            "required": [disc],
-            "additionalProperties": True,
-        },
-    )
-    for mname, (disc, mapping, summary, arg_help) in _MERGED.items()
-]
-
-
-def _advertised_tools(base: list) -> list:
-    """The lean public surface: drop merged-away singles, add the action-dispatched families."""
-    return [t for t in base if t.name not in _MERGED_AWAY] + _MERGED_TOOLS
 
 
 def _swo_reader(sess):
@@ -1900,6 +1719,14 @@ def _autoload_symbols(sess) -> bool:
         return True
     except Exception:
         return False
+
+
+def _adapter_speed_khz(args: list[str]) -> int | None:
+    for token in args:
+        parts = token.split() if isinstance(token, str) else []
+        if len(parts) == 3 and parts[:2] == ["adapter", "speed"] and parts[2].isdigit():
+            return int(parts[2])
+    return None
 
 
 def _recover_current_session(gdb_client, gdb_manager, last_session: dict, sess) -> dict:
@@ -2027,15 +1854,44 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
             forwarded["session"] = _sess.id  # preserve session across the internal hop
             return _dispatch_tool(mapping[choice], forwarded)
 
+        if name == "tool_help":
+            requested_name = arguments.get("name")
+            query = (arguments.get("query") or "").strip().lower()
+            if requested_name:
+                matches = [_tool_catalog[requested_name]] if requested_name in _tool_catalog else []
+            elif query:
+                matches = [
+                    tool
+                    for tool in _tool_catalog.values()
+                    if query in tool.name.lower() or query in (tool.description or "").lower()
+                ]
+            else:
+                return [content_error(
+                    "tool_help requires name or query.",
+                    code="missing_argument",
+                )]
+            return [content_success({
+                "count": len(matches),
+                "tools": [tool.model_dump(by_alias=True, exclude_none=True) for tool in matches],
+            })]
+
         if name == "start_debug_session":
-            server_type = arguments["server_type"]
-            args = list(arguments.get("server_args", []))
+            profile = debug_profile.get()
+            server_type = arguments.get("server_type") or profile.get("server_type")
+            if not server_type:
+                return [content_error(
+                    "server_type is required when the active debug profile does not define it.",
+                    code="missing_argument",
+                    suggested_next_actions=["load_debug_config", "set_debug_profile"],
+                )]
+            configured_args = arguments["server_args"] if "server_args" in arguments else profile.get("server_args", [])
+            args = list(configured_args or [])
             if server_type == "openocd" and not args:
                 return [content_error(
                     "openocd requires server_args naming the probe interface and target, e.g. "
                     "['-f','interface/stlink.cfg','-f','target/stm32l4x.cfg']. Pass server_args, or "
                     "load a debug config (load_debug_config) that defines them.",
-                    code="invalid_server_args",
+                    code="invalid_target_config",
                     suggested_next_actions=["load_debug_config", "inspect_project"],
                 )]
             if server_type == "openocd":
@@ -2050,7 +1906,7 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                         args += ["-c", "telnet_port disabled"]
                     if "tcl_port" not in _argstr:
                         args += ["-c", "tcl_port disabled"]
-                serial = arguments.get("serial") or getattr(_sess, "serial", None)
+                serial = arguments.get("serial") or profile.get("serial") or getattr(_sess, "serial", None)
                 if serial and "adapter serial" not in _argstr:
                     args += ["-c", f"adapter serial {serial}"]
                     _sess.serial = serial
@@ -2063,9 +1919,35 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                 except Exception:
                     pass
                 gdb_manager.stop()
-            port = retry_call(lambda: gdb_manager.start(server_type, args), attempts=3, backoff_base=0.8)
-            gdb_client.start_gdb()
-            resp = gdb_client.connect("localhost", port)
+            try:
+                port = retry_call(lambda: gdb_manager.start(server_type, args), attempts=3, backoff_base=0.8)
+                gdb_client.start_gdb()
+                resp = gdb_client.connect("localhost", port)
+            except Exception as exc:
+                server_log = gdb_manager.get_logs() if hasattr(gdb_manager, "get_logs") else ""
+                classification = classify_error(f"{exc}\n{server_log}")
+                for teardown in (gdb_client.stop_gdb, gdb_manager.stop):
+                    try:
+                        teardown()
+                    except Exception:
+                        pass
+                message = str(exc)[-1000:]
+                if classification.get("hint"):
+                    message = f"{message} — {classification['hint']}"
+                return [content_error(
+                    message,
+                    code=classification["code"],
+                    raw_response={
+                        "attempted": {
+                            "backend": server_type,
+                            "server_args": args,
+                            "speed_khz": _adapter_speed_khz(args),
+                        },
+                        "server_log": server_log[-4000:],
+                        "retryable": classification["retryable"],
+                    },
+                    suggested_next_actions=classification["suggested_next_actions"],
+                )]
             _last_session["server_type"] = server_type
             _last_session["server_args"] = args
             symbols = _autoload_symbols(_sess)
@@ -2076,7 +1958,12 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
 
         elif name == "suggest_server_args":
             scripts_dir = find_openocd_scripts()
-            result = suggest_server_args(arguments["mcu"], arguments["probe"], scripts_dir=scripts_dir)
+            result = suggest_server_args(
+                arguments["mcu"],
+                arguments["probe"],
+                scripts_dir=scripts_dir,
+                speed_khz=arguments.get("speed_khz", 4000),
+            )
             return [content_success(result, suggested_next_actions=["start_debug_session", "self_check"])]
 
         elif name == "set_adapter_speed":
@@ -2283,11 +2170,20 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
             return [content_success(capture_state(gdb_client), suggested_next_actions=["list_source", "disassemble"])]
 
         elif name == "flash_and_run":
+            profile = debug_profile.get()
+            reset_config = profile.get("reset", {})
+            reset = resolve_reset_command(
+                gdb_manager.server_type or profile.get("server_type"),
+                halt=True,
+                strategy=reset_config.get("strategy"),
+                command=reset_config.get("command"),
+            )
             result = flash_and_run(
                 gdb_client,
                 file_path=arguments["file_path"],
                 run_to=arguments.get("run_to", "main"),
                 timeout_sec=arguments.get("timeout_sec", 10.0),
+                reset_command=reset["command"],
             )
             return [content_success(result, suggested_next_actions=["capture_state", "debug_until"])]
 
@@ -2567,27 +2463,36 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
 
         elif name == "start_logging":
             channel = arguments["channel"]
+            config = {
+                **debug_profile.get().get(channel, {}),
+                **arguments,
+            }
             if channel == "uart":
+                if not config.get("port"):
+                    return [content_error(
+                        "uart logging requires port, either explicitly or in the active debug profile.",
+                        code="missing_argument",
+                    )]
                 reader = uart_log_reader
                 reader.start(
-                    port=arguments["port"],
-                    baudrate=arguments.get("baudrate", 115200),
-                    timeout=arguments.get("timeout", 0.1),
+                    port=config["port"],
+                    baudrate=config.get("baudrate", 115200),
+                    timeout=config.get("timeout", 0.1),
                 )
-            elif channel == "swo" and arguments.get("file"):
+            elif channel == "swo" and config.get("file"):
                 # Out-of-the-box SWO printf: tail OpenOCD's internal ITM decode file,
                 # no external decoder needed. Pair with setup_swo + '-output <file>'.
                 reader = swo_file_reader
-                reader.start(arguments["file"])
+                reader.start(config["file"])
             else:  # rtt / swo: a process whose stdout is captured (e.g. JLinkRTTClient)
                 reader = rtt_log_reader if channel == "rtt" else swo_log_reader
                 default_cmd = "JLinkRTTClient" if channel == "rtt" else None
-                command = [arguments.get("command", default_cmd)]
+                command = [config.get("command", default_cmd)]
                 if command[0] is None:
                     return [content_error(
                         "swo logging needs either file=<OpenOCD ITM output file> (use setup_swo "
                         "first) or command=<external decoder>.", code="missing_command")]
-                command.extend(arguments.get("args", []))
+                command.extend(config.get("args", []))
                 reader.start(command)
             return [content_success({"channel": channel, **reader.status()})]
 
@@ -3513,21 +3418,21 @@ _JOURNAL_SKIP = {"get_session", "clear_session_journal"}
 
 
 @server.call_tool()
-async def handle_call_tool(name: str, arguments: dict | None) -> list[TextContent]:
+async def handle_call_tool(name: str, arguments: dict | None) -> CallToolResult:
     if arguments is None:
         arguments = {}
 
     if name == "run_scenario":
-        return await _run_scenario(arguments)
+        return call_tool_result(await _run_scenario(arguments))
 
     if name == "batch":
-        return await _run_batch(arguments)
+        return call_tool_result(await _run_batch(arguments))
 
     if name == "call":
         inner = arguments.get("tool")
         if inner in (None, "call", "batch", "run_scenario"):
-            return [content_error(
-                "call needs a 'tool' name (not call/batch/run_scenario).", code="invalid_call")]
+            return call_tool_result([content_error(
+                "call needs a 'tool' name (not call/batch/run_scenario).", code="invalid_call")])
         return await handle_call_tool(inner, arguments.get("args", {}))
 
     sid = arguments.get("session") or "default"
@@ -3564,7 +3469,7 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[TextConten
         except (ValueError, IndexError, AttributeError):
             pass
 
-    return result
+    return call_tool_result(result)
 
 
 async def _run_batch(arguments: dict) -> list[TextContent]:

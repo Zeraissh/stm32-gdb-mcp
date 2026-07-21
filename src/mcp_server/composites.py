@@ -56,10 +56,16 @@ def capture_state(gdb_client) -> dict:
     return state
 
 
-def flash_and_run(gdb_client, file_path, run_to="main", timeout_sec=10.0) -> dict:
+def flash_and_run(
+    gdb_client,
+    file_path,
+    run_to="main",
+    timeout_sec=10.0,
+    reset_command="monitor reset halt",
+) -> dict:
     """Flash an ELF, reset-halt, break once at an entry point, and run to it."""
     gdb_client.load_firmware(file_path)
-    gdb_client.reset_halt()
+    gdb_client.reset_halt(command=reset_command)
     result = debug_until(gdb_client, location=run_to, temporary=True, timeout_sec=timeout_sec)
     result["flashed"] = file_path
     return result

@@ -84,10 +84,13 @@ class GdbServerManager:
         # Wait until the GDB server actually accepts connections (instead of a fixed
         # sleep), so a fast-binding server returns in ~0.2s instead of always 1.5s.
         if not self._wait_for_port(self.port, timeout=10.0):
-            if self.process.poll() is not None:
-                raise RuntimeError(f"GDB server failed to start. Logs: {self.get_logs()}")
+            logs = self.get_logs()
+            process_exited = self.process.poll() is not None
+            self.stop()
+            if process_exited:
+                raise RuntimeError(f"GDB server failed to start. Logs: {logs}")
             raise RuntimeError(
-                f"GDB server did not open port {self.port} within timeout. Logs: {self.get_logs()}"
+                f"GDB server did not open its port within timeout. Logs: {logs}"
             )
 
         return self.port
@@ -173,6 +176,7 @@ class GdbServerManager:
                 self.process.kill()
         self.process = None
         self.port = None
+        self._reader_thread = None
 
     def is_alive(self) -> bool:
         return self.process is not None and self.process.poll() is None

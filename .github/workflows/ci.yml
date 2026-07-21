@@ -20,6 +20,14 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Smoke source entry points before installation
+        run: |
+          python -S setup_env.py --help
+          python -S scripts/install_mcp.py --help
+          python -S scripts/deploy.py --help
+          python -S scripts/check_dist_contents.py --help
+          python -S scripts/install_mcp.py codex --print
+
       - name: Install package
         run: |
           python -m pip install --upgrade pip
@@ -36,3 +44,19 @@ jobs:
 
       - name: Build package
         run: python -m build
+
+      - name: Audit distribution contents
+        run: python scripts/check_dist_contents.py dist/*
+
+      - name: Smoke clean wheel install
+        shell: pwsh
+        run: |
+          $wheel = (Get-ChildItem -Path dist -Filter *.whl | Select-Object -First 1).FullName
+          if (-not $wheel) { throw "wheel not found" }
+          python -m venv .wheel-venv
+          .\.wheel-venv\Scripts\python.exe -m pip install --disable-pip-version-check $wheel
+          .\.wheel-venv\Scripts\python.exe -c "from importlib.metadata import entry_points; expected = {'stm32-gdb-mcp', 'stm32-gdb-mcp-check-env', 'stm32-gdb-mcp-install', 'stm32-gdb-mcp-deploy'}; scripts = {entry.name: entry for entry in entry_points(group='console_scripts')}; assert expected <= set(scripts); [scripts[name].load() for name in expected]"
+          .\.wheel-venv\Scripts\stm32-gdb-mcp-check-env.exe --help
+          .\.wheel-venv\Scripts\stm32-gdb-mcp-install.exe --help
+          .\.wheel-venv\Scripts\stm32-gdb-mcp-deploy.exe --help
+          .\.wheel-venv\Scripts\stm32-gdb-mcp-install.exe codex --print | .\.wheel-venv\Scripts\python.exe -c "import sys; text = sys.stdin.read(); assert text.startswith('[mcp_servers.stm32-gdb-mcp]') and 'command = ' in text"

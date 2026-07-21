@@ -1,6 +1,6 @@
 name: Release
 
-# Publish the package to PyPI when a version tag is pushed (e.g. v0.3.0).
+# Publish the package to PyPI when a version tag is pushed (e.g. v0.4.0).
 # Uses PyPI Trusted Publishing (OIDC) -- no API token is stored in the repo.
 # One-time setup on PyPI is required (see docs/release.md > Publishing to PyPI).
 
@@ -24,6 +24,14 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Smoke source entry points before installation
+        run: |
+          python -S setup_env.py --help
+          python -S scripts/install_mcp.py --help
+          python -S scripts/deploy.py --help
+          python -S scripts/check_dist_contents.py --help
+          python -S scripts/install_mcp.py codex --print
+
       - name: Install package
         run: |
           python -m pip install --upgrade pip
@@ -42,6 +50,19 @@ jobs:
         run: |
           python -m pip install --upgrade twine
           python -m twine check dist/*
+
+      - name: Audit distribution contents
+        run: python scripts/check_dist_contents.py dist/*
+
+      - name: Smoke clean wheel install
+        run: |
+          python -m venv .wheel-venv
+          .wheel-venv/bin/python -m pip install --disable-pip-version-check dist/*.whl
+          .wheel-venv/bin/python -c "from importlib.metadata import entry_points; expected = {'stm32-gdb-mcp', 'stm32-gdb-mcp-check-env', 'stm32-gdb-mcp-install', 'stm32-gdb-mcp-deploy'}; scripts = {entry.name: entry for entry in entry_points(group='console_scripts')}; assert expected <= set(scripts); [scripts[name].load() for name in expected]"
+          .wheel-venv/bin/stm32-gdb-mcp-check-env --help
+          .wheel-venv/bin/stm32-gdb-mcp-install --help
+          .wheel-venv/bin/stm32-gdb-mcp-deploy --help
+          .wheel-venv/bin/stm32-gdb-mcp-install codex --print | .wheel-venv/bin/python -c "import sys, tomllib; data = tomllib.loads(sys.stdin.read()); assert 'stm32-gdb-mcp' in data['mcp_servers']"
 
       - name: Upload distributions
         uses: actions/upload-artifact@v7

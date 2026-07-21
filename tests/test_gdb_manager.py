@@ -1,6 +1,9 @@
 import socket
 import time
 
+import pytest
+
+import mcp_server.gdb_manager as gdb_manager_module
 from mcp_server.gdb_manager import GdbServerManager
 
 
@@ -39,3 +42,53 @@ def test_wait_for_port_returns_false_if_process_died():
     mgr = GdbServerManager()
     mgr.process = DeadProc()
     assert mgr._wait_for_port(59413, timeout=2.0) is False
+
+
+def test_start_cleans_up_process_when_port_never_opens(monkeypatch):
+    class FakeProcess:
+        stdout = None
+
+        def __init__(self):
+            self.stopped = False
+
+        def poll(self):
+            return 0 if self.stopped else None
+
+        def send_signal(self, sig):
+            self.stopped = True
+
+        def terminate(self):
+            self.stopped = True
+
+        def wait(self, timeout=None):
+            self.stopped = True
+            return 0
+
+        def kill(self):
+            self.stopped = True
+
+    class FakeThread:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            pass
+
+    process = FakeProcess()
+    manager = GdbServerManager()
+
+    monkeypatch.setattr(gdb_manager_module.subprocess, "Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(gdb_manager_module.threading, "Thread", FakeThread)
+
+    def fail_to_open(port, timeout):
+        manager.log_buffer.append("Error: target examination failed")
+        return False
+
+    monkeypatch.setattr(manager, "_wait_for_port", fail_to_open)
+
+    with pytest.raises(RuntimeError, match="target examination failed"):
+        manager.start("openocd", ["-f", "target/stm32u5x.cfg"])
+
+    assert process.stopped is True
+    assert manager.process is None
+    assert manager.port is None

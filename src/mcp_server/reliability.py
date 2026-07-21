@@ -2,7 +2,7 @@
 
 Phase 2 priority #2 (reliability). Probes are flaky — USB contention, a busy or
 just-replugged ST-Link, a momentary link drop. ``retry_call`` retries only the
-failures the error taxonomy marks ``retryable`` (timeouts, lost connections,
+failures the error taxonomy marks ``retryable`` (USB contention, lost connections,
 ``open failed``), backing off between attempts, and re-raises anything fatal
 (e.g. missing symbols) immediately so real errors are not masked.
 """

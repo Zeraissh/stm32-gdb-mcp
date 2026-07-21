@@ -85,8 +85,41 @@ def test_unified_logging_tool_dispatches_by_action_and_channel():
         assert old not in names
 
 
+def test_compact_tool_help_describes_hidden_tools(monkeypatch):
+    monkeypatch.setenv("STM32_GDB_MCP_COMPACT", "1")
+    names = {tool.name for tool in asyncio.run(handle_list_tools())}
+
+    assert "tool_help" in names
+    assert "read_freertos" not in names
+
+    payload = _payload(asyncio.run(handle_call_tool("tool_help", {"name": "read_freertos"})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["count"] == 1
+    assert payload["data"]["tools"][0]["name"] == "read_freertos"
+    assert "what" in payload["data"]["tools"][0]["inputSchema"]["properties"]
+
+    matches = _payload(asyncio.run(handle_call_tool("tool_help", {"query": "FreeRTOS"})))
+    assert matches["data"]["count"] >= 1
+    assert "read_freertos" in {tool["name"] for tool in matches["data"]["tools"]}
+
+
+def test_call_tool_returns_native_structured_content_and_error_signal():
+    from mcp.types import CallToolResult
+
+    success = asyncio.run(handle_call_tool("get_debug_profile", {}))
+    error = asyncio.run(handle_call_tool("does_not_exist", {}))
+
+    assert isinstance(success, CallToolResult)
+    assert success.structuredContent == json.loads(success.content[0].text)
+    assert success.isError is False
+    assert error.structuredContent == json.loads(error.content[0].text)
+    assert error.isError is True
+
+
 def _payload(result):
-    return json.loads(result[0].text)
+    content = result.content if hasattr(result, "content") else result
+    return json.loads(content[0].text)
 
 
 def test_get_debug_profile_returns_stable_json_envelope():
@@ -279,6 +312,40 @@ def test_logging_swo_with_file_uses_the_file_tailer(monkeypatch, tmp_path):
         assert server_module.swo_file_reader.is_running() is True
     finally:
         asyncio.run(handle_call_tool("logging", {"action": "stop", "channel": "swo"}))
+
+
+def test_logging_start_uses_profile_defaults_for_each_channel(monkeypatch, tmp_path):
+    import mcp_server.server as server_module
+
+    class FakeReader:
+        def __init__(self):
+            self.started = []
+
+        def start(self, *args, **kwargs):
+            self.started.append((args, kwargs))
+
+        def status(self):
+            return {"running": True}
+
+    profile = {
+        "rtt": {"command": "RTTClient", "args": ["--device", "STM32L431"]},
+        "uart": {"port": "COM7", "baudrate": 921600, "timeout": 0.2},
+        "swo": {"file": str(tmp_path / "swo.log")},
+    }
+    readers = {channel: FakeReader() for channel in profile}
+
+    monkeypatch.setattr(server_module.debug_profile, "get", lambda: profile)
+    monkeypatch.setattr(server_module, "rtt_log_reader", readers["rtt"])
+    monkeypatch.setattr(server_module, "uart_log_reader", readers["uart"])
+    monkeypatch.setattr(server_module, "swo_file_reader", readers["swo"])
+
+    for channel in ("rtt", "uart", "swo"):
+        payload = _payload(asyncio.run(handle_call_tool("logging", {"action": "start", "channel": channel})))
+        assert payload["ok"] is True
+
+    assert readers["rtt"].started == [((["RTTClient", "--device", "STM32L431"],), {})]
+    assert readers["uart"].started == [((), {"port": "COM7", "baudrate": 921600, "timeout": 0.2})]
+    assert readers["swo"].started == [((str(tmp_path / "swo.log"),), {})]
 
 
 def test_sample_pc_returns_symbolized_hotspots(monkeypatch):
@@ -613,6 +680,18 @@ def test_suggest_server_args_returns_validated_openocd_args_with_fast_clock():
     assert "start_debug_session" in payload["suggested_next_actions"]
 
 
+def test_suggest_server_args_exposes_and_forwards_adapter_speed():
+    tool = next(tool for tool in asyncio.run(handle_list_tools()) if tool.name == "suggest_server_args")
+    assert "speed_khz" in tool.inputSchema["properties"]
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "suggest_server_args", {"mcu": "STM32L431", "probe": "stlink", "speed_khz": 800}
+    )))
+
+    assert payload["data"]["speed_khz"] == 800
+    assert payload["data"]["server_args"][-1] == "adapter speed 800"
+
+
 def test_call_invokes_any_tool_by_name():
     # the escape hatch: reach a tool even if a client truncated it from the list
     payload = _payload(asyncio.run(handle_call_tool(
@@ -633,10 +712,10 @@ def test_compact_mode_exposes_small_core_with_call(monkeypatch):
     assert "start_debug_session" in names and "call" in names and "batch" in names
     assert len(names) < 35                     # small enough to never be truncated
     assert "read_freertos" not in names        # reachable via call, not listed in compact
-    # full mode exposes the consolidated surface (well under the old 87, lean like superpowers)
+    # Full mode exposes the complete consolidated surface without a brittle fixed count.
     monkeypatch.delenv("STM32_GDB_MCP_COMPACT")
-    full = len(asyncio.run(handle_list_tools()))
-    assert 50 <= full <= 80
+    full_names = {tool.name for tool in asyncio.run(handle_list_tools())}
+    assert names < full_names
 
 
 def test_batch_runs_steps_in_one_call_returning_full_results():
@@ -712,7 +791,7 @@ def test_start_openocd_without_server_args_gives_clear_error(monkeypatch):
     payload = _payload(asyncio.run(handle_call_tool("start_debug_session", {"server_type": "openocd"})))
 
     assert payload["ok"] is False
-    assert payload["error"]["code"] == "invalid_server_args"
+    assert payload["error"]["code"] == "invalid_target_config"
     assert started == []  # openocd was never launched with an empty config
     assert "load_debug_config" in payload["suggested_next_actions"]
 
@@ -776,6 +855,144 @@ def test_start_debug_session_autoloads_symbols_from_profile(monkeypatch):
     assert payload["ok"] is True
     assert payload["data"]["symbols_loaded"] is True
     assert loaded == ["build/fw.elf"]
+
+
+def test_start_debug_session_uses_profile_backend_args_and_serial(monkeypatch):
+    import mcp_server.server as server_module
+
+    started = []
+
+    class FakeManager:
+        def is_alive(self):
+            return False
+
+        def start(self, server_type, args):
+            started.append((server_type, args))
+            return 3333
+
+    class FakeClient:
+        def start_gdb(self):
+            pass
+
+        def connect(self, host, port):
+            return [{"message": "connected"}]
+
+    class FakeProfile:
+        def get(self):
+            return {
+                "server_type": "openocd",
+                "server_args": ["-f", "interface/stlink.cfg", "-f", "target/stm32l4x.cfg"],
+                "serial": "066BFF",
+            }
+
+    monkeypatch.setattr(server_module, "gdb_manager", FakeManager())
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile())
+
+    payload = _payload(asyncio.run(handle_call_tool("start_debug_session", {})))
+
+    assert payload["ok"] is True
+    assert started == [(
+        "openocd",
+        ["-f", "interface/stlink.cfg", "-f", "target/stm32l4x.cfg", "-c", "adapter serial 066BFF"],
+    )]
+
+
+def test_profile_reset_config_is_reused_by_reset_flash_and_composite(monkeypatch):
+    import mcp_server.server as server_module
+
+    calls = []
+    composite = {}
+
+    class FakeClient:
+        def load_firmware(self, path):
+            calls.append(("flash", path))
+            return []
+
+        def reset_halt(self, command):
+            calls.append(("reset_halt", command))
+            return []
+
+        def reset_run(self, command):
+            calls.append(("reset_run", command))
+            return []
+
+    class FakeManager:
+        server_type = "openocd"
+
+    class FakeProfile:
+        def get(self):
+            return {"server_type": "openocd", "reset": {"strategy": "software"}}
+
+    def fake_flash_and_run(*args, **kwargs):
+        composite.update(kwargs)
+        return {"stopped": True}
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    monkeypatch.setattr(server_module, "gdb_manager", FakeManager())
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile())
+    monkeypatch.setattr(server_module, "flash_and_run", fake_flash_and_run)
+
+    _payload(asyncio.run(handle_call_tool("reset_target", {"halt": True})))
+    _payload(asyncio.run(handle_call_tool("flash_firmware", {"file_path": "fw.elf"})))
+    _payload(asyncio.run(handle_call_tool("flash_and_run", {"file_path": "fw.elf"})))
+
+    assert ("reset_halt", "monitor soft_reset_halt") in calls
+    assert ("reset_run", "monitor reset run") in calls
+    assert composite["reset_command"] == "monitor soft_reset_halt"
+
+
+def test_start_failure_cleans_up_and_returns_attempt_evidence(monkeypatch):
+    import mcp_server.server as server_module
+
+    calls = {"start": 0, "server_stop": 0, "gdb_stop": 0}
+    server_args = [
+        "-f",
+        "interface/stlink.cfg",
+        "-f",
+        "target/stm32u5x.cfg",
+        "-c",
+        "adapter speed 400",
+    ]
+
+    class FakeManager:
+        server_type = "openocd"
+
+        def is_alive(self):
+            return False
+
+        def start(self, server_type, args):
+            calls["start"] += 1
+            raise RuntimeError("init mode failed: unable to connect to target")
+
+        def stop(self):
+            calls["server_stop"] += 1
+
+        def get_logs(self):
+            return ("x" * 5000) + "\nError: target examination failed"
+
+    class FakeClient:
+        def stop_gdb(self):
+            calls["gdb_stop"] += 1
+
+    monkeypatch.setattr(server_module, "gdb_manager", FakeManager())
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "start_debug_session",
+        {"server_type": "openocd", "server_args": server_args},
+    )))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "target_unreachable"
+    assert calls == {"start": 1, "server_stop": 1, "gdb_stop": 1}
+    assert payload["raw_response"]["attempted"] == {
+        "backend": "openocd",
+        "server_args": server_args,
+        "speed_khz": 400,
+    }
+    assert len(payload["raw_response"]["server_log"]) <= 4000
+    assert payload["raw_response"]["server_log"].endswith("target examination failed")
 
 
 def test_start_debug_session_retries_a_transient_probe_busy(monkeypatch):
