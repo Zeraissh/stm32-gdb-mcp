@@ -97,3 +97,31 @@ def decode_variables(records) -> dict:
     """Return a ``{name: value}`` map of frame locals/arguments."""
     variables = _find_payload_value(records, "variables") or []
     return {entry.get("name"): entry.get("value") for entry in variables if entry.get("name")}
+
+
+def decode_evaluated_value(records) -> str | None:
+    """Extract the first expression value from ``-data-evaluate-expression`` records."""
+    for record in records or []:
+        if record.get("message") == "error":
+            continue
+        payload = record.get("payload")
+        if isinstance(payload, dict) and payload.get("value") is not None:
+            return payload["value"]
+    return None
+
+
+def decode_memory_bytes(records) -> str | None:
+    """Extract hex bytes from ``-data-read-memory-bytes`` records."""
+    for record in records or []:
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        memory = payload.get("memory")
+        if isinstance(memory, list) and memory:
+            first = memory[0]
+            if isinstance(first, dict) and isinstance(first.get("contents"), str):
+                return first["contents"].strip()
+        contents = payload.get("contents")
+        if isinstance(contents, str) and contents.strip():
+            return contents.strip()
+    return None

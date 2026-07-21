@@ -19,6 +19,9 @@ The session ended or never started. Recover in this order:
 3. If `start_debug_session` is hidden by compact mode, invoke
    `call(tool="start_debug_session", args={...})`.
    / 若 compact 模式隐藏了该工具，使用 `call(tool="start_debug_session", args={...})`。
+4. If OpenOCD `server_args` are omitted, set profile `mcu` and `probe` first so the server
+   can infer the interface and target configuration.
+   / 若省略 OpenOCD `server_args`，请先设置 profile 的 `mcu` 和 `probe`，服务器将据此推断接口与目标配置。
 
 Restarting the whole MCP server should not be necessary. /
 正常情况下无需重启整个 MCP 服务器。

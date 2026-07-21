@@ -154,6 +154,65 @@ def test_missing_required_argument_gives_clear_error():
     assert "name" in payload["error"]["message"]
 
 
+def test_read_variable_returns_structured_value(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def read_variable(self, name):
+            assert name == "rx_count"
+            return [{"type": "result", "payload": {"value": "7"}}]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool("read_variable", {"name": "rx_count"})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["value"] == "7"
+
+
+def test_read_variable_without_decoded_value_returns_error(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def read_variable(self, name):
+            return [{"type": "console", "payload": "noise"}]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool("read_variable", {"name": "rx_count"})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "no_value_returned"
+
+
+def test_read_memory_returns_structured_bytes(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def read_memory(self, address, length):
+            assert address == "0x20000000"
+            assert length == 4
+            return [{"type": "result", "payload": {"memory": [{"contents": "DEADBEEF"}]}}]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool("read_memory", {"address": "0x20000000", "length": 4})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["bytes"] == "DEADBEEF"
+
+
+def test_read_memory_without_bytes_returns_error(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def read_memory(self, address, length):
+            return [{"type": "console", "payload": "noise"}]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool("read_memory", {"address": "0x20000000", "length": 4})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "no_value_returned"
+
+
 def test_named_sessions_have_isolated_state():
     # set_debug_profile on a named session must not touch the default session.
     asyncio.run(handle_call_tool("set_debug_profile", {"mcu": "STM32F407"}))  # default
@@ -692,6 +751,40 @@ def test_suggest_server_args_exposes_and_forwards_adapter_speed():
     assert payload["data"]["server_args"][-1] == "adapter speed 800"
 
 
+def test_suggest_server_args_uses_profile_probe_when_omitted(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeProfile:
+        def get(self):
+            return {"probe": "cmsis-dap"}
+
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile())
+    payload = _payload(asyncio.run(handle_call_tool(
+        "suggest_server_args", {"mcu": "STM32G431"}
+    )))
+
+    assert payload["ok"] is True
+    assert payload["data"]["interface"] == "cmsis-dap.cfg"
+    assert payload["data"]["probe_source"] == "profile"
+
+
+def test_suggest_server_args_missing_probe_errors_when_profile_empty(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeProfile:
+        def get(self):
+            return {}
+
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile())
+    payload = _payload(asyncio.run(handle_call_tool(
+        "suggest_server_args", {"mcu": "STM32L431"}
+    )))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "missing_argument"
+    assert "set_debug_profile" in payload["suggested_next_actions"]
+
+
 def test_call_invokes_any_tool_by_name():
     # the escape hatch: reach a tool even if a client truncated it from the list
     payload = _payload(asyncio.run(handle_call_tool(
@@ -794,6 +887,45 @@ def test_start_openocd_without_server_args_gives_clear_error(monkeypatch):
     assert payload["error"]["code"] == "invalid_target_config"
     assert started == []  # openocd was never launched with an empty config
     assert "load_debug_config" in payload["suggested_next_actions"]
+
+
+def test_start_openocd_without_server_args_uses_profile_defaults(monkeypatch):
+    import mcp_server.server as server_module
+
+    started = {}
+
+    class FakeManager:
+        def is_alive(self):
+            return False
+
+        def start(self, server_type, args):
+            started["args"] = list(args)
+            return 3333
+
+    class FakeClient:
+        def start_gdb(self):
+            pass
+
+        def connect(self, host, port):
+            return [{"m": "ok"}]
+
+        def load_symbols(self, path):
+            pass
+
+    class FakeProfile:
+        def get(self):
+            return {"mcu": "STM32L431", "probe": "stlink"}
+
+    monkeypatch.setattr(server_module, "gdb_manager", FakeManager())
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile())
+    payload = _payload(asyncio.run(handle_call_tool("start_debug_session", {"server_type": "openocd"})))
+
+    assert payload["ok"] is True
+    flat = " ".join(started["args"])
+    assert "interface/stlink.cfg" in flat
+    assert "target/stm32l4x.cfg" in flat
+    assert payload["data"]["server_args_source"] == "profile"
 
 
 def test_load_symbols_falls_back_to_profile_elf(monkeypatch):

@@ -1,6 +1,8 @@
 from mcp_server.gdb_decode import (
     decode_backtrace,
     decode_breakpoints,
+    decode_evaluated_value,
+    decode_memory_bytes,
     decode_registers,
     decode_variables,
     registers_summary,
@@ -97,3 +99,13 @@ def test_decode_breakpoints_handles_nested_bkpt_and_empty():
 def test_decoders_tolerate_missing_payload():
     assert decode_backtrace([{"type": "console", "payload": "noise"}]) == []
     assert decode_variables([]) == {}
+
+
+def test_decode_evaluated_value_prefers_structured_payload():
+    records = [{"type": "result", "payload": {"value": "0x1234"}}]
+    assert decode_evaluated_value(records) == "0x1234"
+
+
+def test_decode_memory_bytes_reads_mi_memory_contents():
+    records = [{"type": "result", "payload": {"memory": [{"contents": "00112233"}]}}]
+    assert decode_memory_bytes(records) == "00112233"

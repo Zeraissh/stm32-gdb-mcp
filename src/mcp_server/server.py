@@ -60,7 +60,7 @@ from .framework_render import render_framework
 from .framework_solver import build_framework_plan, framework_view, merge_af_maps, summarize_framework
 from .freertos_inspector import FreeRTOSInspector
 from .gdb_client import GdbClientManager
-from .gdb_decode import registers_summary
+from .gdb_decode import decode_evaluated_value, decode_memory_bytes, registers_summary
 from .gdb_manager import GdbServerManager
 from .issue_reporter import DEFAULT_REPO, build_issue_body, file_issue, issue_fingerprint
 from .log_reader import FileLogReader, ProcessLogReader, SerialLogReader
@@ -220,10 +220,10 @@ async def handle_list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "mcu": {"type": "string", "description": "MCU or family, e.g. 'STM32L431' or 'STM32F4'."},
-                    "probe": {"type": "string", "description": "Debug probe: stlink, jlink, or cmsis-dap."},
+                    "probe": {"type": "string", "description": "Optional. Debug probe: stlink, jlink, or cmsis-dap. If omitted, uses debug profile probe."},
                     "speed_khz": {"type": "integer", "description": "Adapter clock in kHz (default 4000; 0 keeps the config default)."}
                 },
-                "required": ["mcu", "probe"]
+                "required": ["mcu"]
             }
         ),
         Tool(
@@ -1884,16 +1884,36 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                     code="missing_argument",
                     suggested_next_actions=["load_debug_config", "set_debug_profile"],
                 )]
-            configured_args = arguments["server_args"] if "server_args" in arguments else profile.get("server_args", [])
+            if "server_args" in arguments:
+                configured_args = arguments["server_args"]
+                server_args_source = "arguments"
+            else:
+                configured_args = profile.get("server_args", [])
+                server_args_source = "profile" if configured_args else "arguments"
             args = list(configured_args or [])
             if server_type == "openocd" and not args:
-                return [content_error(
-                    "openocd requires server_args naming the probe interface and target, e.g. "
-                    "['-f','interface/stlink.cfg','-f','target/stm32l4x.cfg']. Pass server_args, or "
-                    "load a debug config (load_debug_config) that defines them.",
-                    code="invalid_target_config",
-                    suggested_next_actions=["load_debug_config", "inspect_project"],
-                )]
+                mcu = profile.get("mcu")
+                probe = profile.get("probe")
+                if mcu and probe:
+                    try:
+                        inferred = suggest_server_args(mcu, probe, scripts_dir=find_openocd_scripts())
+                    except ValueError as exc:
+                        return [content_error(
+                            f"Could not infer openocd server_args from debug profile: {exc}",
+                            code="invalid_target_config",
+                            suggested_next_actions=["set_debug_profile", "load_debug_config", "suggest_server_args"],
+                        )]
+                    args = list(inferred["server_args"])
+                    server_args_source = "profile"
+                else:
+                    missing = [field for field in ("mcu", "probe") if not profile.get(field)]
+                    return [content_error(
+                        "openocd requires server_args naming the probe interface and target, e.g. "
+                        "['-f','interface/stlink.cfg','-f','target/stm32l4x.cfg']. Pass server_args, "
+                        f"or set debug profile fields first (missing: {', '.join(missing)}).",
+                        code="invalid_target_config",
+                        suggested_next_actions=["set_debug_profile", "load_debug_config", "suggest_server_args"],
+                    )]
             if server_type == "openocd":
                 # Concurrency: a named session gets a distinct gdb_port, and a per-board
                 # probe is selected by 'serial', so multiple OpenOCD instances coexist.
@@ -1952,18 +1972,35 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
             _last_session["server_args"] = args
             symbols = _autoload_symbols(_sess)
             return [content_success(
-                {"message": "Debug session started", "server_type": server_type, "port": port, "symbols_loaded": symbols},
+                {
+                    "message": "Debug session started",
+                    "server_type": server_type,
+                    "port": port,
+                    "symbols_loaded": symbols,
+                    "server_args_source": server_args_source,
+                },
                 raw_response=resp,
             )]
 
         elif name == "suggest_server_args":
             scripts_dir = find_openocd_scripts()
+            profile = debug_profile.get()
+            probe = arguments.get("probe") or profile.get("probe")
+            if not probe:
+                return [content_error(
+                    "Missing required argument: 'probe'. Provide it directly, or set debug profile probe "
+                    "first (set_debug_profile/load_debug_config). Known probes: stlink, jlink, cmsis-dap.",
+                    code="missing_argument",
+                    suggested_next_actions=["set_debug_profile", "load_debug_config", "suggest_server_args"],
+                )]
             result = suggest_server_args(
                 arguments["mcu"],
-                arguments["probe"],
+                probe,
                 scripts_dir=scripts_dir,
                 speed_khz=arguments.get("speed_khz", 4000),
             )
+            result["probe"] = probe
+            result["probe_source"] = "argument" if arguments.get("probe") else "profile"
             return [content_success(result, suggested_next_actions=["start_debug_session", "self_check"])]
 
         elif name == "set_adapter_speed":
@@ -2230,12 +2267,36 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
 
         elif name == "read_variable":
             resp = gdb_client.read_variable(arguments["name"])
-            return [content_success({"message": "Variable read", "name": arguments["name"]}, raw_response=resp)]
+            value = decode_evaluated_value(resp)
+            if value is None:
+                return [content_error(
+                    f"No value returned for expression {arguments['name']!r}. Target may be running or symbols may be missing.",
+                    code="no_value_returned",
+                    raw_response=resp,
+                    suggested_next_actions=["halt", "load_symbols", "expressions"],
+                )]
+            return [content_success(
+                {"message": "Variable read", "name": arguments["name"], "value": value},
+                raw_response=resp,
+            )]
 
         elif name == "read_memory":
             resp = gdb_client.read_memory(arguments["address"], arguments["length"])
+            contents = decode_memory_bytes(resp)
+            if contents is None:
+                return [content_error(
+                    f"No memory bytes returned for address {arguments['address']}. Target may be running or inaccessible.",
+                    code="no_value_returned",
+                    raw_response=resp,
+                    suggested_next_actions=["halt", "self_check", "capture_state"],
+                )]
             return [content_success(
-                {"message": "Memory read", "address": arguments["address"], "length": arguments["length"]},
+                {
+                    "message": "Memory read",
+                    "address": arguments["address"],
+                    "length": arguments["length"],
+                    "bytes": contents,
+                },
                 raw_response=resp,
             )]
 

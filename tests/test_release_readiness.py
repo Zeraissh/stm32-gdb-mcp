@@ -161,7 +161,7 @@ def test_release_versions_are_consistent():
     assert '__version__ = "0.4.0"' in package_init
     assert plugin["version"] == "0.2.0"
     assert marketplace["plugins"][0]["version"] == plugin["version"]
-    assert "## [0.4.0] - 2026-07-20" in changelog
+    assert "## [0.4.0] - 2026-07-14" in changelog
 
 
 def test_sdist_excludes_local_workspace_state():

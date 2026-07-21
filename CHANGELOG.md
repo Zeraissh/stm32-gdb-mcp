@@ -2,12 +2,10 @@
 
 ## Unreleased / 未发布
 
-## [0.4.0] - 2026-07-20
-
-This release converges installation, configuration, MCP contracts, and hardware diagnostics.
+This update converges installation, configuration, MCP contracts, and hardware diagnostics.
 It preserves the existing TextContent JSON API while adding native MCP structured results.
 
-本版本集中收敛安装、配置、MCP 契约和硬件故障诊断。现有 TextContent JSON API 保持兼容，
+本次更新集中收敛安装、配置、MCP 契约和硬件故障诊断。现有 TextContent JSON API 保持兼容，
 同时新增 MCP 原生结构化结果。
 
 ### Installation and configuration / 安装与配置
@@ -56,6 +54,12 @@ It preserves the existing TextContent JSON API while adding native MCP structure
   and debug prompts are bilingual. The bundled plugin advances to `0.2.0` because its skills
   and SessionStart guidance changed. / 公开 README、安装、排障、发行、HIL、skills、固件示例
   和调试提示均完成中英双语；因内置 skills 与 SessionStart 引导变化，插件升级到 `0.2.0`。
+
+## [0.4.0] - 2026-07-14
+
+### Tooling / 工具链
+
+- Added `.github/workflows/release.yml`: pushing a `v*` tag now runs the quality gate (ruff / pytest / compileall), builds the sdist + wheel, checks the metadata with `twine`, and publishes to **PyPI via Trusted Publishing (OIDC)** — no API token is stored in the repo. `workflow_dispatch` runs everything except the publish step for a safe dry run. One-time PyPI trusted-publisher + `pypi` environment setup is documented in `docs/release.md`. 新增 `.github/workflows/release.yml`：推送 `v*` 标签即跑质量门禁、构建 sdist + wheel、用 `twine` 校验元数据，并通过 **PyPI 可信发布 (OIDC)** 发布（仓库不存 token）；`workflow_dispatch` 可做除发布外的安全演练；一次性配置见 `docs/release.md`。
 
 ## [0.3.0] - 2026-07-01
 
