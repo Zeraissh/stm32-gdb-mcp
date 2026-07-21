@@ -1,7 +1,10 @@
 import json
 import subprocess
 
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10; the dev "build" dependency provides tomli.
+    import tomli as tomllib
 
 from mcp_server import install_mcp
 
