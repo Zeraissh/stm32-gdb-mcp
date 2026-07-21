@@ -38,6 +38,14 @@ After flashing, set a breakpoint on `HardFault_Handler`, `run_and_wait`, then
 This is the exact scenario used to HIL-validate the fault tools on an
 STM32L431CCT6 over ST-Link/OpenOCD.
 
+烧录后，在 `HardFault_Handler` 设置断点并执行 `run_and_wait`，再运行
+`reconstruct_fault_context`。预期得到：
+
+- `fault_classes: ['UsageFault']`、`active_flags: ['DIVBYZERO']`、`hfsr: ['FORCED']`
+- 故障 PC 解析到 `src/main.c` 中 `trigger_divzero` 的 `100 / g_divisor` 行
+
+该场景用于在 STM32L431CCT6 + ST-Link/OpenOCD 上验证故障分析工具。
+
 ## Flashing / 烧录
 
 English: Flashing is manual and opt-in, and **overwrites existing firmware**. Back

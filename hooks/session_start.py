@@ -12,7 +12,7 @@ import sys
 
 BANNER = (
     "🔧 STM32 Debug Kit active.\n"
-    "- MCP `stm32-gdb-mcp` (compact ~31 tools; reach ANY tool via call(tool, args)). "
+    "- MCP `stm32-gdb-mcp` (compact surface; reach ANY tool via call(tool, args)). "
     "Drives GDB + OpenOCD/ST-Link/J-Link on real hardware.\n"
     "- Skills: `stm32-debug` (the observe→orient→hypothesize→act→verify debug loop) and "
     "`stm32-instrument` (write-time SWO/ITM trace) — invoke them for embedded work.\n"

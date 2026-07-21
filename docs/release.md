@@ -14,6 +14,7 @@ python -m ruff check .
 python -m pytest -q
 python -m compileall src tests
 python -m build
+python scripts/check_dist_contents.py dist/*
 ```
 
 - Run hardware-in-the-loop validation for hardware-facing changes. / 对影响硬件行为的变更运行硬件在环验证。
@@ -33,9 +34,33 @@ cmake --build build/stm32l431_blinky
 ```
 
 - Update `pyproject.toml` version. / 更新 `pyproject.toml` 中的版本号。
+- Review `.claude-plugin/plugin.json` version separately. The Python package version
+  tracks the PyPI server release; the plugin version tracks plugin packaging changes.
+  / 单独检查 `.claude-plugin/plugin.json` 版本：Python 包版本跟踪 PyPI 服务器发行，
+  插件版本只跟踪插件打包、skills、hooks 或 marketplace 元数据变化。
 - Update README examples when public behavior changed. / 当公开行为变化时更新 README 示例。
 - Review new MCP tools for schema clarity and backward compatibility. / 检查新增 MCP 工具的 schema 清晰度和向后兼容性。
 - Confirm generated distributions in `dist/` install in a clean environment. / 确认 `dist/` 中生成的包可以在干净环境安装。
+- Confirm `python scripts/check_dist_contents.py dist/*` passes so local workspace
+  state (`.codegraph`, `.vs`, `.claude`, caches, `build`, `dist`) cannot leak into
+  the sdist or wheel. / 确认发行内容审计通过，避免本地索引、IDE 状态、缓存和构建目录泄漏进
+  sdist 或 wheel。
+- Confirm source entry points work with `python -S` before installation, and install the
+  built wheel into a fresh virtual environment to smoke-test all console entry points.
+  / 安装前用 `python -S` 验证源码入口，并将构建出的 wheel 安装到全新虚拟环境，
+  对所有 console entry point 做烟测。
+
+## Versioning / 版本规则
+
+`pyproject.toml` is the server/package version published to PyPI. The Claude Code
+plugin version in `.claude-plugin/plugin.json` is intentionally separate and should
+only change when plugin packaging, bundled skills, hooks, or marketplace metadata
+change. The MCP server reports a git short SHA in source checkouts and falls back to
+the installed package version when `.git` metadata is unavailable.
+
+`pyproject.toml` 是发布到 PyPI 的服务器/包版本。`.claude-plugin/plugin.json` 中的 Claude Code
+插件版本与其独立，仅在插件打包、内置 skills、hooks 或 marketplace 元数据变化时更新。
+源码 checkout 中 MCP 报告 Git 短 SHA；安装包缺少 `.git` 元数据时回退到包版本。
 
 ## Tagging / 打标签
 

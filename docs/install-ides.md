@@ -1,52 +1,93 @@
-# Installing the STM32 debug kit in other IDEs / 在其他 IDE 中安装
+# Installing the STM32 debug kit in other IDEs / 在其他 IDE 中安装 STM32 调试套件
 
-## What's portable, and what isn't
+## Portable layers / 可移植的两层能力
 
-The kit has two layers:
+The kit has an MCP server for tools and a guidance layer for operating rules.
+Claude Code loads both from the plugin. Other clients use their MCP configuration plus a
+rules file in the firmware repository.
 
-| Layer | Claude Code | Cursor / VSCode / Codex / Windsurf / Trae |
+套件由提供调试工具的 MCP 服务器和提供操作规则的引导层组成。Claude Code 可通过插件同时加载；
+其他客户端需要配置 MCP，并在固件仓库中放置规则文件。
+
+| Layer / 层 | Claude Code | Cursor / VSCode / Codex / Windsurf / Trae |
 |---|---|---|
-| **MCP server** (the debugging tools) | ✅ via plugin | ✅ via each client's MCP config |
-| **Guidance** (golden rules, skills) | ✅ skills + SessionStart hook | ⚠️ via a **rules file** the client auto-reads |
+| MCP server / MCP 服务器 | Plugin / 插件 | Client MCP config / 客户端 MCP 配置 |
+| Guidance / 调试引导 | Skills + SessionStart hook | Project rules file / 项目规则文件 |
 
-The Claude Code **plugin** (marketplace, auto-loaded skills, SessionStart hook) is
-Claude-Code-only. Everywhere else you wire up the **MCP server** for the tools, and drop a
-**rules file** into your *firmware* project for the always-on guidance. Both are below.
-
-> 插件(市场 / 自动加载技能 / 会话钩子)仅限 Claude Code。其他 IDE 里:用各自的 MCP 配置接上
-> **服务器**(拿到工具),再在你的**固件项目**放一个**规则文件**(拿到常驻引导)。
-
-## 0. One-command deploy (does steps 1 + 2 for you)
+## 0. One-command deployment / 一键部署
 
 ```bash
 python scripts/deploy.py --project "D:/path/to/firmware" --ide vscode,cursor
 ```
 
-This: (1) installs the server if missing (`pip install -e .`), (2) writes the MCP config into
-each IDE you list, and (3) drops a **project-aware** `AGENTS.md` + `.github/copilot-instructions.md`
-into the firmware project — auto-detecting the MCU, OpenOCD args, debug-config yaml, and ELF.
-Existing rules files are kept (use `--force` to overwrite, with a backup). Flags: `--no-install`,
-`--no-rules`, `--ide codex` (prints the TOML to paste). Review the safety note it writes for your board.
+After a PyPI install, use the equivalent console command:
 
-The rest of this doc is the manual breakdown if you'd rather wire it up by hand.
-
-## 1. Install the MCP server
-
-One command per client (safe merge — it backs up and keeps your other servers):
+从 PyPI 安装后，可使用等价的 console 命令：
 
 ```bash
-python scripts/install_mcp.py --list                 # supported clients
-python scripts/install_mcp.py cursor                 # global ~/.cursor/mcp.json
-python scripts/install_mcp.py vscode --project .     # ./.vscode/mcp.json  (Copilot agent mode)
-python scripts/install_mcp.py windsurf               # ~/.codeium/windsurf/mcp_config.json
-python scripts/install_mcp.py claude-desktop         # Claude Desktop
-python scripts/install_mcp.py trae                   # Trae
-python scripts/install_mcp.py codex                  # prints the TOML to paste into ~/.codex/config.toml
+stm32-gdb-mcp-deploy --project "D:/path/to/firmware" --ide vscode,cursor
 ```
 
-### Manual config (if you prefer)
+Deployment installs the server if needed, writes each requested client configuration, and
+creates a project-aware `AGENTS.md` plus `.github/copilot-instructions.md`. It reuses
+`inspect_project` to detect the MCU, debug config, OpenOCD arguments, and ELF candidates.
+One ELF is selected automatically; multiple ELF files are listed for explicit selection.
+Existing rules are kept unless `--force` is supplied, in which case they are backed up first.
 
-JSON clients — **Cursor / Windsurf / Trae / Claude Desktop** use `"mcpServers"`:
+部署命令会在需要时安装服务器、写入所选客户端配置，并生成带项目上下文的 `AGENTS.md` 和
+`.github/copilot-instructions.md`。它复用 `inspect_project` 识别 MCU、调试配置、OpenOCD 参数和
+ELF 候选；只有一个 ELF 时自动采用，多个 ELF 时仅列出候选并要求明确选择。默认保留已有规则文件；
+使用 `--force` 时会先备份再覆盖。
+
+Useful flags / 常用参数：
+
+- `--no-install`: do not install the package / 不安装 Python 包
+- `--no-rules`: do not write project rules / 不写项目规则
+- `--ide codex`: install and verify through the Codex CLI / 通过 Codex CLI 安装并验证
+- `--force`: replace conflicting Codex/rules configuration / 替换冲突的 Codex 或规则配置
+
+Deployment stops immediately when package or client installation fails and never prints a
+false success message. / 包安装或客户端安装失败时会立即停止，不会输出虚假的完成提示。
+
+## 1. Install the MCP server / 安装 MCP 服务器
+
+The source helpers safely merge JSON clients and back up existing files:
+
+源码辅助命令会安全合并 JSON 配置，并备份已有文件：
+
+```bash
+python scripts/install_mcp.py --list
+python scripts/install_mcp.py cursor
+python scripts/install_mcp.py vscode --project .
+python scripts/install_mcp.py windsurf
+python scripts/install_mcp.py claude-desktop
+python scripts/install_mcp.py trae
+python scripts/install_mcp.py codex
+```
+
+PyPI installs expose the same functions:
+
+PyPI 安装提供同样的功能：
+
+```bash
+stm32-gdb-mcp-install --list
+stm32-gdb-mcp-check-env --json
+stm32-gdb-mcp-install codex
+```
+
+For Codex, the installer prefers `codex mcp add`, verifies with `codex mcp get --json`, and
+is idempotent when the existing entry matches. A conflicting entry requires `--force`.
+Use `stm32-gdb-mcp-install codex --print` to print valid TOML without changing Codex.
+
+对于 Codex，安装器优先执行 `codex mcp add`，再用 `codex mcp get --json` 验证；配置相同时可幂等
+成功，配置冲突时需显式传入 `--force`。若只需输出 TOML 而不修改 Codex，请执行
+`stm32-gdb-mcp-install codex --print`。
+
+## Manual client configuration / 手动配置客户端
+
+JSON clients such as Cursor, Windsurf, Trae, and Claude Desktop use `mcpServers`:
+
+Cursor、Windsurf、Trae 和 Claude Desktop 等 JSON 客户端使用 `mcpServers`：
 
 ```json
 {
@@ -60,14 +101,16 @@ JSON clients — **Cursor / Windsurf / Trae / Claude Desktop** use `"mcpServers"
 }
 ```
 
-**VSCode** (`.vscode/mcp.json`) uses `"servers"` and a transport `"type"`:
+VS Code uses `servers` and an explicit stdio transport:
+
+VS Code 使用 `servers` 和显式 stdio transport：
 
 ```json
 {
   "servers": {
     "stm32-gdb-mcp": {
       "type": "stdio",
-      "command": "C:\\…\\Scripts\\stm32-gdb-mcp.exe",
+      "command": "C:\\path\\to\\Scripts\\stm32-gdb-mcp.exe",
       "args": [],
       "env": { "STM32_GDB_MCP_COMPACT": "1" }
     }
@@ -75,62 +118,81 @@ JSON clients — **Cursor / Windsurf / Trae / Claude Desktop** use `"mcpServers"
 }
 ```
 
-**Codex** (`~/.codex/config.toml`):
+Codex uses TOML / Codex 使用 TOML：
 
 ```toml
 [mcp_servers.stm32-gdb-mcp]
-command = "C:/…/Scripts/stm32-gdb-mcp.exe"
+command = "C:/path/to/Scripts/stm32-gdb-mcp.exe"
 args = []
 env = { STM32_GDB_MCP_COMPACT = "1" }
 ```
 
-> **Use the absolute exe path.** GUI apps (Cursor/VSCode) often don't see `stm32-gdb-mcp` on
-> PATH — the bare command fails there. `python scripts/install_mcp.py` fills in the absolute
-> path automatically. The server must be installed first: `pip install -e .`.
-> Compact mode keeps it to ~31 tools; reach any other via `call(tool, args)`.
+Use the absolute executable path because GUI applications often do not inherit the terminal
+`PATH`. The installer resolves it automatically. Compact mode limits the visible surface;
+every hidden tool remains callable through `call` and discoverable through `tool_help`.
 
-## 2. Add the guidance (rules file)
+请使用可执行文件绝对路径，因为 GUI 应用通常不会继承终端的 `PATH`；安装器会自动解析该路径。
+compact 模式只限制可见工具，隐藏工具仍可由 `call` 调用，并可由 `tool_help` 查询。
 
-Other IDEs don't run Claude Code skills/hooks, so put the golden rules where each client looks.
-Drop this into your **firmware project** (the repo you debug, not this one):
+## One-round-trip profile bring-up / 单轮往返配置启动
 
-| Client | Rules file it auto-reads |
-|---|---|
-| Codex, Cursor, many tools | `AGENTS.md` (project root) |
-| Cursor | `.cursor/rules/stm32.mdc` |
-| VSCode + Copilot | `.github/copilot-instructions.md` |
+After the client loads the server, use `batch` to load the board profile, start from its
+`server_type`, `server_args`, and `serial`, then immediately run `self_check`:
 
-Paste this content (a condensed version of the `stm32-debug` skill):
+客户端加载服务器后，使用 `batch` 读取板卡 profile，从中取得 `server_type`、`server_args` 和
+`serial`，随后立即执行 `self_check`：
 
-```md
-# STM32 hardware debugging (stm32-gdb-mcp)
-
-When debugging STM32 firmware on hardware, drive the `stm32-gdb-mcp` MCP server as a loop:
-observe → orient (symbolize) → hypothesize → act safely → verify.
-
-- A tool not listed? Reach any via `call(tool="<name>", args={…})`; batch several with `batch`.
-- Run `self_check` immediately after `start_debug_session` (validates byte order, core, family).
-- Set `debug_profile(action=set, mcu, elf_path, svd_path)` so symbols/peripherals resolve.
-- Reads (registers/memory/frames) need a HALTED core; if a read says target_unresponsive, `halt_execution` first.
-- A breakpoint TIMEOUT means the code path was NOT reached — do NOT just retry. Halt, `capture_state`,
-  `breakpoint(action=list)` (hit_count=0 confirms), read the gating flag, set a breakpoint earlier or
-  drive the precondition.
-- Memory writes are guarded (option bytes/IWDG/WWDG blocked); `write_guard(action=policy)` to allow.
-- Don't hard-kill OpenOCD (it can wedge the probe's USB) — use `recover_session`.
-- ST-Link SWD is exclusive; reset via `reset_target`, not a second OpenOCD.
-- Find hot-spots/hangs with `sample_pc` (symbolized PC histogram). For printf over SWO,
-  `setup_swo(hclk_hz=…)` then `logging(action=start, channel="swo", file="swo_itm.log")`.
-- Multiple boards: pass `session="name"` to any tool.
+```text
+batch(steps=[
+  {"tool": "debug_config", "args": {"action": "load", "path": "mcp/board.yaml"}},
+  {"tool": "start_debug_session", "args": {}},
+  {"tool": "self_check", "args": {}}
+], stop_on_error=true)
 ```
 
-That gives non-Claude-Code IDEs the same "locked-in at start" behavior the SessionStart hook
-provides in Claude Code.
+Relative firmware, SVD, project-root, and SWO log paths resolve from the profile file's
+directory. / 固件、SVD、项目根目录和 SWO 日志的相对路径均以 profile 文件目录为基准。
 
-## 3. Claude Code (best experience)
+## 2. Add project guidance / 添加项目调试引导
+
+Place the rules in the firmware repository, not in this MCP repository:
+
+规则文件应放在固件仓库，而不是本 MCP 仓库：
+
+| Client / 客户端 | Auto-read rules file / 自动读取的规则文件 |
+|---|---|
+| Codex, Cursor, and many agents | `AGENTS.md` |
+| Cursor | `.cursor/rules/stm32.mdc` |
+| VS Code + Copilot | `.github/copilot-instructions.md` |
+
+Minimal bilingual template / 最小双语模板：
+
+```md
+# STM32 hardware debugging / STM32 硬件调试
+
+Drive `stm32-gdb-mcp` as: observe → orient → hypothesize → act safely → verify.
+按“观察 → 定位 → 假设 → 安全操作 → 验证”的闭环使用 `stm32-gdb-mcp`。
+
+- Run `self_check` immediately after `start_debug_session`.
+  `start_debug_session` 后立即运行 `self_check`。
+- Reads need a HALTED core; call `halt_execution` after `target_unresponsive`.
+  读取要求内核暂停；遇到 `target_unresponsive` 先调用 `halt_execution`。
+- A breakpoint timeout means the path was not reached. Inspect the gate; do not just retry.
+  断点超时表示路径未到达，应检查门控条件，不要原样重试。
+- Writes are guarded. Ask before flashing or changing target security state.
+  写操作受保护；烧录或修改目标安全状态前必须明确确认。
+- Use `recover_session`, not a hard kill. ST-Link SWD is exclusive.
+  使用 `recover_session`，不要强杀进程；ST-Link SWD 是独占连接。
+- Reach hidden tools with `call`; inspect their schema with `tool_help`.
+  使用 `call` 调用隐藏工具，使用 `tool_help` 查询 schema。
+```
+
+## 3. Claude Code plugin / Claude Code 插件
 
 ```text
 /plugin marketplace add Zeraissh/stm32-gdb-mcp
 /plugin install stm32-debug-kit@zeraissh-stm32
 ```
 
-Bundles the server + both skills + the SessionStart hook in one install (~175 always-on tokens).
+The plugin bundles the MCP server, both skills, and the SessionStart hook. /
+插件同时包含 MCP 服务器、两项 skill 和 SessionStart hook。

@@ -1,70 +1,99 @@
-# Tool map (by purpose)
+# Tool map by purpose / 按用途分类的工具索引
 
-Quick index of the stm32-gdb-mcp tools. Most results carry `suggested_next_actions`.
-The surface is lean: related ops are **action-dispatched families** — pass the discriminator
-(`action=…` or `what=…`). The old standalone names still work if you call them.
+Most results include `suggested_next_actions`. Related operations use an `action=` or
+`what=` discriminator. Hidden tools remain callable through `call`; query their complete
+schema with `tool_help`.
 
-## Session & link
-- `start_debug_session` (pass `session="name"` for multi-board, `serial=` to pick a probe),
-  `stop_debug_session`, `recover_session`, `list_sessions`, `close_session`
-- `self_check` (run right after connecting)
-- `session_diagnostics` (what = health | events | server_logs)
-- `timeouts` (action = get | set)
+大多数结果包含 `suggested_next_actions`。相关操作通过 `action=` 或 `what=` 合并成工具族。
+隐藏工具仍可由 `call` 调用，并可用 `tool_help` 查询完整 schema。
 
-## Build & bring-up & flashing
-- `build_firmware` (Keil UV4 / CMake / make / custom — Keil .axf debugs like a .elf)
+## Session and link / 会话与连接
+
+- `start_debug_session`, `stop_debug_session`, `recover_session`
+- `list_sessions`, `close_session`; pass `session="name"` for multiple boards /
+  多板卡时向任意工具传 `session="name"`
+- `self_check`: run immediately after connecting / 连接后立即运行
+- `session_diagnostics(what=health|events|server_logs)`
+- `timeouts(action=get|set)`
+
+## Build, bring-up, and flash / 构建、启动与烧录
+
+- `build_firmware`: Keil UV4, CMake, make, or custom commands / 支持 Keil、CMake、make 和自定义命令
 - `flash_firmware`, `flash_and_run`, `verify_flash`, `reset_target`
-- `inspect_project`, `debug_profile` (action = get | set)
-- `debug_config` (action = load | save | validate)
+- `inspect_project`, `debug_profile(action=get|set)`
+- `debug_config(action=load|save|validate)`
+- `suggest_server_args`: validated backend arguments / 生成已验证的 GDB Server 参数
 
-## Execution control
-- `continue_execution`, `halt_execution`, `run_and_wait`, `run_for_duration`, `wait_for_stop`
-- `step` (kind = over | into | out | instruction), `run_to_line`
-- `breakpoint` (action = set | delete | list | watch; set takes condition/temporary/ignore_count)
+## Execution control / 执行控制
 
-## Observe state (core must be halted)
-- `capture_state` (one-shot), `read_call_stack`, `read_variable`
-- `read_registers` (what = core | fault | cycle)
-- `frame` (action = select | source | variables)
-- `read_memory`, `write_memory` (guarded), `typed_memory` (action = read | write)
-- `read_peripheral_register`, `decode_peripheral_register`, `load_svd`
-- `disassemble`, `inspect_symbol` (what = size | type | address | resolve | functions | variables)
+- `continue_execution`, `halt_execution`, `run_and_wait`, `wait_for_stop`
+- `run_for_duration`: natural run, optional low-rate sample, then halt/capture /
+  自然运行，可选低速采样，结束后暂停并采集
+- `step(kind=over|into|out|instruction)`, `run_to_line`
+- `breakpoint(action=set|delete|list|watch)`
 
-## Fault & crash triage
-- `reconstruct_fault_context` (recovers faulting PC -> source), `diagnose_fault`
-- `analyze_stack` (used/free/overflow verdict — the key tool for stack overflows)
-- `read_registers` (what = fault), `snapshot` (scope = full | rtos), `coredump` (action = capture | load)
+## State inspection (halted core) / 状态检查（内核需暂停）
 
-## RTOS (FreeRTOS)
-- `detect_rtos`, `snapshot` (scope = rtos)
-- `read_freertos` (what = current_task | tasks | task_lists | queue | mutex | heap)
+- `capture_state`, `read_call_stack`, `read_variable`
+- `read_registers(what=core|fault|cycle)`
+- `frame(action=select|source|variables)`
+- `read_memory`, guarded `write_memory`, `typed_memory(action=read|write)`
+- `load_svd`, `read_peripheral_register`, `decode_peripheral_register`
+- `disassemble`, `inspect_symbol(what=size|type|address|resolve|functions|variables)`
 
-## Logging & tracing
-- `logging` (action = start | stop | get | clear; channel = rtt | swo | uart)
-- **SWO printf out-of-the-box**: `setup_swo(hclk_hz, swo_hz)` configures TPIU+ITM from the
-  debugger (no firmware init), then `logging(action=start, channel=swo, file=<output>)` tails
-  OpenOCD's ITM decode — no external decoder. Needs the SWO pin wired to the probe.
+## Fault and crash triage / 故障与崩溃诊断
 
-## Timing & profiling
-- `read_registers` (what = cycle) — DWT cycle counter for "how long did this take"
-- `sample_pc` — non-intrusive statistical profiler over SWD (no SWO pin); returns a
-  **symbolized hot-spot histogram** (top functions by %). The fast way to find hangs/hot loops.
+- `reconstruct_fault_context`: recover the true faulting PC and source /
+  恢复真实故障 PC 与源码位置
+- `diagnose_fault`
+- `analyze_stack`: used/free/overflow verdict / 栈使用量、余量与越界结论
+- `read_registers(what=fault)`, `snapshot(scope=full|rtos)`
+- `coredump(action=capture|load)`
+
+## RTOS (FreeRTOS) / 实时系统（FreeRTOS）
+
+- `detect_rtos`, `snapshot(scope=rtos)`
+- `read_freertos(what=current_task|tasks|task_lists|queue|mutex|heap)`
+
+## Logging and tracing / 日志与追踪
+
+- `logging(action=start|stop|get|clear, channel=rtt|swo|uart)`
+- `setup_swo(hclk_hz, swo_hz)` configures TPIU+ITM from the debugger; then
+  `logging(action=start, channel="swo", file=<output>)` tails OpenOCD's ITM decode.
+  The SWO pin must be wired. /
+  `setup_swo` 由调试器配置 TPIU+ITM，随后用 `logging` 读取 OpenOCD 解码输出；板卡必须连接 SWO 引脚。
+
+## Timing and profiling / 时序与性能分析
+
+- `read_registers(what=cycle)`: DWT cycle counter / DWT 周期计数器
+- `sample_pc`: non-intrusive symbolized PC histogram over SWD / 基于 SWD 的非侵入式符号化 PC 直方图
 - `configure_debug_freeze`
 
-## Hypothesis & verify
-- `debug_until` (trap + run + decoded context)
-- `run_for_duration` (natural run for counters/telemetry, optional low-rate `sample`, then halt + optional expression capture)
-- `expressions` (action = capture | assert | compare; capture also accepts `table={index_range,columns}`)
-- `track_variable` (action = start | stop | get), `breakpoint` (action = watch)
+## Hypothesis and verification / 假设与验证
 
-`run_for_duration(sample={"interval_ms": 500, "expressions": [...]})` returns a time series
-and summary without setting breakpoints or intentionally halting during the sample window. It is
-best-effort debugger polling, not a high-speed trace path; use SWO or firmware ring buffers when
-the target must guarantee capture rate or preserve tight timing.
+- `debug_until`: condition trap, run, and decoded context / 条件陷阱、运行和解码上下文
+- `run_for_duration`
+- `expressions(action=capture|assert|compare)`
+- `track_variable(action=start|stop|get)`
+- `breakpoint(action=watch)`
 
-## Safety
-- `write_guard` (action = policy | audit)
+`run_for_duration(sample={"interval_ms": 500, "expressions": [...]})` uses best-effort
+debugger polling. It is not high-speed trace; use SWO or a firmware ring buffer when timing
+must be preserved or capture rate guaranteed.
 
-## Determinism & observability
-- `run_scenario`, `batch`, `get_session` (view = journal | timeline | metrics), `clear_session_journal`
-- `export_debug_report`, `report_issue` (file a GitHub issue with the journal)
+`run_for_duration(..., sample=...)` 是尽力而为的调试器轮询，并非高速追踪。需要保持严格时序或
+保证采样率时，请使用 SWO 或固件环形缓冲。
+
+## Safety / 安全
+
+- `write_guard(action=policy|audit)`
+- Flashing, reset-strategy changes, Debug Authentication, and target security changes
+  remain explicit operations. /
+  烧录、复位策略、Debug Authentication 和目标安全状态修改必须显式执行。
+
+## Determinism and observability / 可复现性与可观测性
+
+- `run_scenario`, `batch`
+- `get_session(view=journal|timeline|metrics)`, `clear_session_journal`
+- `export_debug_report`, `report_issue`
+- `tool_help(name=...|query=...)`, `call(tool=..., args=...)`

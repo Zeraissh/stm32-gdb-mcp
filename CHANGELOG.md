@@ -2,9 +2,60 @@
 
 ## Unreleased / 未发布
 
-### Tooling / 工具链
+## [0.4.0] - 2026-07-20
 
-- Added `.github/workflows/release.yml`: pushing a `v*` tag now runs the quality gate (ruff / pytest / compileall), builds the sdist + wheel, checks the metadata with `twine`, and publishes to **PyPI via Trusted Publishing (OIDC)** — no API token is stored in the repo. `workflow_dispatch` runs everything except the publish step for a safe dry run. One-time PyPI trusted-publisher + `pypi` environment setup is documented in `docs/release.md`. 新增 `.github/workflows/release.yml`：推送 `v*` 标签即跑质量门禁、构建 sdist + wheel、用 `twine` 校验元数据，并通过 **PyPI 可信发布 (OIDC)** 发布（仓库不存 token）；`workflow_dispatch` 可做除发布外的安全演练；一次性配置见 `docs/release.md`。
+This release converges installation, configuration, MCP contracts, and hardware diagnostics.
+It preserves the existing TextContent JSON API while adding native MCP structured results.
+
+本版本集中收敛安装、配置、MCP 契约和硬件故障诊断。现有 TextContent JSON API 保持兼容，
+同时新增 MCP 原生结构化结果。
+
+### Installation and configuration / 安装与配置
+
+- Source entry points now work from an uninstalled clone. `stm32-gdb-mcp-check-env --json`
+  reports readiness as GDB plus any supported backend and returns a failing exit code when
+  prerequisites are missing. / 未安装包的干净源码也可运行入口；环境检查支持 JSON，并以
+  “GDB + 任一 backend”为就绪条件，缺少前置条件时返回非零退出码。
+- Codex installation now uses `codex mcp add`, verifies with `codex mcp get --json`, succeeds
+  idempotently for matching configuration, requires `--force` for conflicts, and keeps
+  `codex --print` as a valid TOML fallback. Deployment stops on installation failure and
+  lists multiple ELF candidates instead of guessing. / Codex 安装改为 CLI 新增后验证；
+  相同配置幂等成功，冲突需 `--force`，并保留合法 TOML 回退。部署失败立即停止，多个 ELF
+  只列候选、不擅自选择。
+- Debug config paths resolve relative to the config file. Profile backend arguments, probe
+  serial, logging channels, and reset strategy now flow into session start, logging, reset,
+  flash, and `flash_and_run`; `suggest_server_args` exposes `speed_khz`. /
+  调试配置中的相对路径按配置文件目录解析；backend 参数、探针序列号、日志通道和复位策略会
+  贯通启动、日志、复位与烧录工具，`suggest_server_args` 正式支持 `speed_khz`。
+
+### MCP client experience / MCP 客户端体验
+
+- Merged action tools expose precise generated `oneOf` schemas, every tool accepts
+  `session`, and compact mode provides `tool_help` for hidden descriptions and schemas. /
+  合并工具自动生成精确 `oneOf` schema，所有工具支持 `session`，compact 模式可用
+  `tool_help` 查询隐藏工具。
+- Tool results now include `structuredContent`, a shared `outputSchema`, and `isError=true`
+  for error envelopes while preserving the original JSON text. Read/write/external-write
+  annotations let clients present appropriate risk prompts. /
+  工具结果新增 `structuredContent`、统一 `outputSchema` 和错误 `isError=true`，同时保留
+  原 JSON 文本；工具 annotations 帮助客户端正确提示只读、硬件写入和外部写入风险。
+
+### Diagnostics, HIL, and release gates / 诊断、HIL 与发行门禁
+
+- Connection failures distinguish `probe_busy`, `probe_unavailable`, `target_unreachable`,
+  `debug_auth_required`, `invalid_target_config`, and `tool_missing`. Only transient probe/USB
+  faults retry; partial starts clean up GDB/OpenOCD and return attempted settings plus bounded
+  server logs. / 连接失败按上述错误码分类，仅瞬时探针/USB 故障重试；启动中途失败会清理
+  GDB/OpenOCD，并返回尝试参数和受限长度日志。
+- HIL smoke now uses the public MCP chain and requires decoded CPUID, Cortex-M core, and
+  expected-family evidence without flashing. CI and release workflows gate clean-source
+  entry points, distribution contents, clean-wheel installation, and console scripts. /
+  HIL 烟测改走公开 MCP 调用链，必须验证已解码 CPUID、Cortex-M 内核和预期系列，且不烧录；
+  CI/发行流程新增干净源码入口、发行内容、clean-wheel 安装和 console script 门禁。
+- Public README, installation, troubleshooting, release, HIL, skills, firmware examples,
+  and debug prompts are bilingual. The bundled plugin advances to `0.2.0` because its skills
+  and SessionStart guidance changed. / 公开 README、安装、排障、发行、HIL、skills、固件示例
+  和调试提示均完成中英双语；因内置 skills 与 SessionStart 引导变化，插件升级到 `0.2.0`。
 
 ## [0.3.0] - 2026-07-01
 

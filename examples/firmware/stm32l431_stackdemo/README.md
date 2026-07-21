@@ -24,6 +24,11 @@ Break on `flash_write_buggy` (after the array is written), then:
   the stack limit.
 - `read_call_stack` → shows `flash_write_buggy` as the frame consuming the stack.
 
+在数组写入后停在 `flash_write_buggy`，预期：
+
+- `analyze_stack(stack_size="0x800")` 返回 `overflow: true`，SP 比栈下限低数 KiB
+- `read_call_stack` 显示 `flash_write_buggy` 是大量消耗栈空间的栈帧
+
 ## Flashing / 烧录
 
 English: Flashing is manual and **overwrites existing firmware** — back up first.

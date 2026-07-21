@@ -42,26 +42,33 @@ $env:STM32_GDB_MCP_HIL_CONFIG = "examples/configs/stm32l431_openocd.yaml"
 python -m pytest -q tests/hil -m hil
 ```
 
-English: The default HIL smoke is non-destructive: it starts the configured GDB
-server, connects GDB, optionally halts the target, reads CPUID and DBGMCU IDCODE,
-resumes, and closes the session. Flashing remains opt-in through board-specific
-commands.
+English: The default HIL smoke is non-flashing. It uses the same public MCP path as
+an AI client: `start_debug_session` → `self_check` → `continue_execution` →
+`stop_debug_session`. The test requires a decoded ARM CPUID, a recognized Cortex-M
+core, and a successful expected-family check; a raw memory read alone is not success.
 
-中文：默认 HIL 烟测是非破坏性的：它启动配置中的 GDB Server、连接 GDB、可选暂停目标、读取
-CPUID 和 DBGMCU IDCODE、恢复运行并关闭会话。烧录仍然需要通过板卡专用命令显式启用。
+中文：默认 HIL 烟测不烧录固件，并使用与 AI 客户端相同的公开 MCP 调用链：
+`start_debug_session` → `self_check` → `continue_execution` → `stop_debug_session`。
+测试必须得到已解码的 ARM CPUID、可识别的 Cortex-M 内核，并通过预期 MCU 系列检查；
+仅仅“原始内存读取未报错”不算成功。
 
-English: The repository does not ship board-specific HIL tests yet because those
-require firmware, target wiring, and probe-specific reset behavior. Keep board
-tests in your private environment until they can be sanitized and generalized.
+English: The repository ships this generic, config-driven identity smoke test. Firmware
+behavior tests that depend on target wiring, reset behavior, or proprietary images should
+remain private until they can be sanitized and generalized.
 
-中文：仓库暂不内置具体板卡的 HIL 测试，因为这类测试依赖固件、目标接线和调试器特定复位行为。
-在它们可以脱敏并泛化之前，请将板卡测试保留在你的私有环境中。
+中文：仓库内置的是通用、配置驱动的目标身份烟测。依赖具体接线、复位行为或专有固件镜像的行为测试，
+在能够脱敏并泛化之前应保留在私有环境中。
 
 ## Suggested Smoke Coverage / 建议烟测覆盖
 
 - validate the debug config / 校验调试配置
 - start a debug session / 启动调试会话
-- flash a known firmware image / 烧录已知固件镜像
+- run `self_check` and assert decoded CPUID/core/family / 运行 `self_check` 并断言已解码的 CPUID、内核和系列
+- resume and close the session / 恢复运行并关闭会话
+
+Additional board-specific checks may include / 额外的板卡专用检查可包括：
+
+- flash a known firmware image only with explicit approval / 仅在明确批准后烧录已知固件镜像
 - reset and halt / 复位并暂停
 - read core registers / 读取内核寄存器
 - set and hit a breakpoint near `main` / 在 `main` 附近设置并命中断点
