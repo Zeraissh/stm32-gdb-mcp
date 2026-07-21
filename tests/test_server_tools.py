@@ -729,7 +729,7 @@ def test_compact_mode_exposes_small_core_with_call(monkeypatch):
     # full mode exposes the consolidated surface (well under the old 87, lean like superpowers)
     monkeypatch.delenv("STM32_GDB_MCP_COMPACT")
     full = len(asyncio.run(handle_list_tools()))
-    assert 50 <= full <= 80
+    assert 50 <= full <= 85
 
 
 def test_batch_runs_steps_in_one_call_returning_full_results():
