@@ -105,8 +105,12 @@ def decode_evaluated_value(records) -> str | None:
         if record.get("message") == "error":
             continue
         payload = record.get("payload")
-        if isinstance(payload, dict) and payload.get("value") is not None:
-            return payload["value"]
+        if isinstance(payload, dict):
+            val = payload.get("value")
+            # Guard against empty strings (e.g. optimised-out variables that GDB
+            # returns as value="" instead of an error record).
+            if val is not None and (not isinstance(val, str) or val.strip()):
+                return val
     return None
 
 
@@ -120,7 +124,9 @@ def decode_memory_bytes(records) -> str | None:
         if isinstance(memory, list) and memory:
             first = memory[0]
             if isinstance(first, dict) and isinstance(first.get("contents"), str):
-                return first["contents"].strip()
+                stripped = first["contents"].strip()
+                if stripped:
+                    return stripped
         contents = payload.get("contents")
         if isinstance(contents, str) and contents.strip():
             return contents.strip()

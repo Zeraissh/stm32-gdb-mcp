@@ -70,7 +70,7 @@ from .loop_orchestrator import GdbLoopSteps, run_iteration
 from .memory_guard import MemoryWriteGuard
 from .metrics import compute_metrics
 from .netlist_parser import load_netlist_file, parse_netlist
-from .openocd_config import find_openocd_scripts, suggest_server_args
+from .openocd_config import detect_probe as detect_probe_fn, find_openocd_scripts, suggest_server_args
 from .project_inspector import inspect_project
 from .provenance import annotate_spec_sources
 from .reliability import retry_call
@@ -295,6 +295,20 @@ async def handle_list_tools() -> list[Tool]:
                     "probe": {"type": "string", "description": "Optional. Debug probe: stlink, jlink, or cmsis-dap. If omitted, uses debug profile probe."}
                 },
                 "required": ["mcu"]
+            }
+        ),
+        Tool(
+            name="detect_probe",
+            description="Auto-detects debug probes (ST-Link, CMSIS-DAP/DAPLink, J-Link) connected "
+                        "to this host. Tries `openocd -c 'adapter list'` first (Method A); falls back "
+                        "to USB device enumeration via lsusb / Get-PnpDevice (Method B). When a single "
+                        "probe is found, returns a `suggested_probe` hint ready for suggest_server_args "
+                        "or start_debug_session.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "openocd_path": {"type": "string", "description": "Optional path to the openocd executable (auto-detected if omitted)."}
+                }
             }
         ),
         Tool(
@@ -1780,7 +1794,7 @@ _RENAMED_TOOLS = {
 
 # Core tools kept visible in compact mode; everything else is reached via `call`.
 _CORE_TOOLS = {
-    "suggest_server_args", "start_debug_session", "stop_debug_session", "recover_session",
+    "suggest_server_args", "detect_probe", "start_debug_session", "stop_debug_session", "recover_session",
     "self_check", "debug_profile", "load_symbols",
     "build_firmware", "flash_firmware", "flash_and_run",
     "reset_target", "halt_execution", "run_and_wait", "run_for_duration", "breakpoint",
@@ -2113,6 +2127,18 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
             result["probe_source"] = "argument" if arguments.get("probe") else "profile"
             return [content_success(result, suggested_next_actions=["start_debug_session", "self_check"])]
 
+        elif name == "detect_probe":
+            det = detect_probe_fn(openocd_path=arguments.get("openocd_path"))
+            probes = det.get("probes", [])
+            next_actions: list[str]
+            if len(probes) == 1:
+                next_actions = ["suggest_server_args", "start_debug_session"]
+            elif len(probes) > 1:
+                next_actions = ["suggest_server_args"]
+            else:
+                next_actions = ["start_debug_session"]
+            return [content_success(det, suggested_next_actions=next_actions)]
+
         elif name == "set_adapter_speed":
             resp = gdb_client.set_adapter_speed(arguments["khz"])
             return [content_success({"message": "Adapter speed set", "khz": arguments["khz"]}, raw_response=resp)]
@@ -2207,6 +2233,18 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                 "success": success,
                 "log_tail": result["output"][-4000:],
             }
+            # Issue #15: for Keil builds, verify the log reports the expected target.
+            if kind == "keil":
+                built_target = build_mod.parse_keil_built_target(result.get("output", ""))
+                if built_target:
+                    payload["built_target"] = built_target
+                requested_target = arguments.get("target")
+                if requested_target and built_target and built_target != requested_target:
+                    success = False
+                    payload["success"] = False
+                    payload["target_mismatch"] = (
+                        f"Requested '{requested_target}' but log shows '{built_target}'"
+                    )
             if success:
                 return [content_success(payload, suggested_next_actions=["flash_firmware", "flash_and_run"])]
             return [content_error(
