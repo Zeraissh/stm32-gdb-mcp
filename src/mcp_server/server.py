@@ -70,7 +70,8 @@ from .loop_orchestrator import GdbLoopSteps, run_iteration
 from .memory_guard import MemoryWriteGuard
 from .metrics import compute_metrics
 from .netlist_parser import load_netlist_file, parse_netlist
-from .openocd_config import detect_probe as detect_probe_fn, find_openocd_scripts, suggest_server_args
+from .openocd_config import detect_probe as detect_probe_fn
+from .openocd_config import find_openocd_scripts, suggest_server_args
 from .project_inspector import inspect_project
 from .provenance import annotate_spec_sources
 from .reliability import retry_call

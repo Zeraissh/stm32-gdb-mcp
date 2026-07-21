@@ -5,15 +5,11 @@
 #12  Auto-detect probe type (detect_probe tool)
 """
 
-import re
 import unittest.mock as mock
-
-import pytest
 
 from mcp_server.build import parse_keil_built_target, resolve_build_command
 from mcp_server.gdb_decode import decode_evaluated_value, decode_memory_bytes
 from mcp_server.openocd_config import detect_probe
-
 
 # ---------------------------------------------------------------------------
 # Issue #15: Keil -t target
