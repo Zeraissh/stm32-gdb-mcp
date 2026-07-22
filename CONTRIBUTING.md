@@ -26,10 +26,20 @@ Run the same checks used by CI before opening a pull request / 提交 PR 前运�
 
 ```bash
 python -m ruff check .
-python -m pytest -q
+python -m mypy
+python -m pytest -q --cov=mcp_server
 python -m compileall src tests
 python -m build
 ```
+
+English: New modules should be mypy-clean; `pyproject.toml` carries temporary
+`ignore_errors` overrides only for legacy modules pending decomposition. Shared
+test fakes (`FakeGdb`, `FakeGdbClient`, `FakeGdbManager`, `FakeProfile`) live in
+`tests/conftest.py` — reuse them instead of re-declaring per-file copies.
+
+中文：新模块应保持 mypy 零错误;`pyproject.toml` 中的 `ignore_errors` 仅为等待拆分的
+遗留模块临时保留。共享测试替身(`FakeGdb`、`FakeGdbClient`、`FakeGdbManager`、
+`FakeProfile`)位于 `tests/conftest.py`,请复用而非在各文件重复定义。
 
 ## Change Guidelines / 变更原则
 
