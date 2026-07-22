@@ -284,6 +284,33 @@ def test_list_and_close_sessions():
     assert "rackB" not in server_module.session_manager.sessions
 
 
+def test_stop_debug_session_stops_gdb_server_tracking_and_log_readers(monkeypatch):
+    import mcp_server.server as server_module
+
+    stopped = []
+
+    class Resource:
+        def __init__(self, name, method="stop"):
+            self.name = name
+            setattr(self, method, self._stop)
+
+        def _stop(self):
+            stopped.append(self.name)
+
+    monkeypatch.setattr(server_module, "gdb_client", Resource("gdb", "stop_gdb"))
+    monkeypatch.setattr(server_module, "gdb_manager", Resource("server"))
+    monkeypatch.setattr(server_module, "variable_tracker", Resource("tracker"))
+    monkeypatch.setattr(server_module, "rtt_log_reader", Resource("rtt"))
+    monkeypatch.setattr(server_module, "swo_log_reader", Resource("swo"))
+    monkeypatch.setattr(server_module, "swo_file_reader", Resource("swo_file"))
+    monkeypatch.setattr(server_module, "uart_log_reader", Resource("uart"))
+
+    payload = _payload(asyncio.run(handle_call_tool("stop_debug_session", {})))
+
+    assert payload["ok"] is True
+    assert stopped == ["gdb", "server", "tracker", "rtt", "swo", "swo_file", "uart"]
+
+
 def test_server_exposes_run_and_wait_tools():
     tools = asyncio.run(handle_list_tools())
     tool_names = {tool.name for tool in tools}
@@ -727,6 +754,42 @@ def test_server_exposes_build_firmware_tool():
     assert "build_firmware" in {t.name for t in tools}
 
 
+def test_detect_probe_is_exposed_and_returns_os_usb_evidence(monkeypatch):
+    import mcp_server.server as server_module
+
+    detected = {
+        "count": 1,
+        "method": "windows_pnp",
+        "probes": [{"type": "stlink", "serial": "066BFF", "vid": "0483", "pid": "374b"}],
+        "suggested_probe": "stlink",
+    }
+    monkeypatch.setattr(server_module, "detect_probe", lambda: detected)
+
+    tools = asyncio.run(handle_list_tools())
+    assert "detect_probe" in {tool.name for tool in tools}
+    payload = _payload(asyncio.run(handle_call_tool("detect_probe", {})))
+
+    assert payload["ok"] is True
+    assert payload["data"] == detected
+
+
+def test_detect_probe_surfaces_os_enumeration_failure(monkeypatch):
+    import mcp_server.server as server_module
+
+    monkeypatch.setattr(server_module, "detect_probe", lambda: {
+        "count": 0,
+        "method": "windows_pnp",
+        "probes": [],
+        "error": "Get-PnpDevice is unavailable",
+    })
+
+    payload = _payload(asyncio.run(handle_call_tool("detect_probe", {})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "probe_detection_failed"
+    assert payload["raw_response"]["method"] == "windows_pnp"
+
+
 def test_suggest_server_args_returns_validated_openocd_args_with_fast_clock():
     payload = _payload(asyncio.run(handle_call_tool(
         "suggest_server_args", {"mcu": "STM32L431", "probe": "stlink"}
@@ -776,6 +839,9 @@ def test_suggest_server_args_missing_probe_errors_when_profile_empty(monkeypatch
             return {}
 
     monkeypatch.setattr(server_module, "debug_profile", FakeProfile())
+    monkeypatch.setattr(server_module, "detect_probe", lambda: {
+        "count": 0, "method": "test", "probes": [],
+    })
     payload = _payload(asyncio.run(handle_call_tool(
         "suggest_server_args", {"mcu": "STM32L431"}
     )))
@@ -783,6 +849,58 @@ def test_suggest_server_args_missing_probe_errors_when_profile_empty(monkeypatch
     assert payload["ok"] is False
     assert payload["error"]["code"] == "missing_argument"
     assert "set_debug_profile" in payload["suggested_next_actions"]
+
+
+def test_suggest_server_args_uses_single_detected_probe(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeProfile:
+        def get(self):
+            return {}
+
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile())
+    monkeypatch.setattr(server_module, "detect_probe", lambda: {
+        "count": 1,
+        "method": "linux_sysfs",
+        "probes": [{"type": "cmsis-dap", "serial": "DAP001"}],
+        "suggested_probe": "cmsis-dap",
+    })
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "suggest_server_args", {"mcu": "STM32G431"}
+    )))
+
+    assert payload["ok"] is True
+    assert payload["data"]["probe"] == "cmsis-dap"
+    assert payload["data"]["probe_source"] == "detected"
+    assert payload["data"]["detected_probe"]["serial"] == "DAP001"
+
+
+def test_suggest_server_args_refuses_to_choose_between_multiple_probes(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeProfile:
+        def get(self):
+            return {}
+
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile())
+    monkeypatch.setattr(server_module, "detect_probe", lambda: {
+        "count": 2,
+        "method": "windows_pnp",
+        "probes": [
+            {"type": "stlink", "serial": "A"},
+            {"type": "stlink", "serial": "B"},
+        ],
+    })
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "suggest_server_args", {"mcu": "STM32L431"}
+    )))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "multiple_probes"
+    assert payload["raw_response"]["count"] == 2
+    assert {probe["serial"] for probe in payload["raw_response"]["probes"]} == {"A", "B"}
 
 
 def test_call_invokes_any_tool_by_name():
@@ -870,6 +988,40 @@ def test_build_firmware_failure_is_reported(monkeypatch):
     assert payload["raw_response"]["returncode"] == 2
 
 
+def test_build_firmware_keil_rejects_actual_target_mismatch(monkeypatch):
+    import mcp_server.build as build_mod
+
+    monkeypatch.setattr(build_mod, "run_build", lambda *a, **k: {
+        "returncode": 0,
+        "output": "Build target 'Release'\n0 Error(s), 0 Warning(s)",
+    })
+    payload = _payload(asyncio.run(handle_call_tool(
+        "build_firmware", {"kind": "keil", "project": "fw.uvprojx", "target": "Debug"}
+    )))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "build_target_mismatch"
+    assert payload["raw_response"]["requested_target"] == "Debug"
+    assert payload["raw_response"]["built_target"] == "Release"
+    assert payload["raw_response"]["target_mismatch"] is True
+
+
+def test_build_firmware_keil_compile_failure_precedes_target_mismatch(monkeypatch):
+    import mcp_server.build as build_mod
+
+    monkeypatch.setattr(build_mod, "run_build", lambda *a, **k: {
+        "returncode": 2,
+        "output": "Build target 'Release'\nerror: compile failed",
+    })
+    payload = _payload(asyncio.run(handle_call_tool(
+        "build_firmware", {"kind": "keil", "project": "fw.uvprojx", "target": "Debug"}
+    )))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "build_failed"
+    assert payload["raw_response"]["target_mismatch"] is True
+
+
 def test_start_openocd_without_server_args_gives_clear_error(monkeypatch):
     import mcp_server.server as server_module
 
@@ -880,7 +1032,15 @@ def test_start_openocd_without_server_args_gives_clear_error(monkeypatch):
             started.append((server_type, args))
             return 3333
 
+    class FakeProfile:
+        def get(self):
+            return {}
+
     monkeypatch.setattr(server_module, "gdb_manager", FakeManager())
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile())
+    monkeypatch.setattr(server_module, "detect_probe", lambda: {
+        "count": 0, "method": "test", "probes": [],
+    })
     payload = _payload(asyncio.run(handle_call_tool("start_debug_session", {"server_type": "openocd"})))
 
     assert payload["ok"] is False
@@ -926,6 +1086,58 @@ def test_start_openocd_without_server_args_uses_profile_defaults(monkeypatch):
     assert "interface/stlink.cfg" in flat
     assert "target/stm32l4x.cfg" in flat
     assert payload["data"]["server_args_source"] == "profile"
+
+
+def test_start_openocd_without_probe_uses_single_detected_probe(monkeypatch):
+    import mcp_server.server as server_module
+
+    started = {}
+
+    class FakeManager:
+        def is_alive(self):
+            return False
+
+        def start(self, server_type, args):
+            started["args"] = list(args)
+            return 3333
+
+    class FakeClient:
+        def start_gdb(self):
+            pass
+
+        def connect(self, host, port):
+            return [{"m": "ok"}]
+
+        def load_symbols(self, path):
+            pass
+
+    class FakeProfile:
+        def get(self):
+            return {"mcu": "STM32U535"}
+
+    monkeypatch.setattr(server_module, "gdb_manager", FakeManager())
+    monkeypatch.setattr(server_module, "detect_probe", lambda: {
+        "count": 0, "method": "test", "probes": [],
+    })
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile())
+    monkeypatch.setattr(server_module, "detect_probe", lambda: {
+        "count": 1,
+        "method": "windows_pnp",
+        "probes": [{"type": "stlink", "serial": "U535PROBE"}],
+        "suggested_probe": "stlink",
+    })
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "start_debug_session", {"server_type": "openocd"}
+    )))
+
+    assert payload["ok"] is True
+    flat = " ".join(started["args"])
+    assert "interface/stlink.cfg" in flat
+    assert "target/stm32u5x.cfg" in flat
+    assert "adapter serial U535PROBE" in flat
+    assert payload["data"]["server_args_source"] == "detected"
 
 
 def test_load_symbols_falls_back_to_profile_elf(monkeypatch):

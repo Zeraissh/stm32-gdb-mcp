@@ -19,9 +19,10 @@ The session ended or never started. Recover in this order:
 3. If `start_debug_session` is hidden by compact mode, invoke
    `call(tool="start_debug_session", args={...})`.
    / 若 compact 模式隐藏了该工具，使用 `call(tool="start_debug_session", args={...})`。
-4. If OpenOCD `server_args` are omitted, set profile `mcu` and `probe` first so the server
-   can infer the interface and target configuration.
-   / 若省略 OpenOCD `server_args`，请先设置 profile 的 `mcu` 和 `probe`，服务器将据此推断接口与目标配置。
+4. If OpenOCD `server_args` are omitted, set profile `mcu`; set `probe` too, or connect exactly
+   one supported probe so it can be detected safely.
+   / 若省略 OpenOCD `server_args`，请先设置 profile 的 `mcu`；同时设置 `probe`，或只连接一个
+   受支持探针以便安全自动识别。
 
 Restarting the whole MCP server should not be necessary. /
 正常情况下无需重启整个 MCP 服务器。
@@ -71,6 +72,13 @@ workflow core while every other tool stays reachable through `call` and discover
 
 ## Hardware connection error codes / 硬件连接错误码
 
+Call `detect_probe` first when probe identity is unclear. Detection uses host USB state, not
+OpenOCD's list of compiled adapter drivers. One probe may be selected automatically; zero
+probes return discovery evidence, and multiple probes return `multiple_probes` until a probe
+type/serial or explicit server arguments are supplied. / 探针身份不清楚时先调用 `detect_probe`。
+它读取主机 USB 状态，而不是 OpenOCD 编译进来的 adapter 驱动列表。仅唯一探针可自动采用；
+零个探针会返回发现证据，多个探针会返回 `multiple_probes`，直到明确提供类型/序列号或 server 参数。
+
 - **`probe_busy`**: another debugger owns the probe, or USB reports a busy/open failure.
   Close the competing OpenOCD/GDB process and retry. /
   **`probe_busy`**：探针被其他调试器占用，或 USB 返回 busy/open failure。关闭冲突进程后重试。
@@ -99,6 +107,16 @@ Startup errors include the attempted backend, adapter speed, server arguments, a
 server-log tail. Use those fields before changing hardware state.
 
 启动错误会返回尝试过的 backend、适配器速率、服务器参数和受限长度的日志尾部。改变硬件状态前先检查这些证据。
+
+## Installed version or commands drift / 安装版本或命令漂移
+
+Run `stm32-gdb-mcp-check-env --json`. Compare `installation.module_version`,
+`distribution_version`, and `console_scripts`; the warning list names stale metadata or
+missing entry points. Repair with `stm32-gdb-mcp-deploy --upgrade --project <path>`, then
+restart the MCP client so it reloads the executable. / 运行 `stm32-gdb-mcp-check-env --json`，
+对比 `installation.module_version`、`distribution_version` 和 `console_scripts`；warning 会指出
+过期元数据或缺失入口。使用 `stm32-gdb-mcp-deploy --upgrade --project <path>` 修复后，重启 MCP
+客户端以重新加载可执行文件。
 
 ## `self_check` reports an unknown device / `self_check` 报告未知器件
 

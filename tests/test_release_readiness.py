@@ -84,6 +84,25 @@ def test_workflows_gate_clean_source_and_clean_wheel(path):
     assert "stm32-gdb-mcp-deploy" in workflow
 
 
+def test_ci_covers_supported_windows_pythons_and_linux():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    for version in ("3.10", "3.11", "3.12", "3.13"):
+        assert f'python-version: "{version}"' in workflow
+    assert "ubuntu-latest" in workflow
+    assert "Smoke clean wheel install (POSIX)" in workflow
+
+
+def test_release_publishes_checksummed_github_assets_after_pypi():
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+
+    assert "SHA256SUMS.txt" in workflow
+    assert "sha256sum --check" in workflow
+    assert "needs: [build, publish-to-pypi]" in workflow
+    assert "gh release create" in workflow
+    assert "gh release upload" in workflow
+
+
 @pytest.mark.parametrize("path", PUBLIC_BILINGUAL_DOCS)
 def test_public_explanatory_docs_are_bilingual(path):
     text = (ROOT / path).read_text(encoding="utf-8")
@@ -157,11 +176,11 @@ def test_release_versions_are_consistent():
     marketplace = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
-    assert project["project"]["version"] == "0.4.0"
-    assert '__version__ = "0.4.0"' in package_init
+    assert project["project"]["version"] == "0.5.0"
+    assert '__version__ = "0.5.0"' in package_init
     assert plugin["version"] == "0.2.0"
     assert marketplace["plugins"][0]["version"] == plugin["version"]
-    assert "## [0.4.0] - 2026-07-14" in changelog
+    assert "## [0.5.0] - 2026-07-21" in changelog
 
 
 def test_sdist_excludes_local_workspace_state():

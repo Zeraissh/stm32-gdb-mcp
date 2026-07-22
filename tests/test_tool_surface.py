@@ -52,3 +52,23 @@ def test_tool_annotations_distinguish_read_write_and_external_actions():
     assert tools["flash_firmware"].annotations.destructiveHint is True
     assert tools["report_issue"].annotations.readOnlyHint is False
     assert tools["report_issue"].annotations.openWorldHint is True
+    assert tools["detect_probe"].annotations.readOnlyHint is True
+    assert tools["self_check"].annotations.readOnlyHint is False
+    assert tools["self_check"].annotations.destructiveHint is False
+    assert tools["session_diagnostics"].annotations.readOnlyHint is False
+
+
+def test_every_advertised_tool_has_risk_annotations():
+    assert all(tool.annotations is not None for tool in _tools().values())
+
+
+def test_generic_dispatch_and_custom_build_are_conservatively_annotated():
+    tools = _tools()
+
+    for name in ("call", "batch", "run_scenario"):
+        assert tools[name].annotations.destructiveHint is True
+        assert tools[name].annotations.openWorldHint is True
+
+    assert tools["build_firmware"].annotations.readOnlyHint is False
+    assert tools["build_firmware"].annotations.openWorldHint is True
+    assert tools["logging"].annotations.readOnlyHint is False

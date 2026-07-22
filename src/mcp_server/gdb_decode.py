@@ -105,8 +105,10 @@ def decode_evaluated_value(records) -> str | None:
         if record.get("message") == "error":
             continue
         payload = record.get("payload")
-        if isinstance(payload, dict) and payload.get("value") is not None:
-            return payload["value"]
+        if isinstance(payload, dict):
+            value = payload.get("value")
+            if value is not None and (not isinstance(value, str) or value.strip()):
+                return value
     return None
 
 
@@ -120,7 +122,9 @@ def decode_memory_bytes(records) -> str | None:
         if isinstance(memory, list) and memory:
             first = memory[0]
             if isinstance(first, dict) and isinstance(first.get("contents"), str):
-                return first["contents"].strip()
+                contents = first["contents"].strip()
+                if contents:
+                    return contents
         contents = payload.get("contents")
         if isinstance(contents, str) and contents.strip():
             return contents.strip()

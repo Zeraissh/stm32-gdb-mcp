@@ -1,6 +1,6 @@
 # Changelog / 更新日志
 
-## Unreleased / 未发布
+## [0.5.0] - 2026-07-21
 
 This update converges installation, configuration, MCP contracts, and hardware diagnostics.
 It preserves the existing TextContent JSON API while adding native MCP structured results.
@@ -54,6 +54,16 @@ It preserves the existing TextContent JSON API while adding native MCP structure
   and debug prompts are bilingual. The bundled plugin advances to `0.2.0` because its skills
   and SessionStart guidance changed. / 公开 README、安装、排障、发行、HIL、skills、固件示例
   和调试提示均完成中英双语；因内置 skills 与 SessionStart 引导变化，插件升级到 `0.2.0`。
+- Physical probe discovery now uses host USB state rather than OpenOCD's compiled adapter
+  list, preserves identical probes by serial, and auto-selects only when exactly one probe is
+  connected. Keil builds verify the target reported by UV4. / 物理探针识别改用主机 USB 状态，
+  不再误用 OpenOCD 编译驱动列表；同型号探针按序列号保留，且仅在唯一探针时自动选择。
+  Keil 构建会核对 UV4 实际报告的 Target。
+- HIL now provides non-flashing L151/L431/U535 profiles with exact Cortex-M expectations and
+  retained JSON/JUnit evidence. CI covers Windows Python 3.10-3.13 plus Linux 3.13; tagged
+  releases publish wheel/sdist/checksums to GitHub after PyPI succeeds. / HIL 新增不烧录的
+  L151/L431/U535 配置及精确内核断言，并保留 JSON/JUnit 证据；CI 覆盖 Windows Python
+  3.10-3.13 与 Linux 3.13，标签发行在 PyPI 成功后向 GitHub 发布 wheel、sdist 和校验和。
 
 ## [0.4.0] - 2026-07-14
 

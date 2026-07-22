@@ -18,11 +18,22 @@ async def _run_hil_smoke(config: dict, call_tool=None) -> dict:
     hil = config.get("hil", {})
     steps = []
     started = False
+    result = {
+        "ok": False,
+        "expected_family": expected_family,
+        "expected_core": hil.get("expected_core"),
+        "expected_device": hil.get("expected_device"),
+        "steps": steps,
+    }
 
     async def invoke(name, arguments):
         response = await call_tool(name, arguments)
         payload = response if isinstance(response, dict) else response.structuredContent
-        steps.append({"tool": name, "ok": bool(payload.get("ok"))})
+        step = {"tool": name, "ok": bool(payload.get("ok"))}
+        if not payload.get("ok"):
+            step["error"] = payload.get("error")
+            step["raw_response"] = payload.get("raw_response")
+        steps.append(step)
         if not payload.get("ok"):
             error = payload.get("error") or {}
             raise RuntimeError(f"{name} failed: {error.get('message', 'unknown MCP error')}")
@@ -41,15 +52,39 @@ async def _run_hil_smoke(config: dict, call_tool=None) -> dict:
             "self_check",
             {"expected_family": expected_family, "halt": hil.get("halt", True)},
         )
+        hil_checks = [
+            {"name": "identity", "ok": bool(identity.get("ok")), "actual": identity.get("device")},
+        ]
+        if hil.get("expected_core"):
+            hil_checks.append({
+                "name": "core",
+                "ok": identity.get("core") == hil["expected_core"],
+                "expected": hil["expected_core"],
+                "actual": identity.get("core"),
+            })
+        if hil.get("expected_device"):
+            actual_device = identity.get("device") or ""
+            hil_checks.append({
+                "name": "device",
+                "ok": hil["expected_device"].lower() in actual_device.lower(),
+                "expected": hil["expected_device"],
+                "actual": actual_device,
+            })
         if hil.get("halt", True):
             await invoke("continue_execution", {})
-        return {
-            "ok": bool(identity["ok"]),
+        result.update({
+            "ok": all(check["ok"] for check in hil_checks),
             "server": server,
             "identity": identity,
-            "expected_family": expected_family,
-            "steps": steps,
-        }
+            "hil_checks": hil_checks,
+        })
+    except Exception as exc:
+        result["error"] = str(exc)
     finally:
         if started:
-            await invoke("stop_debug_session", {})
+            try:
+                await invoke("stop_debug_session", {})
+            except Exception as exc:
+                result["ok"] = False
+                result["cleanup_error"] = str(exc)
+    return result

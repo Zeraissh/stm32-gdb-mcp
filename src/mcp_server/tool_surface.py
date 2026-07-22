@@ -32,7 +32,7 @@ RENAMED_TOOLS = {
 
 
 CORE_TOOLS = {
-    "suggest_server_args", "start_debug_session", "stop_debug_session", "recover_session",
+    "detect_probe", "suggest_server_args", "start_debug_session", "stop_debug_session", "recover_session",
     "self_check", "debug_profile", "load_symbols",
     "build_firmware", "flash_firmware", "flash_and_run",
     "reset_target", "halt_execution", "run_and_wait", "run_for_duration", "breakpoint",
@@ -116,14 +116,20 @@ SESSION_PROPERTY = {
 READ_ONLY_TOOLS = {
     "tool_help", "inspect_project", "read_memory", "read_variable", "read_call_stack",
     "read_registers", "read_peripheral_register", "decode_peripheral_register",
-    "inspect_symbol", "frame", "snapshot", "session_diagnostics", "get_session",
+    "inspect_symbol", "frame", "snapshot", "get_session",
     "list_sessions", "analyze_stack", "diagnose_fault", "detect_rtos", "read_freertos",
+    "detect_probe", "describe_board", "validate_board", "describe_acceptance",
+    "acceptance_loop_status", "describe_framework", "disassemble", "verify_flash",
+    "sample_pc", "suggest_server_args", "capture_state", "wait_for_stop",
 }
 
 HARDWARE_WRITE_TOOLS = {
     "flash_firmware", "flash_and_run", "reset_target", "write_memory", "typed_memory",
     "set_adapter_speed", "setup_swo", "configure_debug_freeze",
 }
+
+GENERIC_DISPATCH_TOOLS = {"call", "batch", "run_scenario"}
+OPEN_WORLD_TOOLS = {"report_issue", "build_firmware"}
 
 
 def _with_session(schema: dict) -> dict:
@@ -138,9 +144,16 @@ def _annotations(name: str) -> ToolAnnotations | None:
         return ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
     if name in HARDWARE_WRITE_TOOLS:
         return ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False)
-    if name == "report_issue":
-        return ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True)
-    return None
+    if name in GENERIC_DISPATCH_TOOLS:
+        return ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True)
+    if name in OPEN_WORLD_TOOLS:
+        return ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=name == "build_firmware",
+            idempotentHint=False,
+            openWorldHint=True,
+        )
+    return ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
 
 
 def _decorate(tool: Tool) -> Tool:

@@ -20,6 +20,23 @@ from .tracker import VariableTracker
 _BASE_GDB_PORT = 3333
 
 
+def teardown_debug_session(session):
+    resources = (
+        (session.gdb_client, "stop_gdb"),
+        (session.gdb_manager, "stop"),
+        (session.variable_tracker, "stop"),
+        (session.rtt_log_reader, "stop"),
+        (session.swo_log_reader, "stop"),
+        (session.swo_file_reader, "stop"),
+        (session.uart_log_reader, "stop"),
+    )
+    for obj, method in resources:
+        try:
+            getattr(obj, method)()
+        except Exception:
+            pass
+
+
 class DebugSession:
     """All per-target objects for one debug session."""
 
@@ -46,12 +63,7 @@ class DebugSession:
         self.spec = {"current": None}  # translated product spec (spec_model, upstream of Pillar D)
 
     def teardown(self):
-        for obj, method in ((self.gdb_client, "stop_gdb"), (self.gdb_manager, "stop"),
-                            (self.variable_tracker, "stop")):
-            try:
-                getattr(obj, method)()
-            except Exception:
-                pass
+        teardown_debug_session(self)
 
 
 class SessionManager:
@@ -61,10 +73,14 @@ class SessionManager:
     def get(self, session_id: str = "default") -> DebugSession:
         sid = session_id or "default"
         if sid not in self.sessions:
-            # Give each named session a distinct default GDB port so concurrent
-            # OpenOCD instances don't collide (the default session keeps 3333).
-            offset = 0 if sid == "default" else (len(self.sessions) + 1) * 10
-            self.sessions[sid] = DebugSession(sid, gdb_port=_BASE_GDB_PORT + offset)
+            if sid == "default":
+                port = _BASE_GDB_PORT
+            else:
+                used = {session.gdb_port for session in self.sessions.values()}
+                port = _BASE_GDB_PORT + 10
+                while port in used:
+                    port += 10
+            self.sessions[sid] = DebugSession(sid, gdb_port=port)
         return self.sessions[sid]
 
     def list(self) -> list:

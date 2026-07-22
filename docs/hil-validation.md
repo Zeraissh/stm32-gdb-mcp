@@ -2,10 +2,10 @@
 
 English: Hardware-in-the-loop checks are manual by design. The normal CI
 workflow must stay hardware-free, while the HIL workflow runs on a trusted
-self-hosted runner that has a probe, board, firmware image, and vendor tools installed.
+self-hosted runner that has a probe, board, GDB, and a supported GDB server installed.
 
 中文：硬件在环检查设计为手动触发。普通 CI 必须保持不依赖硬件；HIL 工作流则运行在可信的自托管
-runner 上，该机器需要安装调试器、目标板、固件镜像和厂商工具。
+runner 上，该机器需要连接探针和目标板，并安装 GDB 与受支持的 GDB Server。
 
 ## Runner Requirements / Runner 要求
 
@@ -25,7 +25,8 @@ Run the GitHub Actions workflow named `Hardware-in-the-loop`.
 
 Inputs / 输入参数：
 
-- `config_path`: YAML config to validate before touching hardware. The default is `examples/configs/stm32l431_openocd.yaml`. / 接触硬件前要校验的 YAML 配置。默认值是 `examples/configs/stm32l431_openocd.yaml`。
+- `board`: connected board profile, one of `l151`, `l431`, or `u535` / 当前连接的板卡配置，可选 `l151`、`l431` 或 `u535`
+- `config_path`: optional YAML override; empty uses `examples/configs/stm32<board>_openocd.yaml` / 可选 YAML 路径覆盖；留空时使用 `examples/configs/stm32<board>_openocd.yaml`
 - `smoke_command`: optional command executed after setup and config validation / 安装和配置校验后执行的可选烟测命令
 
 Example smoke command / 烟测命令示例：
@@ -34,22 +35,24 @@ Example smoke command / 烟测命令示例：
 python -m pytest -q tests -m hil
 ```
 
-Local STM32L431 smoke run / 本地 STM32L431 烟测运行：
+Local smoke run (replace the profile for L151 or U535) / 本地烟测（L151 或 U535 请替换配置）：
 
 ```powershell
 $env:STM32_GDB_MCP_HIL = "1"
 $env:STM32_GDB_MCP_HIL_CONFIG = "examples/configs/stm32l431_openocd.yaml"
-python -m pytest -q tests/hil -m hil
+$env:STM32_GDB_MCP_HIL_REPORT = "artifacts/hil-l431.json"
+python -m pytest -q tests/hil -m hil --junitxml=artifacts/hil-l431-junit.xml
 ```
 
 English: The default HIL smoke is non-flashing. It uses the same public MCP path as
 an AI client: `start_debug_session` → `self_check` → `continue_execution` →
 `stop_debug_session`. The test requires a decoded ARM CPUID, a recognized Cortex-M
-core, and a successful expected-family check; a raw memory read alone is not success.
+core, the profile's exact expected core, and a successful expected-family/device check; a raw
+memory read alone is not success.
 
 中文：默认 HIL 烟测不烧录固件，并使用与 AI 客户端相同的公开 MCP 调用链：
 `start_debug_session` → `self_check` → `continue_execution` → `stop_debug_session`。
-测试必须得到已解码的 ARM CPUID、可识别的 Cortex-M 内核，并通过预期 MCU 系列检查；
+测试必须得到已解码的 ARM CPUID、与配置完全一致的 Cortex-M 内核，并通过预期 MCU 系列/器件检查；
 仅仅“原始内存读取未报错”不算成功。
 
 English: The repository ships this generic, config-driven identity smoke test. Firmware
@@ -87,6 +90,7 @@ For every HIL run, keep / 每次 HIL 运行请保留：
 - firmware commit or build ID / 固件 commit 或构建 ID
 - MCP responses for the smoke sequence / 烟测序列对应的 MCP 响应
 - target logs around failures / 故障前后的目标日志
+- uploaded JSON result and JUnit report (`artifacts/`) / 上传的 JSON 结果与 JUnit 报告（`artifacts/`）
 
 English: This evidence is what lets an AI client or maintainer distinguish host
 setup problems from firmware, probe, and MCP bugs.

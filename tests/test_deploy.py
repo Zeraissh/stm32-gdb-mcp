@@ -4,7 +4,7 @@ from mcp_server import deploy
 
 
 def test_deploy_stops_when_server_installation_fails(monkeypatch, tmp_path):
-    monkeypatch.setattr(deploy, "ensure_server_installed", lambda no_install: False)
+    monkeypatch.setattr(deploy, "ensure_server_installed", lambda no_install, upgrade=False: False)
 
     result = deploy.main(["--project", str(tmp_path), "--no-rules"])
 
@@ -53,3 +53,47 @@ def test_detect_project_keeps_openocd_and_debug_config_discovery(tmp_path):
     assert info["debug_config"] == "mcp/board_openocd.yaml"
     assert info["server_args"] == '["-f","interface/stlink.cfg","-f","target/stm32l4x.cfg"]'
     assert Path(info["project_root"]) == tmp_path.resolve()
+
+
+def test_server_presence_rejects_stale_distribution_when_install_is_disabled(monkeypatch):
+    monkeypatch.setattr(deploy.metadata, "version", lambda _name: "0.3.0")
+    monkeypatch.setattr(deploy.shutil, "which", lambda name: f"/tools/{name}")
+
+    assert deploy.ensure_server_installed(no_install=True, upgrade=False) is False
+
+
+def test_upgrade_reinstalls_when_console_scripts_are_missing(monkeypatch):
+    installed = {"done": False}
+    commands = []
+
+    def version(_name):
+        return deploy.PACKAGE_VERSION if installed["done"] else "0.3.0"
+
+    def which(name):
+        if installed["done"] or name == "stm32-gdb-mcp":
+            return f"/tools/{name}"
+        return None
+
+    def run(command, check=False):
+        commands.append(command)
+        installed["done"] = True
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(deploy.metadata, "version", version)
+    monkeypatch.setattr(deploy.shutil, "which", which)
+    monkeypatch.setattr(deploy.subprocess, "run", run)
+
+    assert deploy.ensure_server_installed(no_install=False, upgrade=True) is True
+    assert "--upgrade" in commands[0]
+
+
+def test_deploy_exposes_upgrade_flag(monkeypatch, tmp_path):
+    called = {}
+    monkeypatch.setattr(
+        deploy,
+        "ensure_server_installed",
+        lambda no_install, upgrade=False: called.update(no_install=no_install, upgrade=upgrade) or True,
+    )
+
+    assert deploy.main(["--project", str(tmp_path), "--no-rules", "--upgrade"]) == 0
+    assert called == {"no_install": False, "upgrade": True}

@@ -1,4 +1,6 @@
+import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -15,6 +17,11 @@ def test_real_hardware_hil_smoke():
     assert loaded["validation"]["valid"], loaded["validation"]
 
     result = run_hil_smoke(loaded["config"])
+    report_path = os.environ.get("STM32_GDB_MCP_HIL_REPORT")
+    if report_path:
+        path = Path(report_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(result, indent=2), encoding="utf-8")
 
     assert result["ok"] is True
     assert result["identity"]["cpuid"].startswith("0x41")
@@ -22,3 +29,4 @@ def test_real_hardware_hil_smoke():
     checks = {check["name"]: check["ok"] for check in result["identity"]["checks"]}
     assert checks == {"byte_order": True, "cortex_m_core": True, "dbgmcu_dev_id": True}
     assert result["expected_family"] == loaded["config"]["mcu"]
+    assert all(check["ok"] for check in result["hil_checks"])

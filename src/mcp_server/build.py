@@ -7,6 +7,7 @@ existing GDB tools exactly like a GCC `.elf`.
 """
 
 import os
+import re
 import subprocess
 
 # Common Keil µVision install locations for the UV4 command-line builder.
@@ -33,6 +34,8 @@ def resolve_build_command(kind, project=None, build_dir=None, directory=None, ta
         if not project:
             raise ValueError("keil build requires 'project' (a .uvprojx/.uvproj path)")
         cmd = [uv4_path or "UV4", "-r" if rebuild else "-b", project, "-j0"]
+        if target:
+            cmd += ["-t", target]
         if log_path:
             cmd += ["-o", log_path]
         return cmd
@@ -68,6 +71,12 @@ def is_build_success(kind, returncode) -> bool:
     if (kind or "").lower() == "keil":
         return returncode <= 1
     return returncode == 0
+
+
+def parse_keil_built_target(output: str) -> str | None:
+    """Extract the target UV4 reports it actually built."""
+    match = re.search(r"(?:Build|Rebuild) target '([^']+)'", output or "")
+    return match.group(1) if match else None
 
 
 def run_build(argv, timeout=600, cwd=None, log_path=None) -> dict:

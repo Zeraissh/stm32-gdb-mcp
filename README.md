@@ -11,7 +11,7 @@ HardFaults, and profile — and get back **decoded, structured** evidence instea
 
 | | |
 |---|---|
-| **Bring-up & flash / 启动与烧录** | `suggest_server_args`, `build_firmware`, `flash_and_run`, `self_check`, `reset_target` |
+| **Bring-up & flash / 启动与烧录** | `detect_probe`, `suggest_server_args`, `build_firmware`, `flash_and_run`, `self_check`, `reset_target` |
 | **Execution / 执行控制** | `run_and_wait`（结构化停止事件）, `run_for_duration`（运行/采样后暂停并采集）, `breakpoint`, `step`, `halt`/`continue`, `debug_until` |
 | **Inspect / 状态检查**（需暂停） | `capture_state`, `read_memory`/`read_variable`, `read_registers`, `frame`, `read_peripheral_register` |
 | **Fault triage / 故障诊断** | `reconstruct_fault_context`（故障 PC → 源码）, `diagnose_fault`, `analyze_stack` |
@@ -48,12 +48,19 @@ and `stm32-gdb-mcp-deploy`.
 各客户端配置片段和规则模板见 [`docs/install-ides.md`](docs/install-ides.md)。默认启用 compact
 模式；PyPI/console 安装还会提供上述三个辅助命令。
 
+`stm32-gdb-mcp-check-env --json` also reports the imported module version/path, installed
+distribution version, and all four console scripts. Use `stm32-gdb-mcp-deploy --upgrade`
+when those installation fields drift. / `stm32-gdb-mcp-check-env --json` 还会报告当前导入
+模块的版本/路径、已安装发行版本和四个 console script；这些安装字段发生漂移时，使用
+`stm32-gdb-mcp-deploy --upgrade` 修复。
+
 **Requirements / 环境要求**：`PATH` 中需要 `arm-none-eabi-gdb`，以及至少一种 GDB Server
 （`openocd` / `JLinkGDBServerCL` / `st-util`）。运行 `python setup_env.py` 检查。
 
 ## 30-second quickstart / 快速上手
 
 ```text
+detect_probe()                                           # USB evidence; auto-select only one probe
 debug_profile(action=set, mcu="STM32L431", probe="stlink", elf_path="build/app.elf", svd_path="STM32L4.svd")
 suggest_server_args(mcu="STM32L431")                  # probe omitted -> use profile probe
 start_debug_session(server_type="openocd")            # server_args omitted -> infer from profile mcu/probe
@@ -65,6 +72,10 @@ run_for_duration(duration_sec=30, capture={"expressions": ["rx_count"]})
 run_for_duration(duration_sec=60, sample={"interval_ms": 500, "expressions": ["rx_count", "state"]})
 reconstruct_fault_context()                            # on a crash: faulting PC → file:line
 ```
+
+`detect_probe` reads physical USB devices, keeps serials for identical probes, and never
+chooses between multiple connected probes. / `detect_probe` 读取真实 USB 设备，同型号探针按
+序列号分别保留；连接多个探针时绝不会擅自选择。
 
 The full tool reference (lean families with `action=`/`what=`) is
 [`skills/stm32-debug/reference/tool-map.md`](skills/stm32-debug/reference/tool-map.md). The server
@@ -154,8 +165,8 @@ batch(steps=[
 
 以上配方在一次 MCP 往返中完成“加载配置 -> 连接 -> 自检”，任一步失败即停止。
 
-See `examples/configs/` for J-Link and OpenOCD samples. /
-J-Link 与 OpenOCD 示例见 `examples/configs/`。
+See `examples/configs/` for J-Link, OpenOCD, and non-flashing L151/L431/U535 HIL profiles. /
+J-Link、OpenOCD 及不烧录的 L151/L431/U535 HIL 配置见 `examples/configs/`。
 
 ## Develop / 开发
 

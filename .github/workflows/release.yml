@@ -1,6 +1,6 @@
 name: Release
 
-# Publish the package to PyPI when a version tag is pushed (e.g. v0.4.0).
+# Publish the package to PyPI when a version tag is pushed (e.g. v0.5.0).
 # Uses PyPI Trusted Publishing (OIDC) -- no API token is stored in the repo.
 # One-time setup on PyPI is required (see docs/release.md > Publishing to PyPI).
 
@@ -54,6 +54,9 @@ jobs:
       - name: Audit distribution contents
         run: python scripts/check_dist_contents.py dist/*
 
+      - name: Generate SHA-256 checksums
+        run: cd dist && sha256sum *.whl *.tar.gz > SHA256SUMS.txt
+
       - name: Smoke clean wheel install
         run: |
           python -m venv .wheel-venv
@@ -90,3 +93,30 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-github-release:
+    name: Publish GitHub Release
+    needs: [build, publish-to-pypi]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - name: Verify checksums
+        run: cd dist && sha256sum --check SHA256SUMS.txt
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
+          fi

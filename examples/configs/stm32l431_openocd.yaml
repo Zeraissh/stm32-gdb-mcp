@@ -16,6 +16,8 @@ hil:
   read_cpuid: true
   read_dbgmcu_idcode: true
   flash: false
+  expected_core: Cortex-M4
+  expected_device: STM32L43
 uart:
   port: COM3
   baudrate: 115200

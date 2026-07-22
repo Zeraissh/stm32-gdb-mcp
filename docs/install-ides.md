@@ -42,6 +42,7 @@ ELF 候选；只有一个 ELF 时自动采用，多个 ELF 时仅列出候选并
 Useful flags / 常用参数：
 
 - `--no-install`: do not install the package / 不安装 Python 包
+- `--upgrade`: reinstall/upgrade when versions or console scripts drift / 版本或 console script 漂移时重新安装或升级
 - `--no-rules`: do not write project rules / 不写项目规则
 - `--ide codex`: install and verify through the Codex CLI / 通过 Codex CLI 安装并验证
 - `--force`: replace conflicting Codex/rules configuration / 替换冲突的 Codex 或规则配置
@@ -74,6 +75,13 @@ stm32-gdb-mcp-install --list
 stm32-gdb-mcp-check-env --json
 stm32-gdb-mcp-install codex
 ```
+
+`stm32-gdb-mcp-check-env --json` separates host readiness from installation health. Host
+readiness requires GDB plus any one supported server; the `installation` object reports the
+module path/version, distribution version, and missing console scripts. The command exits
+nonzero only when host prerequisites are not ready. / `stm32-gdb-mcp-check-env --json` 将主机
+就绪状态与安装健康度分开：主机只需 GDB 加任一受支持 server；`installation` 对象报告模块
+路径/版本、发行版本和缺失的 console script。只有主机前置工具未就绪时命令才返回非零。
 
 For Codex, the installer prefers `codex mcp add`, verifies with `codex mcp get --json`, and
 is idempotent when the existing entry matches. A conflicting entry requires `--force`.

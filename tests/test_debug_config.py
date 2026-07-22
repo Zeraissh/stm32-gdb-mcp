@@ -58,7 +58,13 @@ def test_validate_debug_config_accepts_reset_and_hil_sections():
     result = validate_debug_config({
         "server_type": "openocd",
         "reset": {"strategy": "under_reset", "halt": True},
-        "hil": {"read_cpuid": True, "read_dbgmcu_idcode": True, "flash": False},
+        "hil": {
+            "read_cpuid": True,
+            "read_dbgmcu_idcode": True,
+            "flash": False,
+            "expected_core": "Cortex-M4",
+            "expected_device": "STM32L43",
+        },
     })
 
     assert result["valid"] is True
@@ -68,13 +74,14 @@ def test_validate_debug_config_accepts_reset_and_hil_sections():
 def test_validate_debug_config_rejects_invalid_reset_and_hil_sections():
     result = validate_debug_config({
         "reset": {"strategy": 123, "halt": "yes"},
-        "hil": {"flash": "sometimes"},
+        "hil": {"flash": "sometimes", "expected_core": ""},
     })
 
     assert result["valid"] is False
     assert "reset.strategy must be a string" in result["errors"]
     assert "reset.halt must be a boolean" in result["errors"]
     assert "hil.flash must be a boolean" in result["errors"]
+    assert "hil.expected_core must be a non-empty string" in result["errors"]
 
 
 def test_load_resolves_runtime_paths_relative_to_config_file(tmp_path):
