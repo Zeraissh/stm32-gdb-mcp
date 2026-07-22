@@ -8,7 +8,13 @@ def load_all() -> None:
 
     Explicit imports, no directory scanning: the import list IS the roster.
     """
-    from . import breakpoint_tools, config_tools, inspect_tools, peripheral_tools  # noqa: F401
+    from . import (  # noqa: F401
+        breakpoint_tools,
+        config_tools,
+        inspect_tools,
+        logging_tools,
+        peripheral_tools,
+    )
 
 
 __all__ = ["REGISTRY", "TOOL_ORDER", "register", "load_all"]
