@@ -47,5 +47,5 @@ def test_advertised_tool_surface_matches_golden(monkeypatch):
     assert got_names == want_names, "advertised tool names/order drifted from golden"
     assert surface["compact_names"] == golden["compact_names"], "compact-mode surface drifted"
 
-    for got, want in zip(surface["tools"], golden["tools"]):
+    for got, want in zip(surface["tools"], golden["tools"], strict=True):
         assert got == want, f"tool '{want['name']}' drifted from golden (schema/description/annotations)"

@@ -60,7 +60,7 @@ from .framework_render import render_framework
 from .framework_solver import build_framework_plan, framework_view, merge_af_maps, summarize_framework
 from .freertos_inspector import FreeRTOSInspector
 from .gdb_client import GdbClientManager
-from .gdb_decode import decode_evaluated_value, decode_memory_bytes, registers_summary
+from .gdb_decode import decode_evaluated_value, decode_memory_bytes
 from .gdb_manager import GdbServerManager
 from .issue_reporter import DEFAULT_REPO, build_issue_body, file_issue, issue_fingerprint
 from .log_reader import FileLogReader, ProcessLogReader, SerialLogReader
@@ -80,7 +80,6 @@ from .server_metadata import SERVER_INSTRUCTIONS
 from .server_metadata import mcp_version as _mcp_version
 from .session_journal import SessionJournal
 from .spec_model import build_design
-from .stack_analysis import stack_report
 from .svd_parser import SVDParser
 from .timer_solver import solve_timers_in_plan
 from .tool_response import call_tool_result, content_error, content_success
@@ -96,7 +95,13 @@ from .tool_surface import (
 from .tool_surface import (
     advertised_tools as _advertised_tools,
 )
+from .tools import REGISTRY as _TOOL_REGISTRY
+from .tools import TOOL_ORDER as _TOOL_ORDER
+from .tools import load_all as _load_tool_modules
+from .tools.context import ToolContext
 from .tracker import VariableTracker
+
+_load_tool_modules()  # populate the tool registry (schema + handler per domain module)
 
 server = Server("stm32-gdb-mcp", instructions=SERVER_INSTRUCTIONS)
 gdb_manager = GdbServerManager()
@@ -169,6 +174,54 @@ if not logger.handlers:
     _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
     logger.addHandler(_handler)
     logger.setLevel(logging.INFO)
+
+
+def _make_context(sess) -> ToolContext:
+    """Build the per-dispatch ToolContext for registered handlers.
+
+    Reads this module's globals at CALL time so tests that monkeypatch
+    mcp_server.server attributes (gdb_client, detect_probe, _dispatch_tool, ...)
+    keep working — the context is a per-call view, never a cached snapshot.
+    """
+    g = globals()
+    return ToolContext(
+        session_id=sess.id,
+        sess=sess,
+        gdb_manager=sess.gdb_manager,
+        gdb_client=sess.gdb_client,
+        svd_parser=sess.svd_parser,
+        variable_tracker=sess.variable_tracker,
+        debug_profile=sess.debug_profile,
+        freertos_inspector=sess.freertos_inspector,
+        memory_guard=sess.memory_guard,
+        rtt_log_reader=sess.rtt_log_reader,
+        swo_log_reader=sess.swo_log_reader,
+        swo_file_reader=sess.swo_file_reader,
+        uart_log_reader=sess.uart_log_reader,
+        last_session=sess.last_session,
+        board=sess.board,
+        acceptance=sess.acceptance,
+        loop=sess.loop,
+        design=sess.design,
+        spec=sess.spec,
+        session_journal=g["session_journal"],
+        session_manager=g["session_manager"],
+        reported_issues=g["_reported_issues"],
+        tool_catalog=lambda: g["_tool_catalog"],
+        logger=logger,
+        fns=types.SimpleNamespace(
+            detect_probe=g["detect_probe"],
+            suggest_server_args=g["suggest_server_args"],
+            find_openocd_scripts=g["find_openocd_scripts"],
+            flash_and_run=g["flash_and_run"],
+            run_for_duration=g["run_for_duration"],
+            capture_state=g["capture_state"],
+            debug_until=g["debug_until"],
+            file_issue=g["file_issue"],
+        ),
+        dispatch=lambda tool_name, tool_args: g["_dispatch_tool"](tool_name, tool_args),
+        default_session=lambda: _resolve_session({}),
+    )
 
 
 def _probe_selection(arguments: dict, profile: dict) -> tuple[str | None, str | None, dict | None, dict | None]:
@@ -664,75 +717,7 @@ async def handle_list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}}
         ),
         # --- Step 6: Advanced Analysis ---
-        Tool(
-            name="read_call_stack",
-            description="Reads the call stack as a decoded list of frames "
-                        "{level, func, file, line, addr} plus a one-line summary. "
-                        "Set include_raw=true to also get the raw GDB output.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "include_raw": {"type": "boolean", "description": "Include the raw GDB transcript (default false)."}
-                }
-            }
-        ),
-        Tool(
-            name="read_core_registers",
-            description="Reads CPU core registers as a decoded {name: hex} map plus a one-line "
-                        "summary of PC/LR/SP. Set include_raw=true to also get the raw GDB output.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "include_raw": {"type": "boolean", "description": "Include the raw GDB transcript (default false)."}
-                }
-            }
-        ),
-        Tool(
-            name="select_frame",
-            description="Selects a stack frame by level (0 = innermost) for subsequent variable reads.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "level": {"type": "integer", "description": "Frame level, 0 is the innermost/current frame."}
-                },
-                "required": ["level"]
-            }
-        ),
-        Tool(
-            name="read_frame_variables",
-            description="Returns a decoded {name: value} map of locals and arguments for a stack "
-                        "frame, plus a count summary. Set include_raw=true for the raw GDB output.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "level": {"type": "integer", "description": "Optional frame level to select first (0 = innermost)."},
-                    "include_raw": {"type": "boolean", "description": "Include the raw GDB transcript (default false)."}
-                }
-            }
-        ),
-        Tool(
-            name="list_source",
-            description="Lists source lines around a location (function, 'file.c:42', or '*0xADDR').",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "location": {"type": "string", "description": "Where to list around. Omit to continue from current."},
-                    "count": {"type": "integer", "description": "Approximate number of lines (default 10)."}
-                }
-            }
-        ),
-        Tool(
-            name="resolve_address",
-            description="Maps an address or expression (e.g. '$pc', '0x08001234') to its source "
-                        "file:line and nearest symbol.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "expr": {"type": "string", "description": "Address or expression to resolve, e.g. '$pc' or '0x08001234'."}
-                },
-                "required": ["expr"]
-            }
-        ),
+        # (read_call_stack .. resolve_address moved to tools/inspect_tools.py)
         Tool(
             name="read_fault_registers",
             description="Reads Cortex-M SCB fault status registers (CFSR, HFSR, DFSR, MMFAR, BFAR, AFSR).",
@@ -760,22 +745,6 @@ async def handle_list_tools() -> list[Tool]:
                     "apply": {"type": "boolean", "description": "If false, only return the planned register writes (default true)."}
                 },
                 "required": ["peripherals"]
-            }
-        ),
-        Tool(
-            name="analyze_stack",
-            description="Reports stack used/free bytes and a clear overflow verdict for the halted "
-                        "core. stack_top defaults to the initial MSP (first word of the vector table "
-                        "at vector_table_addr). Give stack_size or stack_limit for the overflow check "
-                        "(else only usage is reported). The key tool for diagnosing stack overflows.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "stack_top": {"type": "string", "description": "Top-of-stack address (hex). Default: initial MSP from the vector table."},
-                    "stack_limit": {"type": "string", "description": "Lowest valid stack address (hex)."},
-                    "stack_size": {"type": "string", "description": "Stack size in bytes (used as stack_top - stack_size if stack_limit omitted)."},
-                    "vector_table_addr": {"type": "string", "description": "Vector table base for the initial MSP (default '0x08000000')."}
-                }
             }
         ),
         Tool(
@@ -1224,70 +1193,7 @@ async def handle_list_tools() -> list[Tool]:
                 "required": ["location"]
             }
         ),
-        Tool(
-            name="disassemble",
-            description="Disassembles N instructions at a location (default $pc).",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "location": {"type": "string", "description": "Where to disassemble from (default '$pc')."},
-                    "instructions": {"type": "integer", "description": "Number of instructions (default 8)."}
-                }
-            }
-        ),
-        Tool(
-            name="list_functions",
-            description="Lists functions in the loaded symbols, optionally filtered by a regex.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "regex": {"type": "string", "description": "Optional regex to filter function names."}
-                }
-            }
-        ),
-        Tool(
-            name="list_variables",
-            description="Lists global/static variables in the loaded symbols, optionally filtered by a regex.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "regex": {"type": "string", "description": "Optional regex to filter variable names."}
-                }
-            }
-        ),
-        Tool(
-            name="lookup_type",
-            description="Shows the type/layout of an expression or type name (GDB ptype).",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "expr": {"type": "string", "description": "Expression or type name, e.g. 'my_struct' or 'g_state'."}
-                },
-                "required": ["expr"]
-            }
-        ),
-        Tool(
-            name="sizeof",
-            description="Evaluates sizeof(expr) against the loaded symbols.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "expr": {"type": "string", "description": "Type or expression to size, e.g. 'struct foo'."}
-                },
-                "required": ["expr"]
-            }
-        ),
-        Tool(
-            name="address_of",
-            description="Resolves the address of a symbol (&symbol).",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "symbol": {"type": "string", "description": "Symbol name, e.g. 'g_state'."}
-                },
-                "required": ["symbol"]
-            }
-        ),
+        # (disassemble .. address_of moved to tools/inspect_tools.py)
         Tool(
             name="capture_coredump",
             description="Writes a core dump (RAM + registers) of the halted target to a file for "
@@ -1710,6 +1616,14 @@ async def handle_list_tools() -> list[Tool]:
             }
         )
     ]
+    # Assemble the advertised base list in the pinned TOOL_ORDER: inline schemas above
+    # plus registry-provided ones (domain modules). Extraction order never changes the
+    # advertised order; the golden surface snapshot test holds this constant.
+    by_name = {tool.name: tool for tool in _tools}
+    by_name.update({tool_name: spec.tool for tool_name, spec in _TOOL_REGISTRY.items()})
+    missing = [n for n in _TOOL_ORDER if n not in by_name]
+    assert not missing, f"tools in TOOL_ORDER with no schema (inline or registered): {missing}"
+    _tools = [by_name[tool_name] for tool_name in _TOOL_ORDER]
     # Compact mode (STM32_GDB_MCP_COMPACT=1): expose only a small core so nothing gets
     # truncated under tight client tool-count caps. Every other tool is still reachable
     # via call(tool, args).
@@ -1876,6 +1790,11 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
             forwarded = {k: v for k, v in arguments.items() if k != disc}
             forwarded["session"] = _sess.id  # preserve session across the internal hop
             return _dispatch_tool(mapping[choice], forwarded)
+
+        # Registry-backed tools (domain modules under mcp_server/tools/).
+        _spec_entry = _TOOL_REGISTRY.get(name)
+        if _spec_entry is not None:
+            return _spec_entry.handler(_make_context(_sess), arguments)
 
         if name == "tool_help":
             requested_name = arguments.get("name")
@@ -2419,60 +2338,6 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
             logs = gdb_manager.get_logs()
             return [content_success({"logs": logs, "message": "GDB server logs captured" if logs else "No GDB server logs captured"})]
 
-        elif name == "read_call_stack":
-            frames = gdb_client.read_call_stack_decoded()
-            if frames:
-                top = frames[0]
-                summary = f"{len(frames)} frames; top: {top['func']} at {top['file']}:{top['line']}"
-            else:
-                summary = "no frames available (target running or no symbols)"
-            raw = gdb_client.read_call_stack() if arguments.get("include_raw") else None
-            return [content_success(
-                {"frames": frames, "summary": summary},
-                raw_response=raw,
-                suggested_next_actions=["read_frame_variables", "list_source"],
-            )]
-
-        elif name == "read_core_registers":
-            registers = gdb_client.read_core_registers_decoded()
-            raw = gdb_client.read_core_registers() if arguments.get("include_raw") else None
-            return [content_success(
-                {"registers": registers, "summary": registers_summary(registers)},
-                raw_response=raw,
-            )]
-
-        elif name == "select_frame":
-            resp = gdb_client.select_frame(arguments["level"])
-            return [content_success({"message": "Frame selected", "level": arguments["level"]}, raw_response=resp)]
-
-        elif name == "read_frame_variables":
-            variables = gdb_client.read_frame_variables_decoded(arguments.get("level"))
-            raw = gdb_client.read_frame_variables(arguments.get("level")) if arguments.get("include_raw") else None
-            return [content_success(
-                {
-                    "level": arguments.get("level"),
-                    "variables": variables,
-                    "summary": f"{len(variables)} variables in scope",
-                },
-                raw_response=raw,
-                suggested_next_actions=["list_source", "read_variable"],
-            )]
-
-        elif name == "list_source":
-            resp = gdb_client.list_source(arguments.get("location"), arguments.get("count", 10))
-            return [content_success(
-                {"message": "Source listed", "location": arguments.get("location")},
-                raw_response=resp,
-            )]
-
-        elif name == "resolve_address":
-            resp = gdb_client.resolve_address(arguments["expr"])
-            return [content_success(
-                {"message": "Address resolved", "expr": arguments["expr"]},
-                raw_response=resp,
-                suggested_next_actions=["list_source", "read_frame_variables"],
-            )]
-
         elif name == "read_fault_registers":
             resp = gdb_client.read_fault_registers()
             hex_resp = {key: f"0x{value & 0xFFFFFFFF:08x}" for key, value in resp.items()}
@@ -2503,24 +2368,6 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                 "applied": applied,
                 "plans": plans,
             })]
-
-        elif name == "analyze_stack":
-            sp = gdb_client.read_register_value("$sp")
-            if arguments.get("stack_top") is not None:
-                stack_top = int(str(arguments["stack_top"]), 0)
-            else:
-                vt = int(str(arguments.get("vector_table_addr", "0x08000000")), 0)
-                stack_top = gdb_client.read_word(vt)  # initial MSP = first vector
-            stack_limit = None
-            if arguments.get("stack_limit") is not None:
-                stack_limit = int(str(arguments["stack_limit"]), 0)
-            elif arguments.get("stack_size") is not None:
-                stack_limit = stack_top - int(str(arguments["stack_size"]), 0)
-            report = stack_report(sp, stack_top, stack_limit)
-            return [content_success(
-                report,
-                suggested_next_actions=["read_call_stack", "reconstruct_fault_context", "read_freertos_tasks"],
-            )]
 
         elif name == "reconstruct_fault_context":
             context = build_fault_context(gdb_client)
@@ -2890,30 +2737,6 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                 {"message": "Ran to location", "location": arguments["location"]},
                 raw_response=resp,
             )]
-
-        elif name == "disassemble":
-            resp = gdb_client.disassemble(arguments.get("location", "$pc"), arguments.get("instructions", 8))
-            return [content_success({"message": "Disassembled"}, raw_response=resp)]
-
-        elif name == "list_functions":
-            resp = gdb_client.list_functions(arguments.get("regex"))
-            return [content_success({"message": "Functions listed"}, raw_response=resp)]
-
-        elif name == "list_variables":
-            resp = gdb_client.list_variables(arguments.get("regex"))
-            return [content_success({"message": "Variables listed"}, raw_response=resp)]
-
-        elif name == "lookup_type":
-            resp = gdb_client.lookup_type(arguments["expr"])
-            return [content_success({"message": "Type looked up", "expr": arguments["expr"]}, raw_response=resp)]
-
-        elif name == "sizeof":
-            resp = gdb_client.sizeof(arguments["expr"])
-            return [content_success({"message": "Size evaluated", "expr": arguments["expr"]}, raw_response=resp)]
-
-        elif name == "address_of":
-            resp = gdb_client.address_of(arguments["symbol"])
-            return [content_success({"message": "Address resolved", "symbol": arguments["symbol"]}, raw_response=resp)]
 
         elif name == "capture_coredump":
             resp = gdb_client.capture_coredump(arguments["path"])
