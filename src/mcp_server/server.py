@@ -29,7 +29,11 @@ from .acceptance_synth import (
 from .board_model import board_view, summarize_board
 from .board_validation import load_capability_db, validate_board
 from .clock_solver import resolve_profile, solve_clock_tree, summarize_clock_solution
-from .composites import capture_state, debug_until, flash_and_run, run_for_duration
+
+# Composites look statically unused once their handlers move to domain modules, but they
+# must stay module globals: _make_context reads them via globals() on every dispatch so
+# tests that monkeypatch mcp_server.server.<name> keep working (ctx.fns.<name>).
+from .composites import capture_state, debug_until, flash_and_run, run_for_duration  # noqa: F401
 from .debug_profile import DebugProfileStore
 from .debug_session import SessionManager, teardown_debug_session
 from .error_taxonomy import classify_error
@@ -73,6 +77,8 @@ from .tool_surface import (
 from .tools import REGISTRY as _TOOL_REGISTRY
 from .tools import TOOL_ORDER as _TOOL_ORDER
 from .tools import load_all as _load_tool_modules
+from .tools._helpers import autoload_symbols as _autoload_symbols
+from .tools._helpers import recover_current_session as _recover_current_session
 from .tools.context import ToolContext
 from .tracker import VariableTracker
 
@@ -414,68 +420,10 @@ async def handle_list_tools() -> list[Tool]:
                 "required": ["file_path"]
             }
         ),
-        Tool(
-            name="reset_target",
-            description="Resets the target device. Can optionally halt immediately after reset.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "halt": {"type": "boolean", "description": "If true, halts the CPU immediately after reset."},
-                    "strategy": {"type": "string", "description": "Optional reset strategy, e.g. default, under_reset, or software."},
-                    "command": {"type": "string", "description": "Optional custom GDB monitor reset command."}
-                },
-                "required": ["halt"]
-            }
-        ),
+        # (reset_target moved to tools/execution_tools.py)
         # --- Step 5: Core Debug Interaction ---
         # (set_breakpoint .. delete_breakpoint moved to tools/breakpoint_tools.py)
-        Tool(
-            name="continue_execution",
-            description="Resumes execution of the target device until the next breakpoint.",
-            inputSchema={"type": "object", "properties": {}}
-        ),
-        Tool(
-            name="halt_execution",
-            description="Interrupts/halts the target device execution.",
-            inputSchema={"type": "object", "properties": {}}
-        ),
-        Tool(
-            name="run_and_wait",
-            description="Resumes the target and waits, returning a structured stop event "
-                        "(reason, symbolized frame, breakpoint id, signal) or a timeout. "
-                        "Use this instead of continue_execution + polling to close the debug loop.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "timeout_sec": {"type": "number", "description": "Max seconds to wait for a stop (default 10)."}
-                }
-            }
-        ),
-        Tool(
-            name="debug_until",
-            description="One-call repro step: set an optional conditional/temporary breakpoint at "
-                        "a location, run, and return the stop event PLUS the decoded backtrace and "
-                        "innermost-frame locals. Collapses set_breakpoint + run + read frame/vars "
-                        "into a single round-trip.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "location": {"type": "string", "description": "Where to break, e.g. 'trigger_divzero' or 'main.c:21'."},
-                    "condition": {"type": "string", "description": "Optional C condition, e.g. 'g_divisor == 0'."},
-                    "temporary": {"type": "boolean", "description": "Auto-delete the breakpoint after the first hit (default true)."},
-                    "ignore_count": {"type": "integer", "description": "Hits to ignore before stopping."},
-                    "timeout_sec": {"type": "number", "description": "Max seconds to wait (default 10)."}
-                },
-                "required": ["location"]
-            }
-        ),
-        Tool(
-            name="capture_state",
-            description="One-call 'where am I': decoded core registers + a PC/LR/SP summary, the "
-                        "decoded backtrace, and the innermost-frame locals. The fastest way to get "
-                        "full halted context.",
-            inputSchema={"type": "object", "properties": {}}
-        ),
+        # (continue_execution .. capture_state moved to tools/execution_tools.py)
         Tool(
             name="flash_and_run",
             description="One-call bring-up: flash an ELF (loads symbols), reset-halt, set a "
@@ -491,81 +439,7 @@ async def handle_list_tools() -> list[Tool]:
                 "required": ["file_path"]
             }
         ),
-        Tool(
-            name="run_for_duration",
-            description="Runs the target freely for a wall-clock duration, halts it, and returns "
-                        "one structured report with final frame/context and optional expression "
-                        "captures. Useful for counters, telemetry buffers, polling loops, and "
-                        "timing-sensitive bus diagnostics without breakpoint perturbation.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "duration_sec": {"type": "number", "description": "Seconds to let the target run freely."},
-                    "then": {"type": "string", "enum": ["halt"], "description": "Action after duration (default halt)."},
-                    "capture": {
-                        "type": "object",
-                        "properties": {
-                            "expressions": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "Optional GDB/C expressions to capture after halting.",
-                            },
-                            "table": {
-                                "type": "object",
-                                "description": "Optional indexed table capture after halting: {index_range:[start,end], columns:[prefix,...]}.",
-                            },
-                        },
-                    },
-                    "sample": {
-                        "type": "object",
-                        "properties": {
-                            "interval_sec": {"type": "number", "description": "Low-rate polling interval in seconds."},
-                            "interval_ms": {"type": "number", "description": "Low-rate polling interval in milliseconds."},
-                            "expressions": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "GDB/C expressions to poll while the target runs.",
-                            },
-                            "table": {
-                                "type": "object",
-                                "description": "Optional indexed table to poll: {index_range:[start,end], columns:[prefix,...]}.",
-                            },
-                            "max_samples": {
-                                "type": "integer",
-                                "description": "Safety cap on generated samples (default 10000).",
-                            },
-                        },
-                        "description": "Best-effort low-rate debugger polling while running; does not halt the target.",
-                    },
-                    "resume_after": {"type": "boolean", "description": "Resume execution after capture (default false)."},
-                },
-                "required": ["duration_sec"],
-            },
-        ),
-        Tool(
-            name="wait_for_stop",
-            description="Waits for the next stop event WITHOUT resuming the target, returning "
-                        "a structured stop event or a timeout.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "timeout_sec": {"type": "number", "description": "Max seconds to wait for a stop (default 10)."}
-                }
-            }
-        ),
-        Tool(
-            name="step",
-            description="Single-steps the target: kind='over' (over the line), 'into' (into calls), "
-                        "'out' (run until the function returns), or 'instruction' (one machine "
-                        "instruction; set over=true to step over a call).",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "kind": {"type": "string", "enum": ["over", "into", "out", "instruction"], "description": "Step kind (default 'over')."},
-                    "over": {"type": "boolean", "description": "For kind='instruction', step over a called function."}
-                }
-            }
-        ),
+        # (run_for_duration .. step moved to tools/execution_tools.py)
         # (read_variable .. get_write_audit_log moved to tools/memory_tools.py)
         Tool(
             name="get_gdb_events",
@@ -694,17 +568,7 @@ async def handle_list_tools() -> list[Tool]:
             }
         ),
         # --- Tier 3: Execution control, symbol discovery, postmortem, timing ---
-        Tool(
-            name="run_to_line",
-            description="Runs until a given location is reached (function, 'file.c:42', or '*0xADDR').",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "location": {"type": "string", "description": "Where to run to."}
-                },
-                "required": ["location"]
-            }
-        ),
+        # (run_to_line moved to tools/execution_tools.py)
         # (disassemble .. address_of moved to tools/inspect_tools.py)
         # (capture_coredump .. load_coredump moved to tools/fault_tools.py)
         Tool(
@@ -1081,65 +945,12 @@ async def handle_list_tools() -> list[Tool]:
     return advertised
 
 
-def _autoload_symbols(sess) -> bool:
-    """Load symbols from the profile's elf_path after a connect, if configured."""
-    elf_path = sess.debug_profile.get().get("elf_path")
-    if not elf_path:
-        return False
-    try:
-        sess.gdb_client.load_symbols(elf_path)
-        return True
-    except Exception:
-        return False
-
-
 def _adapter_speed_khz(args: list[str]) -> int | None:
     for token in args:
         parts = token.split() if isinstance(token, str) else []
         if len(parts) == 3 and parts[:2] == ["adapter", "speed"] and parts[2].isdigit():
             return int(parts[2])
     return None
-
-
-def _recover_current_session(gdb_client, gdb_manager, last_session: dict, sess) -> dict:
-    if not last_session.get("server_type"):
-        raise RuntimeError("No prior session to recover; call start_debug_session first.")
-    for teardown in (gdb_client.stop_gdb, gdb_manager.stop):
-        try:
-            teardown()
-        except Exception:
-            pass
-
-    port = retry_call(
-        lambda: gdb_manager.start(last_session["server_type"], last_session["server_args"]),
-        attempts=3,
-        backoff_base=0.8,
-    )
-    gdb_client.start_gdb()
-    resp = gdb_client.connect("localhost", port)
-    symbols = _autoload_symbols(sess)
-    return {
-        "message": "Session recovered",
-        "server_type": last_session["server_type"],
-        "port": port,
-        "symbols_loaded": symbols,
-        "raw_response": resp,
-    }
-
-
-def _stop_event_next_actions(event: dict) -> list[str]:
-    """Guide the model to the natural next loop step for a stop event."""
-    reason = event.get("reason")
-    if reason in ("signal-received", "exited-signalled"):
-        return ["diagnose_fault", "reconstruct_fault_context", "read_call_stack"]
-    if reason == "timeout":
-        # Timeout means the breakpoint's code path was NOT reached — do not just retry.
-        # Halt, see where execution actually is, and check whether the breakpoint was
-        # ever hit (hit_count=0 => the precondition/flag to reach it was not satisfied).
-        return ["halt_execution", "capture_state", "list_breakpoints"]
-    if event.get("stopped"):
-        return ["read_frame_variables", "list_source", "read_call_stack"]
-    return []
 
 
 def _pipeline_stage_summary(stage: str, data: dict) -> dict:
@@ -1562,42 +1373,7 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                 data["message"] = "Firmware flashed; target reset and running"
             return [content_success(data, raw_response=resp)]
 
-        elif name == "reset_target":
-            halt = arguments["halt"]
-            profile = debug_profile.get()
-            reset_config = profile.get("reset", {})
-            resolved = resolve_reset_command(
-                gdb_manager.server_type or profile.get("server_type"),
-                halt=halt,
-                strategy=arguments.get("strategy") or reset_config.get("strategy"),
-                command=arguments.get("command") or reset_config.get("command"),
-            )
-            resp = gdb_client.reset_halt(command=resolved["command"])
-            return [content_success({"message": "Target reset", "reset": resolved}, raw_response=resp)]
-
-        elif name == "continue_execution":
-            resp = gdb_client.continue_execution()
-            return [content_success({"message": "Execution continued"}, raw_response=resp)]
-
-        elif name == "halt_execution":
-            resp = gdb_client.halt_execution()
-            return [content_success({"message": "Execution halted"}, raw_response=resp)]
-
-        elif name == "debug_until":
-            result = debug_until(
-                gdb_client,
-                location=arguments["location"],
-                condition=arguments.get("condition"),
-                temporary=arguments.get("temporary", True),
-                ignore_count=arguments.get("ignore_count"),
-                timeout_sec=arguments.get("timeout_sec", 10.0),
-            )
-            next_actions = ["capture_state", "list_source"] if result["stopped"] else ["halt_execution"]
-            return [content_success(result, suggested_next_actions=next_actions)]
-
-        elif name == "capture_state":
-            return [content_success(capture_state(gdb_client), suggested_next_actions=["list_source", "disassemble"])]
-
+        # (reset_target .. capture_state moved to tools/execution_tools.py)
         elif name == "flash_and_run":
             profile = debug_profile.get()
             reset_config = profile.get("reset", {})
@@ -1616,47 +1392,7 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
             )
             return [content_success(result, suggested_next_actions=["capture_state", "debug_until"])]
 
-        elif name == "run_for_duration":
-            result = run_for_duration(
-                gdb_client,
-                duration_sec=arguments["duration_sec"],
-                then=arguments.get("then", "halt"),
-                capture=arguments.get("capture"),
-                sample=arguments.get("sample"),
-                resume_after=arguments.get("resume_after", False),
-                recover=lambda: _recover_current_session(gdb_client, gdb_manager, _last_session, _sess),
-            )
-            next_actions = ["capture_state", "read_memory"]
-            if result.get("resume_after"):
-                next_actions = ["wait_for_stop", "halt_execution"]
-            return [content_success(result, suggested_next_actions=next_actions)]
-
-        elif name == "run_and_wait":
-            event = gdb_client.run_and_wait(timeout_sec=arguments.get("timeout_sec", 10.0))
-            raw = event.pop("raw_response", None)
-            next_actions = _stop_event_next_actions(event)
-            return [content_success(event, raw_response=raw, suggested_next_actions=next_actions)]
-
-        elif name == "wait_for_stop":
-            event = gdb_client.wait_for_stop(timeout_sec=arguments.get("timeout_sec", 10.0))
-            raw = event.pop("raw_response", None)
-            next_actions = _stop_event_next_actions(event)
-            return [content_success(event, raw_response=raw, suggested_next_actions=next_actions)]
-
-        elif name == "step":
-            kind = arguments.get("kind", "over")
-            if kind == "over":
-                resp = gdb_client.step_over()
-            elif kind == "into":
-                resp = gdb_client.step_into()
-            elif kind == "out":
-                resp = gdb_client.step_out()
-            elif kind == "instruction":
-                resp = gdb_client.step_instruction(over=arguments.get("over", False))
-            else:
-                raise ValueError(f"Unknown step kind '{kind}'. Use over, into, out, or instruction.")
-            return [content_success({"message": f"Stepped ({kind})", "kind": kind}, raw_response=resp)]
-
+        # (run_for_duration .. step moved to tools/execution_tools.py)
         elif name == "get_gdb_events":
             resp = gdb_client.get_responses()
             return [content_success({"events": resp, "message": "GDB events read" if resp else "No new events"})]
@@ -1741,13 +1477,7 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                 suggested_next_actions=["get_session"],
             )]
 
-        elif name == "run_to_line":
-            resp = gdb_client.run_to_line(arguments["location"])
-            return [content_success(
-                {"message": "Ran to location", "location": arguments["location"]},
-                raw_response=resp,
-            )]
-
+        # (run_to_line moved to tools/execution_tools.py)
         elif name == "verify_flash":
             resp = gdb_client.verify_flash(arguments["file_path"])
             return [content_success(
