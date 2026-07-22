@@ -13,6 +13,7 @@ def load_all() -> None:
         config_tools,
         execution_tools,
         fault_tools,
+        firmware_tools,
         inspect_tools,
         logging_tools,
         memory_tools,
