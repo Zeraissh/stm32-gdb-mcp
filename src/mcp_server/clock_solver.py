@@ -178,6 +178,7 @@ def solve_clock_tree(profile: dict, request: dict) -> dict:
                            "detail": "HSE selected but source_hz (crystal frequency) is unknown."
                            if err == "hse_frequency_unknown" else f"Unsupported clock source {source}."})
         return _infeasible(unresolved, notes)
+    assert f_in is not None  # _resolve_source_hz returns a frequency whenever err is None
 
     max_sysclk = profile["max_sysclk_hz"]
     if target > max_sysclk:

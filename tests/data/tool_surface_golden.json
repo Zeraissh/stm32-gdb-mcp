@@ -1,0 +1,8179 @@
+{
+ "compact_names": [
+  "start_debug_session",
+  "stop_debug_session",
+  "self_check",
+  "detect_probe",
+  "suggest_server_args",
+  "batch",
+  "call",
+  "tool_help",
+  "recover_session",
+  "build_firmware",
+  "load_symbols",
+  "flash_firmware",
+  "reset_target",
+  "halt_execution",
+  "run_and_wait",
+  "debug_until",
+  "capture_state",
+  "flash_and_run",
+  "run_for_duration",
+  "read_variable",
+  "read_memory",
+  "write_memory",
+  "read_call_stack",
+  "analyze_stack",
+  "reconstruct_fault_context",
+  "read_peripheral_register",
+  "get_session",
+  "list_sessions",
+  "close_session",
+  "report_issue",
+  "run_scenario",
+  "logging",
+  "breakpoint",
+  "debug_profile"
+ ],
+ "tools": [
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Starts the specified GDB Server (openocd, stlink, jlink) and connects the GDB Client to it. openocd REQUIRES server_args naming the probe and target, e.g. ['-f','interface/stlink.cfg','-f','target/stm32l4x.cfg'] \u2014 without them OpenOCD cannot find a config or adapter. Omitted values come from the active debug profile.",
+   "inputSchema": {
+    "properties": {
+     "probe": {
+      "description": "Optional OpenOCD probe type: stlink, jlink, or cmsis-dap. Falls back to the profile, then a unique detected probe.",
+      "type": "string"
+     },
+     "serial": {
+      "description": "Probe/ST-Link serial to select a specific board (for concurrent multi-target). Auto-added as 'adapter serial <serial>'.",
+      "type": "string"
+     },
+     "server_args": {
+      "description": "Optional args for the server e.g. ['-f', 'interface/stlink.cfg', '-f', 'target/stm32f4x.cfg']",
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "server_type": {
+      "description": "Type of debug server backend.",
+      "enum": [
+       "openocd",
+       "stlink",
+       "jlink"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "speed_khz": {
+      "description": "OpenOCD adapter clock used when server_args are inferred (default 4000).",
+      "type": "integer"
+     }
+    },
+    "type": "object"
+   },
+   "name": "start_debug_session",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Stops the GDB client/server, variable tracking, and all active RTT/SWO/UART readers.",
+   "inputSchema": {
+    "properties": {
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "stop_debug_session",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Validates the link right after connecting: reads CPUID and DBGMCU IDCODE and checks byte order, that a real Cortex-M is present, and that the device matches the expected family (from the profile MCU or the 'expected_family' arg). Run this first to catch endianness/config faults before debugging. Halts the core first (identity reads are unreliable while running); pass halt=false to skip.",
+   "inputSchema": {
+    "properties": {
+     "expected_family": {
+      "description": "Expected MCU/family, e.g. 'STM32L431'. Defaults to the profile MCU.",
+      "type": "string"
+     },
+     "halt": {
+      "description": "Halt the core before reading (default true).",
+      "type": "boolean"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "self_check",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Lists physical ST-Link, J-Link, and CMSIS-DAP probes currently connected over USB. Preserves serial numbers so multiple identical probes are never silently collapsed.",
+   "inputSchema": {
+    "properties": {
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "detect_probe",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Returns the correct OpenOCD server_args for an MCU family + probe (e.g. STM32L431 + stlink -> ['-f','interface/stlink.cfg','-f','target/stm32l4x.cfg']) and validates the config files exist in OpenOCD's bundled scripts dir. Call this to get start_debug_session args \u2014 do NOT search the disk for .cfg files.",
+   "inputSchema": {
+    "properties": {
+     "mcu": {
+      "description": "MCU or family, e.g. 'STM32L431' or 'STM32F4'.",
+      "type": "string"
+     },
+     "probe": {
+      "description": "Optional. Debug probe: stlink, jlink, or cmsis-dap. If omitted, uses debug profile probe.",
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "speed_khz": {
+      "description": "Adapter clock in kHz (default 4000; 0 keeps the config default).",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "mcu"
+    ],
+    "type": "object"
+   },
+   "name": "suggest_server_args",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Sets the SWD/JTAG adapter clock (kHz) at runtime. The default ST-Link speed is only ~480 kHz; raising it (e.g. 4000) speeds up flashing and memory reads ~8x. Lower it if reads/flash become unreliable.",
+   "inputSchema": {
+    "properties": {
+     "khz": {
+      "description": "Adapter clock in kHz, e.g. 4000.",
+      "type": "integer"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "khz"
+    ],
+    "type": "object"
+   },
+   "name": "set_adapter_speed",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": true,
+    "readOnlyHint": false
+   },
+   "description": "Runs several tool calls in ONE round trip and returns ALL their full results \u2014 the fastest way to do a sequence of operations (e.g. read registers + backtrace + several variables) without per-call latency.",
+   "inputSchema": {
+    "properties": {
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "steps": {
+      "description": "Ordered tool calls, each {tool, args}.",
+      "items": {
+       "properties": {
+        "args": {
+         "type": "object"
+        },
+        "tool": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "tool"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "stop_on_error": {
+      "description": "Stop at the first failing step (default false).",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "steps"
+    ],
+    "type": "object"
+   },
+   "name": "batch",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": true,
+    "readOnlyHint": false
+   },
+   "description": "Invoke ANY stm32-gdb-mcp tool by name \u2014 including one that is NOT in your current tool list (clients with tool-count limits may hide some). Use this to reach e.g. start_debug_session when it isn't directly listed: call(tool='start_debug_session', args={...}). Returns that tool's result.",
+   "inputSchema": {
+    "properties": {
+     "args": {
+      "description": "Arguments for that tool.",
+      "type": "object"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "tool": {
+      "description": "Name of the tool to invoke.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "tool"
+    ],
+    "type": "object"
+   },
+   "name": "call",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Returns descriptions and complete schemas for full-surface tools, including tools hidden in compact mode.",
+   "inputSchema": {
+    "properties": {
+     "name": {
+      "description": "Exact tool name.",
+      "type": "string"
+     },
+     "query": {
+      "description": "Case-insensitive name/description search.",
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "tool_help",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Recovers a dropped or wedged session: cleanly tears down the GDB client and server, then restarts the server (with retry/backoff for a busy probe) using the last start_debug_session arguments and reconnects. Use after a probe_unavailable or connection_lost error.",
+   "inputSchema": {
+    "properties": {
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "recover_session",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": true,
+    "readOnlyHint": false
+   },
+   "description": "Builds firmware with Keil uVision (UV4), CMake, make, or a custom command, so the AI can rebuild after a fix. Keil emits a .axf (ELF/DWARF) that the debug tools load like any .elf. Returns the exit code, success flag, and build log tail.",
+   "inputSchema": {
+    "properties": {
+     "build_dir": {
+      "description": "cmake: the configured build directory.",
+      "type": "string"
+     },
+     "command": {
+      "description": "custom: full argv to run.",
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "config": {
+      "description": "cmake: build config, e.g. Debug/Release.",
+      "type": "string"
+     },
+     "cwd": {
+      "description": "Working directory for the build.",
+      "type": "string"
+     },
+     "directory": {
+      "description": "make: directory containing the Makefile.",
+      "type": "string"
+     },
+     "kind": {
+      "description": "Toolchain to build with.",
+      "enum": [
+       "keil",
+       "cmake",
+       "make",
+       "custom"
+      ],
+      "type": "string"
+     },
+     "project": {
+      "description": "keil: path to the .uvprojx/.uvproj project.",
+      "type": "string"
+     },
+     "rebuild": {
+      "description": "keil: rebuild all (-r) instead of incremental (-b).",
+      "type": "boolean"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "target": {
+      "description": "Keil/CMake/make build target.",
+      "type": "string"
+     },
+     "timeout_sec": {
+      "description": "Max build seconds (default 600).",
+      "type": "number"
+     },
+     "uv4_path": {
+      "description": "keil: path to UV4.exe (auto-detected if omitted).",
+      "type": "string"
+     }
+    },
+    "required": [
+     "kind"
+    ],
+    "type": "object"
+   },
+   "name": "build_firmware",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Loads symbols from an ELF/AXF into the current GDB session WITHOUT flashing. Symbols are per-session, so after a fresh connect or recover_session you need this (or flash_firmware) before symbol breakpoints resolve. Falls back to the debug profile's elf_path if elf_path is omitted.",
+   "inputSchema": {
+    "properties": {
+     "elf_path": {
+      "description": "Path to the ELF/AXF. Defaults to the profile elf_path.",
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "load_symbols",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Flashes a compiled firmware binary to the target. Accepts GCC .elf or Keil .axf. By default it then resets and RUNS the firmware (Keil-style 'Load + Run'). Pass reset_run=false to flash only (e.g. to set breakpoints before the firmware starts).",
+   "inputSchema": {
+    "properties": {
+     "file_path": {
+      "description": "Absolute path to the compiled firmware file (e.g. .elf/.axf).",
+      "type": "string"
+     },
+     "reset_run": {
+      "description": "Reset and run after flashing (default true). False = flash only, leave halted.",
+      "type": "boolean"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "file_path"
+    ],
+    "type": "object"
+   },
+   "name": "flash_firmware",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Resets the target device. Can optionally halt immediately after reset.",
+   "inputSchema": {
+    "properties": {
+     "command": {
+      "description": "Optional custom GDB monitor reset command.",
+      "type": "string"
+     },
+     "halt": {
+      "description": "If true, halts the CPU immediately after reset.",
+      "type": "boolean"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "strategy": {
+      "description": "Optional reset strategy, e.g. default, under_reset, or software.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "halt"
+    ],
+    "type": "object"
+   },
+   "name": "reset_target",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Resumes execution of the target device until the next breakpoint.",
+   "inputSchema": {
+    "properties": {
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "continue_execution",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Interrupts/halts the target device execution.",
+   "inputSchema": {
+    "properties": {
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "halt_execution",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Resumes the target and waits, returning a structured stop event (reason, symbolized frame, breakpoint id, signal) or a timeout. Use this instead of continue_execution + polling to close the debug loop.",
+   "inputSchema": {
+    "properties": {
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "timeout_sec": {
+      "description": "Max seconds to wait for a stop (default 10).",
+      "type": "number"
+     }
+    },
+    "type": "object"
+   },
+   "name": "run_and_wait",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "One-call repro step: set an optional conditional/temporary breakpoint at a location, run, and return the stop event PLUS the decoded backtrace and innermost-frame locals. Collapses set_breakpoint + run + read frame/vars into a single round-trip.",
+   "inputSchema": {
+    "properties": {
+     "condition": {
+      "description": "Optional C condition, e.g. 'g_divisor == 0'.",
+      "type": "string"
+     },
+     "ignore_count": {
+      "description": "Hits to ignore before stopping.",
+      "type": "integer"
+     },
+     "location": {
+      "description": "Where to break, e.g. 'trigger_divzero' or 'main.c:21'.",
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "temporary": {
+      "description": "Auto-delete the breakpoint after the first hit (default true).",
+      "type": "boolean"
+     },
+     "timeout_sec": {
+      "description": "Max seconds to wait (default 10).",
+      "type": "number"
+     }
+    },
+    "required": [
+     "location"
+    ],
+    "type": "object"
+   },
+   "name": "debug_until",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "One-call 'where am I': decoded core registers + a PC/LR/SP summary, the decoded backtrace, and the innermost-frame locals. The fastest way to get full halted context.",
+   "inputSchema": {
+    "properties": {
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "capture_state",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "One-call bring-up: flash an ELF (loads symbols), reset-halt, set a temporary breakpoint at an entry point (default 'main'), run to it, and return the decoded stop context.",
+   "inputSchema": {
+    "properties": {
+     "file_path": {
+      "description": "Path to the ELF to flash.",
+      "type": "string"
+     },
+     "run_to": {
+      "description": "Entry point to stop at (default 'main').",
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "timeout_sec": {
+      "description": "Max seconds to wait (default 10).",
+      "type": "number"
+     }
+    },
+    "required": [
+     "file_path"
+    ],
+    "type": "object"
+   },
+   "name": "flash_and_run",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Runs the target freely for a wall-clock duration, halts it, and returns one structured report with final frame/context and optional expression captures. Useful for counters, telemetry buffers, polling loops, and timing-sensitive bus diagnostics without breakpoint perturbation.",
+   "inputSchema": {
+    "properties": {
+     "capture": {
+      "properties": {
+       "expressions": {
+        "description": "Optional GDB/C expressions to capture after halting.",
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       "table": {
+        "description": "Optional indexed table capture after halting: {index_range:[start,end], columns:[prefix,...]}.",
+        "type": "object"
+       }
+      },
+      "type": "object"
+     },
+     "duration_sec": {
+      "description": "Seconds to let the target run freely.",
+      "type": "number"
+     },
+     "resume_after": {
+      "description": "Resume execution after capture (default false).",
+      "type": "boolean"
+     },
+     "sample": {
+      "description": "Best-effort low-rate debugger polling while running; does not halt the target.",
+      "properties": {
+       "expressions": {
+        "description": "GDB/C expressions to poll while the target runs.",
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       "interval_ms": {
+        "description": "Low-rate polling interval in milliseconds.",
+        "type": "number"
+       },
+       "interval_sec": {
+        "description": "Low-rate polling interval in seconds.",
+        "type": "number"
+       },
+       "max_samples": {
+        "description": "Safety cap on generated samples (default 10000).",
+        "type": "integer"
+       },
+       "table": {
+        "description": "Optional indexed table to poll: {index_range:[start,end], columns:[prefix,...]}.",
+        "type": "object"
+       }
+      },
+      "type": "object"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "then": {
+      "description": "Action after duration (default halt).",
+      "enum": [
+       "halt"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "duration_sec"
+    ],
+    "type": "object"
+   },
+   "name": "run_for_duration",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Waits for the next stop event WITHOUT resuming the target, returning a structured stop event or a timeout.",
+   "inputSchema": {
+    "properties": {
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "timeout_sec": {
+      "description": "Max seconds to wait for a stop (default 10).",
+      "type": "number"
+     }
+    },
+    "type": "object"
+   },
+   "name": "wait_for_stop",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Single-steps the target: kind='over' (over the line), 'into' (into calls), 'out' (run until the function returns), or 'instruction' (one machine instruction; set over=true to step over a call).",
+   "inputSchema": {
+    "properties": {
+     "kind": {
+      "description": "Step kind (default 'over').",
+      "enum": [
+       "over",
+       "into",
+       "out",
+       "instruction"
+      ],
+      "type": "string"
+     },
+     "over": {
+      "description": "For kind='instruction', step over a called function.",
+      "type": "boolean"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "step",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Reads the value of a C variable currently in scope.",
+   "inputSchema": {
+    "properties": {
+     "name": {
+      "description": "Name of the variable to read.",
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "name"
+    ],
+    "type": "object"
+   },
+   "name": "read_variable",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Reads a block of memory from the target.",
+   "inputSchema": {
+    "properties": {
+     "address": {
+      "description": "Hex address to read from, e.g., '0x20000000'.",
+      "type": "string"
+     },
+     "length": {
+      "description": "Number of bytes to read.",
+      "type": "integer"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "address",
+     "length"
+    ],
+    "type": "object"
+   },
+   "name": "read_memory",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Writes a value to a specific memory address.",
+   "inputSchema": {
+    "properties": {
+     "address": {
+      "description": "Hex address to write to, e.g., '0x20000000'.",
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "value": {
+      "description": "Value to write, e.g., '0xFF' or '1234'.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "address",
+     "value"
+    ],
+    "type": "object"
+   },
+   "name": "write_memory",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Reads the call stack as a decoded list of frames {level, func, file, line, addr} plus a one-line summary. Set include_raw=true to also get the raw GDB output.",
+   "inputSchema": {
+    "properties": {
+     "include_raw": {
+      "description": "Include the raw GDB transcript (default false).",
+      "type": "boolean"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "read_call_stack",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Reads and decodes Cortex-M fault registers into likely fault causes.",
+   "inputSchema": {
+    "properties": {
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "diagnose_fault",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Freezes peripherals (IWDG, WWDG, RTC, timers) while the core is halted via the DBGMCU freeze registers, so the watchdog cannot reset the target out from under the debugger. Family is taken from the debug profile MCU if omitted.",
+   "inputSchema": {
+    "properties": {
+     "apply": {
+      "description": "If false, only return the planned register writes (default true).",
+      "type": "boolean"
+     },
+     "family": {
+      "description": "STM32 family or part number. Known: ['stm32f4', 'stm32l4'].",
+      "type": "string"
+     },
+     "peripherals": {
+      "description": "Peripherals to freeze, e.g. ['iwdg', 'wwdg', 'rtc', 'tim2'].",
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "peripherals"
+    ],
+    "type": "object"
+   },
+   "name": "configure_debug_freeze",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Reports stack used/free bytes and a clear overflow verdict for the halted core. stack_top defaults to the initial MSP (first word of the vector table at vector_table_addr). Give stack_size or stack_limit for the overflow check (else only usage is reported). The key tool for diagnosing stack overflows.",
+   "inputSchema": {
+    "properties": {
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "stack_limit": {
+      "description": "Lowest valid stack address (hex).",
+      "type": "string"
+     },
+     "stack_size": {
+      "description": "Stack size in bytes (used as stack_top - stack_size if stack_limit omitted).",
+      "type": "string"
+     },
+     "stack_top": {
+      "description": "Top-of-stack address (hex). Default: initial MSP from the vector table.",
+      "type": "string"
+     },
+     "vector_table_addr": {
+      "description": "Vector table base for the initial MSP (default '0x08000000').",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "analyze_stack",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Reconstructs the full crash site after a HardFault: decodes fault registers, unwinds the auto-stacked exception frame from MSP/PSP via EXC_RETURN to recover the true faulting PC, and resolves it to source file:line. Run this when halted in a fault handler.",
+   "inputSchema": {
+    "properties": {
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "reconstruct_fault_context",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Discovers firmware project artifacts such as ELF, map, linker script, SVD, and STM32CubeMX .ioc metadata.",
+   "inputSchema": {
+    "properties": {
+     "project_root": {
+      "description": "Project directory to scan. Uses debug profile project_root if omitted.",
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "inspect_project",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Detects whether FreeRTOS symbols are available in the current GDB session.",
+   "inputSchema": {
+    "properties": {
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "detect_rtos",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Reads FreeRTOS state by 'what': 'current_task' (pxCurrentTCB), 'tasks' (ready list: names/priorities/TCB/stack), 'task_lists' (ready/delayed/suspended/deleted), 'queue' or 'mutex' (needs handle = a Queue_t expression), or 'heap' (heap_4/5 usage).",
+   "inputSchema": {
+    "properties": {
+     "handle": {
+      "description": "For 'queue'/'mutex': GDB expression for the Queue_t pointer/handle.",
+      "type": "string"
+     },
+     "max_priorities": {
+      "description": "tasks/task_lists: priority count override.",
+      "type": "integer"
+     },
+     "max_tasks": {
+      "description": "tasks/task_lists: max tasks to return.",
+      "type": "integer"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "what": {
+      "enum": [
+       "current_task",
+       "tasks",
+       "task_lists",
+       "queue",
+       "mutex",
+       "heap"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "what"
+    ],
+    "type": "object"
+   },
+   "name": "read_freertos",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Loads an SVD file for peripheral parsing.",
+   "inputSchema": {
+    "properties": {
+     "filepath": {
+      "description": "Path to the .svd file.",
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "filepath"
+    ],
+    "type": "object"
+   },
+   "name": "load_svd",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Reads a peripheral register using its name from the loaded SVD.",
+   "inputSchema": {
+    "properties": {
+     "peripheral": {
+      "description": "Peripheral name (e.g., 'GPIOA').",
+      "type": "string"
+     },
+     "register": {
+      "description": "Register name (e.g., 'ODR').",
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "peripheral",
+     "register"
+    ],
+    "type": "object"
+   },
+   "name": "read_peripheral_register",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Reads and decodes a peripheral register with SVD bitfield names and enumerated values.",
+   "inputSchema": {
+    "properties": {
+     "peripheral": {
+      "description": "Peripheral name (e.g., 'GPIOA').",
+      "type": "string"
+     },
+     "register": {
+      "description": "Register name (e.g., 'MODER').",
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "peripheral",
+     "register"
+    ],
+    "type": "object"
+   },
+   "name": "decode_peripheral_register",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Background variable tracking: action='start' (needs variable + interval_ms), 'stop', or 'get' (returns the sampled data for trend/leak analysis).",
+   "inputSchema": {
+    "properties": {
+     "action": {
+      "description": "What to do.",
+      "enum": [
+       "start",
+       "stop",
+       "get"
+      ],
+      "type": "string"
+     },
+     "interval_ms": {
+      "description": "For 'start': polling interval in ms.",
+      "type": "integer"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "variable": {
+      "description": "For 'start': the variable/expression to sample.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   },
+   "name": "track_variable",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Returns this session's record by view: 'journal' (every tool call with args/ok/summary/duration; supports limit), 'timeline' (compact human-readable replay), or 'metrics' (per-tool call counts, success/failure, durations).",
+   "inputSchema": {
+    "properties": {
+     "limit": {
+      "description": "journal: return only the most recent N entries.",
+      "type": "integer"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "view": {
+      "description": "Which view (default journal).",
+      "enum": [
+       "journal",
+       "timeline",
+       "metrics"
+      ],
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "get_session",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Clears the session journal (keeps the run-id).",
+   "inputSchema": {
+    "properties": {
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "clear_session_journal",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Lists all debug target sessions (the 'default' one plus any named) with their liveness and port. To debug MULTIPLE boards at once, pass a 'session' argument (any string) to any tool \u2014 e.g. start_debug_session(session='rackA', ...) \u2014 and each gets fully isolated state.",
+   "inputSchema": {
+    "properties": {
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "list_sessions",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Closes a named debug session, tearing down its GDB client and server.",
+   "inputSchema": {
+    "properties": {
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "session_id": {
+      "description": "Name of the session to close, e.g. 'rackA'.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session_id"
+    ],
+    "type": "object"
+   },
+   "name": "close_session",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true,
+    "readOnlyHint": false
+   },
+   "description": "Files a GitHub issue about an MCP problem from THIS session \u2014 auto-bundling the session journal, metrics, and MCP version into a structured report (via the gh CLI). Call this when a tool misbehaves or confuses you. Deduplicated per session so retries don't spam. Defaults to the stm32-gdb-mcp repo.",
+   "inputSchema": {
+    "properties": {
+     "description": {
+      "description": "What you were doing and what went wrong.",
+      "type": "string"
+     },
+     "env": {
+      "description": "Agent/IDE + model, e.g. 'Cursor / deepseek-v4-pro'.",
+      "type": "string"
+     },
+     "repo": {
+      "description": "owner/repo to file under (default the MCP repo).",
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "title": {
+      "description": "Short issue title, e.g. '[agent] start_debug_session ignores server_args'.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "title",
+     "description"
+    ],
+    "type": "object"
+   },
+   "name": "report_issue",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Writes a single self-contained JSON report (journal + metrics + profile, optionally a state snapshot and a coredump) tied to the run-id, so a bug session is fully reproducible and shareable from one artifact.",
+   "inputSchema": {
+    "properties": {
+     "coredump_path": {
+      "description": "If set, capture a coredump there and reference it in the report.",
+      "type": "string"
+     },
+     "include_snapshot": {
+      "description": "Capture and embed a debug snapshot (requires a halted target).",
+      "type": "boolean"
+     },
+     "path": {
+      "description": "Output path for the report JSON.",
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "path"
+    ],
+    "type": "object"
+   },
+   "name": "export_debug_report",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": true,
+    "readOnlyHint": false
+   },
+   "description": "Replays a declarative scenario \u2014 a list of {tool, args} steps \u2014 deterministically and returns a per-step pass/fail report. Provide inline 'steps' or a 'path' to a JSON scenario file. The minimal-step way to re-run a complex bug repro.",
+   "inputSchema": {
+    "properties": {
+     "path": {
+      "description": "Path to a JSON scenario file (alternative to inline steps).",
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "steps": {
+      "description": "Ordered steps, each {tool, args}.",
+      "items": {
+       "properties": {
+        "args": {
+         "type": "object"
+        },
+        "tool": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "tool"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "stop_on_failure": {
+      "description": "Stop at the first failing step (default true).",
+      "type": "boolean"
+     }
+    },
+    "type": "object"
+   },
+   "name": "run_scenario",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Runs until a given location is reached (function, 'file.c:42', or '*0xADDR').",
+   "inputSchema": {
+    "properties": {
+     "location": {
+      "description": "Where to run to.",
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "location"
+    ],
+    "type": "object"
+   },
+   "name": "run_to_line",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Disassembles N instructions at a location (default $pc).",
+   "inputSchema": {
+    "properties": {
+     "instructions": {
+      "description": "Number of instructions (default 8).",
+      "type": "integer"
+     },
+     "location": {
+      "description": "Where to disassemble from (default '$pc').",
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "disassemble",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Verifies that target flash matches an ELF by comparing loaded sections (GDB compare-sections).",
+   "inputSchema": {
+    "properties": {
+     "file_path": {
+      "description": "Path to the ELF to verify against.",
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "file_path"
+    ],
+    "type": "object"
+   },
+   "name": "verify_flash",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "One-call SWO/ITM printf setup. Configures the target's TPIU+ITM from the debugger (no firmware ITM-init needed) for the given core clock (hclk_hz) and SWO baud, and returns the OpenOCD capture commands + the firmware printf retarget snippet. Then capture with logging(action=start, channel='swo', file=<output>). Requires the SWO pin (e.g. PB3) wired to the probe.",
+   "inputSchema": {
+    "properties": {
+     "apply_openocd": {
+      "description": "Also run the OpenOCD capture commands via monitor now (default false).",
+      "type": "boolean"
+     },
+     "hclk_hz": {
+      "description": "Core clock (HCLK) in Hz, e.g. 80000000 for an L4 at 80 MHz.",
+      "type": "integer"
+     },
+     "output": {
+      "description": "OpenOCD ITM decode output file to tail (default 'swo_itm.log').",
+      "type": "string"
+     },
+     "port": {
+      "description": "ITM stimulus port for printf (default 0).",
+      "type": "integer"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "swo_hz": {
+      "description": "Desired SWO baud (default 2000000; ST-Link V2 max ~2 MHz).",
+      "type": "integer"
+     },
+     "tpiu_name": {
+      "description": "OpenOCD tpiu object name if not the default '$_CHIPNAME.tpiu'.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "hclk_hz"
+    ],
+    "type": "object"
+   },
+   "name": "setup_swo",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Statistical PC profiler: enables DWT and samples the program counter while the core RUNS (non-intrusive, over SWD \u2014 no SWO pin or firmware change). Returns a symbolized hot-spot histogram (top functions by %), not raw hex \u2014 the fast way to find where firmware spends time or what loop it is stuck in. A high 'unsampleable' count means the core is halted/asleep.",
+   "inputSchema": {
+    "properties": {
+     "count": {
+      "description": "Number of samples (default 128; more = better statistics, slower).",
+      "type": "integer"
+     },
+     "enable": {
+      "description": "Enable DWT trace before sampling (default true).",
+      "type": "boolean"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "sample_pc",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Parse a schematic netlist (KiCad .net today) into a machine-readable BoardDescription: the MCU part/family/line, a per-pin map (package pin -> port pin -> net -> inferred peripheral function), and the power/ground nets. This is the input contract for automated framework design. Pass 'path' or 'text'. The result is stored on the session; read views with describe_board.",
+   "inputSchema": {
+    "properties": {
+     "format": {
+      "description": "Netlist format: auto (default) or kicad.",
+      "type": "string"
+     },
+     "path": {
+      "description": "Path to a netlist file (e.g. board.net).",
+      "type": "string"
+     },
+     "session": {
+      "description": "Target session id (default 'default').",
+      "type": "string"
+     },
+     "text": {
+      "description": "Netlist contents inline (alternative to path).",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "import_netlist",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Read the BoardDescription imported by import_netlist. what=summary (MCU + peripherals + counts), pins (full MCU pin map), nets, power (power/ground nets), or peripherals (distinct peripherals in use).",
+   "inputSchema": {
+    "properties": {
+     "session": {
+      "description": "Target session id (default 'default').",
+      "type": "string"
+     },
+     "what": {
+      "description": "summary|pins|nets|power|peripherals (default summary).",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "describe_board",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Validate the imported BoardDescription: detect a package pin wired to multiple nets (short), a peripheral signal routed to multiple pins, a port pin driven by multiple nets, and missing power/ground/debug/reset nets. With a pin-capability DB (db_path or the STM32_GDB_MCP_PIN_DB env) it also checks alternate-function legality; unknown pins degrade to 'unverified', never a false conflict. Run import_netlist first.",
+   "inputSchema": {
+    "properties": {
+     "db_path": {
+      "description": "Optional JSON pin-capability DB (CubeMX-derived) for AF-legality checks.",
+      "type": "string"
+     },
+     "session": {
+      "description": "Target session id (default 'default').",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "validate_board",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Load a machine-checked AcceptanceSpec (product-spec \u2192 deterministic checks) from an inline 'spec' object or a JSON 'path'. Checks: memory_u32 (any memory-mapped register), variable (C global), core_register, no_fault, stopped_at (PC in a symbol). Stored on the session; evaluate with run_acceptance.",
+   "inputSchema": {
+    "properties": {
+     "path": {
+      "description": "Path to a JSON AcceptanceSpec (alternative to 'spec').",
+      "type": "string"
+     },
+     "session": {
+      "description": "Target session id (default 'default').",
+      "type": "string"
+     },
+     "spec": {
+      "description": "Inline AcceptanceSpec {name, description, checks:[...]}.",
+      "type": "object"
+     }
+    },
+    "type": "object"
+   },
+   "name": "load_acceptance",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Evaluate the loaded AcceptanceSpec against live silicon state and return a deterministic pass/fail/error verdict per check (the closed-loop judge). An unreadable target is reported as 'error', never a silent pass. A failing/errored check derived by synthesize_acceptance carries provenance.source \u2014 the init function + line that should satisfy it \u2014 so fixes are precision-guided. Run load_acceptance first; halt the target at the state you want to assert.",
+   "inputSchema": {
+    "properties": {
+     "session": {
+      "description": "Target session id (default 'default').",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "run_acceptance",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Read the loaded AcceptanceSpec or the last verdict. what=summary (name + check counts), checks (full check list), or last_result (the most recent run_acceptance report).",
+   "inputSchema": {
+    "properties": {
+     "session": {
+      "description": "Target session id (default 'default').",
+      "type": "string"
+     },
+     "what": {
+      "description": "summary|checks|last_result (default summary).",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "describe_acceptance",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Start a bounded spec-to-silicon acceptance loop (Pillar C) for the loaded AcceptanceSpec. Each run_acceptance_iteration does one build \u2192 flash \u2192 run-to-state \u2192 run_acceptance pass; the loop stops on convergence, on max_iterations, or on a stall (same checks failing repeatedly). Omit build/flash to run evaluate-only iterations (you flash manually). Load a spec first.",
+   "inputSchema": {
+    "properties": {
+     "build": {
+      "description": "Optional build_firmware config {kind, project|build_dir|directory, target, config, rebuild, command, cwd}.",
+      "type": "object"
+     },
+     "flash": {
+      "description": "Optional flash+run config {file_path, run_to (default 'main'), timeout_sec}.",
+      "type": "object"
+     },
+     "max_iterations": {
+      "description": "Hard bound on iterations (default 10).",
+      "type": "integer"
+     },
+     "session": {
+      "description": "Target session id (default 'default').",
+      "type": "string"
+     },
+     "stall_patience": {
+      "description": "Stop if the same checks fail this many times in a row (default 3).",
+      "type": "integer"
+     }
+    },
+    "type": "object"
+   },
+   "name": "start_acceptance_loop",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Run one bounded loop iteration: (optional build) \u2192 (optional flash+run-to) \u2192 evaluate the AcceptanceSpec against live silicon, then record the verdict and return a decision (converged / should_continue / exhausted / stalled) plus the checks to fix. A build or run-to failure is recorded as a phase_error, not a crash. Refuses to run a terminal loop unless force=true. start_acceptance_loop first.",
+   "inputSchema": {
+    "properties": {
+     "force": {
+      "description": "Run even if the loop already converged/exhausted/stalled.",
+      "type": "boolean"
+     },
+     "session": {
+      "description": "Target session id (default 'default').",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "run_acceptance_iteration",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Read the acceptance loop's trajectory (per-iteration pass/fail counts, status) and the current decision without running an iteration.",
+   "inputSchema": {
+    "properties": {
+     "session": {
+      "description": "Target session id (default 'default').",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "acceptance_loop_status",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Translate a controlled-vocabulary product spec (human/product terms) into the per-peripheral design params design_framework consumes, and cross-check it against the imported netlist. This is the upstream guard the pipeline lacked: instead of hand-writing HAL macros, supply intent -- UART framing '8N1', direction 'txrx', flow_control 'rtscts'; SPI role 'master', spi_mode 0..3, data_size, bit_order; I2C speed 'fast', addressing '7bit'; ADC resolution 12, conversion 'continuous'; a timer update_hz; plus dma / interrupt / priority opt-ins -- and the machine expands it deterministically (8E1 -> UART_WORDLENGTH_9B + UART_PARITY_EVEN, honoring HAL's parity-bit-in-word-length rule). A peripheral named in the spec but absent from the netlist is a conflict; an intent key or value the machine does not model is surfaced as unresolved -- never guessed. Then design_framework(from_spec=true) builds the plan from the translated params. Import a netlist first so the spec is cross-checked.",
+   "inputSchema": {
+    "properties": {
+     "session": {
+      "description": "Target session id (default 'default').",
+      "type": "string"
+     },
+     "spec": {
+      "description": "Per-peripheral intent, e.g. {'USART1': {'baud': 115200, 'framing': '8N1', 'direction': 'txrx'}, 'ADC1': {'resolution': 12, 'conversion': 'continuous', 'dma': true}}.",
+      "type": "object"
+     }
+    },
+    "type": "object"
+   },
+   "name": "import_spec",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Synthesize a deterministic FrameworkPlan (Pillar D) from the session's imported board: which clocks to enable, how each pin must be muxed, and which peripheral init blocks to emit, in dependency order. Supply per-peripheral HAL .Init parameters via design={'USART1': {'baud': 115200, ...}} and optional AF numbers via af_map. Mandatory .Init members are auto-filled with HAL-standard defaults (a complete, valid init struct, not a half-initialized one) and a few are derived from the netlist (UART flow control from RTS/CTS pins, SPI NSS from an NSS pin); each field is tagged explicit/derived/default. Alternate-function numbers are also auto-derived from a pin-capability DB (db_path or the STM32_GDB_MCP_PIN_DB env) when its entries carry an 'af' field; an explicit af_map overrides the DB per pin. Anything that needs a human decision (baud, timer period, I2C timing) is surfaced as unresolved, never guessed. Import a netlist first (import_netlist).",
+   "inputSchema": {
+    "properties": {
+     "af_map": {
+      "description": "Optional alternate-function numbers: {line_or_family: {port_pin: {'USART1_TX': 7}}}. Overrides db_path per pin.",
+      "type": "object"
+     },
+     "db_path": {
+      "description": "Optional JSON pin-capability DB (CubeMX-derived); entries with an 'af' field auto-fill alternate-function numbers.",
+      "type": "string"
+     },
+     "design": {
+      "description": "Per-peripheral config, e.g. {'USART1': {'baud': 115200, 'word_length': 'UART_WORDLENGTH_8B'}}.",
+      "type": "object"
+     },
+     "from_spec": {
+      "description": "Build from the session's imported product spec (import_spec) instead of, or merged under, an explicit design (explicit keys win).",
+      "type": "boolean"
+     },
+     "session": {
+      "description": "Target session id (default 'default').",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "design_framework",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Read the synthesized FrameworkPlan. what=summary (mcu + clocks + peripherals), clocks, gpio (per-pin config), peripherals (init blocks), init_order, or unresolved (the TODO holes that need target data or a design decision). Run design_framework first.",
+   "inputSchema": {
+    "properties": {
+     "session": {
+      "description": "Target session id (default 'default').",
+      "type": "string"
+     },
+     "what": {
+      "description": "summary|clocks|gpio|peripherals|init_order|unresolved (default summary).",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "describe_framework",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Render the synthesized FrameworkPlan to a HAL C init skeleton (bsp_init.c + bsp_init.h). Every derived fact (clock enables, GPIO modes, mapped .Init fields) is concrete; every unresolved value is a clearly marked TODO \u2014 nothing is fabricated. Returns the files, their content, and a todo_count. Run design_framework first.",
+   "inputSchema": {
+    "properties": {
+     "session": {
+      "description": "Target session id (default 'default').",
+      "type": "string"
+     },
+     "style": {
+      "description": "Code style (default 'hal').",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "render_framework",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Auto-derive a machine-checked AcceptanceSpec from the synthesized FrameworkPlan (Pillar D Tier 3) and load it as the session's acceptance judge \u2014 welding design synthesis to the acceptance loop. Always emits a no_fault check (init must not HardFault); adds a memory_u32 bits_set check per clock the plan enables (RCC enable bit), a memory_u32 bits_set check per interrupt the plan enables (arch-standard NVIC ISER bit, from the resolved IRQ number), and a masked memory_u32 eq check per configured pin (GPIO MODER = AF/analog; F1's CRL/CRH is skipped). Register/IRQ/port placements come from the session's loaded SVD or explicit register_map/irq_map/gpio_map; anything unresolvable is surfaced, never guessed. Each derived check also carries source provenance (the init function + line that should satisfy it), so a later failure points straight at the fix site. Run design_framework first; load an SVD (start_debug_session/set svd) for clock/NVIC/GPIO checks.",
+   "inputSchema": {
+    "properties": {
+     "gpio_map": {
+      "description": "Optional explicit GPIO port bases {line_or_family: {port_letter: MODER_address}}; overrides the SVD.",
+      "type": "object"
+     },
+     "include_gpio": {
+      "description": "Emit GPIO MODER checks for configured pins (default true).",
+      "type": "boolean"
+     },
+     "include_no_fault": {
+      "description": "Emit the no_fault check (default true).",
+      "type": "boolean"
+     },
+     "include_nvic": {
+      "description": "Emit NVIC ISER checks for enabled interrupts (default true).",
+      "type": "boolean"
+     },
+     "irq_map": {
+      "description": "Optional explicit IRQ numbers {line_or_family: {irq_name: number}} (name with or without _IRQn); overrides the SVD.",
+      "type": "object"
+     },
+     "load": {
+      "description": "Load the derived spec as the session acceptance judge (default true).",
+      "type": "boolean"
+     },
+     "name": {
+      "description": "Optional spec name.",
+      "type": "string"
+     },
+     "register_map": {
+      "description": "Optional explicit RCC placements {line_or_family: {clock: {address, bit}}}; overrides the SVD.",
+      "type": "object"
+     },
+     "session": {
+      "description": "Target session id (default 'default').",
+      "type": "string"
+     },
+     "stopped_at": {
+      "description": "Optional symbol to also assert the PC reached after init (e.g. 'main').",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "synthesize_acceptance",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Synthesize a concrete SystemClock_Config() for the session's FrameworkPlan (Pillar D Tier 3) - the last hand-written gap in generated init code. Given a clock source (HSE + crystal Hz, or HSI) and a target SYSCLK, it computes the exact PLL dividers (M/N/P or R, Q for 48 MHz USB), AHB/APB bus prescalers, and flash wait-states via pure datasheet math, then stores the result so the next render_framework emits real clock code instead of a TODO stub. Deterministic and honest: an unmodelled device or an infeasible target is surfaced, never guessed. Built-in profiles: STM32F401/F407/F411 and mainstream L4 (<=80 MHz); pass an explicit profile for others. Run design_framework first.",
+   "inputSchema": {
+    "properties": {
+     "load": {
+      "description": "Store the solution into the plan so render_framework uses it (default true).",
+      "type": "boolean"
+     },
+     "need_48mhz": {
+      "description": "Require an exact 48 MHz PLL output for USB/SDIO/RNG (default false).",
+      "type": "boolean"
+     },
+     "profile": {
+      "description": "Optional explicit device profile; overrides the built-in table.",
+      "type": "object"
+     },
+     "session": {
+      "description": "Target session id (default 'default').",
+      "type": "string"
+     },
+     "source": {
+      "description": "Clock source: 'HSE' or 'HSI' (default 'HSI').",
+      "type": "string"
+     },
+     "source_hz": {
+      "description": "HSE crystal frequency in Hz (required when source=HSE).",
+      "type": "integer"
+     },
+     "sysclk_hz": {
+      "description": "Target SYSCLK in Hz (e.g. 168000000).",
+      "type": "integer"
+     }
+    },
+    "type": "object"
+   },
+   "name": "solve_clock_tree",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Solve a timer's Prescaler/Period (PSC/ARR) for a target update frequency (Pillar D Tier 3). Turns intent ('TIM3 at 1 kHz') into concrete register values using the timer input clock (TIMxCLK) derived from the solved clock tree. Record a target via design_framework(design={'TIM3': {'update_hz': 1000}}) then run solve_clock_tree first, or pass timer_clock_hz directly for a what-if. Deterministic and honest: an exact target yields zero-error PSC/ARR, an inexact one yields the closest pair plus the achieved frequency and ppm error, and an unrepresentable target or an unknown timer bus is surfaced, never guessed. Injects the result into the plan so render_framework emits concrete values instead of a TODO.",
+   "inputSchema": {
+    "properties": {
+     "arr_bits": {
+      "description": "ARR width override: 16 or 32 (for 32-bit timers TIM2/TIM5).",
+      "type": "integer"
+     },
+     "bus": {
+      "description": "Override the timer's APB bus: 'apb1' or 'apb2'.",
+      "type": "string"
+     },
+     "load": {
+      "description": "Persist the solved PSC/ARR into the plan (default true).",
+      "type": "boolean"
+     },
+     "session": {
+      "description": "Target session id (default 'default').",
+      "type": "string"
+     },
+     "target_hz": {
+      "description": "Target update frequency in Hz; overrides the recorded design target (requires timer).",
+      "type": "number"
+     },
+     "timer": {
+      "description": "Timer to solve, e.g. 'TIM3'. Omit to solve every timer that has a recorded target.",
+      "type": "string"
+     },
+     "timer_clock_hz": {
+      "description": "Explicit TIMxCLK in Hz; bypasses the clock-solution + bus derivation (pure what-if).",
+      "type": "integer"
+     }
+    },
+    "type": "object"
+   },
+   "name": "solve_timer",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Register a verified device-fact pack (Pillar F) so the deterministic solvers cover a new STM32 family: its DMA request routing, irregular NVIC vectors, clock PLL profile, and timer bus/width. Facts are DATA, never guessed -- STM32F4/L4 ship built-in; add a family by supplying a validated pack (schema 'stm32-device-pack/v1') via path= (a JSON file) or inline pack=. Call with no arguments to report current coverage. Honest by design: a malformed pack is rejected with the list of problems and never half-loaded; shadowing a built-in family needs allow_override=true.",
+   "inputSchema": {
+    "properties": {
+     "allow_override": {
+      "description": "Permit shadowing a built-in family pack (default false).",
+      "type": "boolean"
+     },
+     "pack": {
+      "description": "Inline device-pack object (takes precedence over path).",
+      "type": "object"
+     },
+     "path": {
+      "description": "Path to a device-pack JSON file to load and register.",
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "load_device_pack",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Spec-to-silicon capstone (Pillar G): run the whole deterministic DESIGN half in one call. Chains the existing, individually verified tools in dependency order -- import_netlist? -> import_spec? -> design_framework -> solve_clock_tree? -> solve_timer? -> render_framework -> synthesize_acceptance -- turning a netlist plus a product spec into a flashable HAL skeleton and a machine-checked acceptance spec, then hands off to the build/verify loop. Optional stages (marked ?) run only when their input is present. Honest by construction: it GUESSES NOTHING -- it sequences verified tools and aggregates every stage's own unresolved/conflict gaps into one 'human decisions / data still needed' list. A required-stage hard error (no board, invalid input) stops with pipeline_status=blocked at that stage; expected gaps (an AF needing a pin DB, an unmodelled clock) surface as complete_with_unresolved; a clean run is complete. Operates on the session's board unless netlist= is supplied.",
+   "inputSchema": {
+    "properties": {
+     "acceptance_name": {
+      "description": "Name for the derived acceptance spec.",
+      "type": "string"
+     },
+     "af_map": {
+      "description": "Alternate-function map for GPIO AF resolution {line_or_family: {port_pin: {'PERIPH_SIG': af}}}.",
+      "type": "object"
+     },
+     "db_path": {
+      "description": "Path to a pin-capability DB for AF resolution (else STM32_GDB_MCP_PIN_DB).",
+      "type": "string"
+     },
+     "design": {
+      "description": "Peripheral config overrides merged into the design {PERIPH: {..}}.",
+      "type": "object"
+     },
+     "gpio_map": {
+      "description": "GPIO base-address map for pin acceptance checks {line_or_family: {port_letter: base_address}}.",
+      "type": "object"
+     },
+     "irq_map": {
+      "description": "IRQ-number map for NVIC acceptance checks {line_or_family: {irq_name: number}}.",
+      "type": "object"
+     },
+     "need_48mhz": {
+      "description": "Require a 48 MHz domain (USB/SDMMC) in the clock solve.",
+      "type": "boolean"
+     },
+     "netlist": {
+      "description": "Netlist to import first: {path|text, format?}. Omit to use the board already in this session.",
+      "type": "object"
+     },
+     "register_map": {
+      "description": "Clock-enable register map for acceptance placement {line_or_family: {clock: {address, bit}}}.",
+      "type": "object"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "source": {
+      "description": "Clock source for solve_clock_tree (e.g. hse/hsi).",
+      "type": "string"
+     },
+     "source_hz": {
+      "description": "Clock source frequency in Hz for solve_clock_tree.",
+      "type": "integer"
+     },
+     "spec": {
+      "description": "Product spec object to import and design from (import_spec).",
+      "type": "object"
+     },
+     "stopped_at": {
+      "description": "Symbol the acceptance spec should assert the core halts at.",
+      "type": "string"
+     },
+     "style": {
+      "description": "Render style for the framework skeleton (default hal).",
+      "type": "string"
+     },
+     "synthesize": {
+      "description": "Set false to stop after render_framework and skip acceptance synthesis (default true).",
+      "type": "boolean"
+     },
+     "sysclk_hz": {
+      "description": "Target SYSCLK in Hz; presence enables the solve_clock_tree stage.",
+      "type": "integer"
+     }
+    },
+    "type": "object"
+   },
+   "name": "run_pipeline",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Firmware log capture over a channel. action=start|stop|get|clear; channel=rtt|swo|uart (start also takes the channel's config args).",
+   "inputSchema": {
+    "oneOf": [
+     {
+      "properties": {
+       "action": {
+        "const": "start",
+        "type": "string"
+       },
+       "args": {
+        "description": "rtt/swo: command arguments.",
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       "baudrate": {
+        "description": "uart: baudrate (default 115200).",
+        "type": "integer"
+       },
+       "channel": {
+        "description": "Log channel.",
+        "enum": [
+         "rtt",
+         "swo",
+         "uart"
+        ],
+        "type": "string"
+       },
+       "command": {
+        "description": "rtt/swo: executable to launch (rtt defaults to JLinkRTTClient).",
+        "type": "string"
+       },
+       "file": {
+        "description": "swo: tail OpenOCD's ITM decode file (run setup_swo first) \u2014 no external decoder needed.",
+        "type": "string"
+       },
+       "port": {
+        "description": "uart: serial port, e.g. COM3 or /dev/ttyUSB0.",
+        "type": "string"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       },
+       "timeout": {
+        "description": "uart: read timeout seconds (default 0.1).",
+        "type": "number"
+       }
+      },
+      "required": [
+       "action",
+       "channel"
+      ],
+      "title": "start",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "stop",
+        "type": "string"
+       },
+       "channel": {
+        "enum": [
+         "rtt",
+         "swo",
+         "uart"
+        ],
+        "type": "string"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "action",
+       "channel"
+      ],
+      "title": "stop",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "get",
+        "type": "string"
+       },
+       "channel": {
+        "enum": [
+         "rtt",
+         "swo",
+         "uart"
+        ],
+        "type": "string"
+       },
+       "clear": {
+        "description": "Clear returned entries after reading.",
+        "type": "boolean"
+       },
+       "limit": {
+        "description": "Max recent entries to return.",
+        "type": "integer"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       },
+       "since_index": {
+        "description": "Only entries with index greater than this.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "action",
+       "channel"
+      ],
+      "title": "get",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "clear",
+        "type": "string"
+       },
+       "channel": {
+        "enum": [
+         "rtt",
+         "swo",
+         "uart"
+        ],
+        "type": "string"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "action",
+       "channel"
+      ],
+      "title": "clear",
+      "type": "object"
+     }
+    ],
+    "properties": {
+     "action": {
+      "description": "Which operation to perform.",
+      "enum": [
+       "start",
+       "stop",
+       "get",
+       "clear"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   },
+   "name": "logging",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Breakpoint / watchpoint management. action=set(location[,condition,temporary,commands]) | delete(number) | list | watch(expression).",
+   "inputSchema": {
+    "oneOf": [
+     {
+      "properties": {
+       "action": {
+        "const": "set",
+        "type": "string"
+       },
+       "condition": {
+        "description": "Optional C expression; break only when it is non-zero, e.g. 'count > 5'.",
+        "type": "string"
+       },
+       "ignore_count": {
+        "description": "Number of hits to ignore before stopping.",
+        "type": "integer"
+       },
+       "location": {
+        "description": "Location to break at, e.g., 'main', 'main.c:42', or '*0x08001000'.",
+        "type": "string"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       },
+       "temporary": {
+        "description": "If true, the breakpoint is deleted after its first hit.",
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "action",
+       "location"
+      ],
+      "title": "set",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "delete",
+        "type": "string"
+       },
+       "breakpoint_id": {
+        "description": "ID of the breakpoint to delete (e.g., '1').",
+        "type": "string"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "action",
+       "breakpoint_id"
+      ],
+      "title": "delete",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "list",
+        "type": "string"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "action"
+      ],
+      "title": "list",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "access_type": {
+        "description": "Read (r), Write (w), or Access (a).",
+        "enum": [
+         "r",
+         "w",
+         "a"
+        ],
+        "type": "string"
+       },
+       "action": {
+        "const": "watch",
+        "type": "string"
+       },
+       "location": {
+        "description": "Variable or address to watch.",
+        "type": "string"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "action",
+       "location",
+       "access_type"
+      ],
+      "title": "watch",
+      "type": "object"
+     }
+    ],
+    "properties": {
+     "action": {
+      "description": "Which operation to perform.",
+      "enum": [
+       "set",
+       "delete",
+       "list",
+       "watch"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   },
+   "name": "breakpoint",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Evaluate C/GDB expressions. action=assert(expressions) | capture(expressions or table={index_range,columns}) | compare(expressions, action_to_run_between).",
+   "inputSchema": {
+    "oneOf": [
+     {
+      "properties": {
+       "action": {
+        "const": "assert",
+        "type": "string"
+       },
+       "assertions": {
+        "items": {
+         "properties": {
+          "expected": {},
+          "expression": {
+           "type": "string"
+          },
+          "operator": {
+           "enum": [
+            "==",
+            "!=",
+            ">",
+            ">=",
+            "<",
+            "<="
+           ],
+           "type": "string"
+          }
+         },
+         "required": [
+          "expression",
+          "expected"
+         ],
+         "type": "object"
+        },
+        "type": "array"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "action",
+       "assertions"
+      ],
+      "title": "assert",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "capture",
+        "type": "string"
+       },
+       "expressions": {
+        "description": "GDB/C expressions to evaluate.",
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       },
+       "table": {
+        "description": "Optional indexed table request, e.g. columns=['count'], index_range=[2,6].",
+        "properties": {
+         "columns": {
+          "description": "Expression prefixes; each cell reads prefix[index].",
+          "items": {
+           "type": "string"
+          },
+          "type": "array"
+         },
+         "index_range": {
+          "description": "Inclusive [start, end] index range.",
+          "items": {
+           "type": "integer"
+          },
+          "type": "array"
+         }
+        },
+        "type": "object"
+       }
+      },
+      "required": [
+       "action"
+      ],
+      "title": "capture",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "action": {
+        "enum": [
+         "step_over",
+         "step_into",
+         "continue",
+         "halt",
+         "reset_halt"
+        ],
+        "type": "string"
+       },
+       "expressions": {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "action",
+       "expressions"
+      ],
+      "title": "compare",
+      "type": "object"
+     }
+    ],
+    "properties": {
+     "action": {
+      "description": "Which operation to perform.",
+      "enum": [
+       "assert",
+       "capture",
+       "compare"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   },
+   "name": "expressions",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Core-dump capture / load. action=capture(path) | load(path).",
+   "inputSchema": {
+    "oneOf": [
+     {
+      "properties": {
+       "action": {
+        "const": "capture",
+        "type": "string"
+       },
+       "path": {
+        "description": "Output path for the core file.",
+        "type": "string"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "action",
+       "path"
+      ],
+      "title": "capture",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "load",
+        "type": "string"
+       },
+       "path": {
+        "description": "Path to the core file.",
+        "type": "string"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "action",
+       "path"
+      ],
+      "title": "load",
+      "type": "object"
+     }
+    ],
+    "properties": {
+     "action": {
+      "description": "Which operation to perform.",
+      "enum": [
+       "capture",
+       "load"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   },
+   "name": "coredump",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "GDB operation timeouts. action=get | set(connect,reset,memory,...).",
+   "inputSchema": {
+    "oneOf": [
+     {
+      "properties": {
+       "action": {
+        "const": "get",
+        "type": "string"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "action"
+      ],
+      "title": "get",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "set",
+        "type": "string"
+       },
+       "overrides": {
+        "description": "Map of timeout name -> seconds, e.g. {\"memory\": 4.0, \"connect\": 8.0}.",
+        "type": "object"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "action",
+       "overrides"
+      ],
+      "title": "set",
+      "type": "object"
+     }
+    ],
+    "properties": {
+     "action": {
+      "description": "Which operation to perform.",
+      "enum": [
+       "get",
+       "set"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   },
+   "name": "timeouts",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Debug-config file (.json) management. action=load(path) | save(path) | validate(path).",
+   "inputSchema": {
+    "oneOf": [
+     {
+      "properties": {
+       "action": {
+        "const": "load",
+        "type": "string"
+       },
+       "path": {
+        "description": "Path to a YAML debug config file.",
+        "type": "string"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "action",
+       "path"
+      ],
+      "title": "load",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "save",
+        "type": "string"
+       },
+       "config": {
+        "description": "Config object to save.",
+        "type": "object"
+       },
+       "path": {
+        "description": "Destination YAML config path.",
+        "type": "string"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "action",
+       "path",
+       "config"
+      ],
+      "title": "save",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "validate",
+        "type": "string"
+       },
+       "config": {
+        "description": "Config object to validate.",
+        "type": "object"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "action",
+       "config"
+      ],
+      "title": "validate",
+      "type": "object"
+     }
+    ],
+    "properties": {
+     "action": {
+      "description": "Which operation to perform.",
+      "enum": [
+       "load",
+       "save",
+       "validate"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   },
+   "name": "debug_config",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Active debug profile (mcu/elf/svd/probe). action=get | set(mcu,elf_path,svd_path,...).",
+   "inputSchema": {
+    "oneOf": [
+     {
+      "properties": {
+       "action": {
+        "const": "get",
+        "type": "string"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "action"
+      ],
+      "title": "get",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "set",
+        "type": "string"
+       },
+       "board": {
+        "type": "string"
+       },
+       "elf_path": {
+        "type": "string"
+       },
+       "mcu": {
+        "type": "string"
+       },
+       "notes": {
+        "type": "string"
+       },
+       "probe": {
+        "type": "string"
+       },
+       "project_root": {
+        "type": "string"
+       },
+       "server_args": {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       "server_type": {
+        "enum": [
+         "openocd",
+         "stlink",
+         "jlink"
+        ],
+        "type": "string"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       },
+       "svd_path": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "action"
+      ],
+      "title": "set",
+      "type": "object"
+     }
+    ],
+    "properties": {
+     "action": {
+      "description": "Which operation to perform.",
+      "enum": [
+       "get",
+       "set"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   },
+   "name": "debug_profile",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Read CPU register groups. what=core | fault(CFSR/HFSR decode) | cycle(DWT cycle counter).",
+   "inputSchema": {
+    "oneOf": [
+     {
+      "properties": {
+       "include_raw": {
+        "description": "Include the raw GDB transcript (default false).",
+        "type": "boolean"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       },
+       "what": {
+        "const": "core",
+        "type": "string"
+       }
+      },
+      "required": [
+       "what"
+      ],
+      "title": "core",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       },
+       "what": {
+        "const": "fault",
+        "type": "string"
+       }
+      },
+      "required": [
+       "what"
+      ],
+      "title": "fault",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "enable": {
+        "description": "If true, enable and zero the counter before reading.",
+        "type": "boolean"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       },
+       "what": {
+        "const": "cycle",
+        "type": "string"
+       }
+      },
+      "required": [
+       "what"
+      ],
+      "title": "cycle",
+      "type": "object"
+     }
+    ],
+    "properties": {
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "what": {
+      "description": "Which operation to perform.",
+      "enum": [
+       "core",
+       "fault",
+       "cycle"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "what"
+    ],
+    "type": "object"
+   },
+   "name": "read_registers",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Symbol / type introspection. what=size(type) | type(name) | address(symbol) | resolve(address) | functions(regex) | variables.",
+   "inputSchema": {
+    "oneOf": [
+     {
+      "properties": {
+       "expr": {
+        "description": "Type or expression to size, e.g. 'struct foo'.",
+        "type": "string"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       },
+       "what": {
+        "const": "size",
+        "type": "string"
+       }
+      },
+      "required": [
+       "what",
+       "expr"
+      ],
+      "title": "size",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "expr": {
+        "description": "Expression or type name, e.g. 'my_struct' or 'g_state'.",
+        "type": "string"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       },
+       "what": {
+        "const": "type",
+        "type": "string"
+       }
+      },
+      "required": [
+       "what",
+       "expr"
+      ],
+      "title": "type",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       },
+       "symbol": {
+        "description": "Symbol name, e.g. 'g_state'.",
+        "type": "string"
+       },
+       "what": {
+        "const": "address",
+        "type": "string"
+       }
+      },
+      "required": [
+       "what",
+       "symbol"
+      ],
+      "title": "address",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "expr": {
+        "description": "Address or expression to resolve, e.g. '$pc' or '0x08001234'.",
+        "type": "string"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       },
+       "what": {
+        "const": "resolve",
+        "type": "string"
+       }
+      },
+      "required": [
+       "what",
+       "expr"
+      ],
+      "title": "resolve",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "regex": {
+        "description": "Optional regex to filter function names.",
+        "type": "string"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       },
+       "what": {
+        "const": "functions",
+        "type": "string"
+       }
+      },
+      "required": [
+       "what"
+      ],
+      "title": "functions",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "regex": {
+        "description": "Optional regex to filter variable names.",
+        "type": "string"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       },
+       "what": {
+        "const": "variables",
+        "type": "string"
+       }
+      },
+      "required": [
+       "what"
+      ],
+      "title": "variables",
+      "type": "object"
+     }
+    ],
+    "properties": {
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "what": {
+      "description": "Which operation to perform.",
+      "enum": [
+       "size",
+       "type",
+       "address",
+       "resolve",
+       "functions",
+       "variables"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "what"
+    ],
+    "type": "object"
+   },
+   "name": "inspect_symbol",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Typed (struct-aware) memory access. action=read(address,type) | write(address,type,value).",
+   "inputSchema": {
+    "oneOf": [
+     {
+      "properties": {
+       "action": {
+        "const": "read",
+        "type": "string"
+       },
+       "address": {
+        "description": "Hex address to read from, e.g., '0x20000000'.",
+        "type": "string"
+       },
+       "count": {
+        "description": "Number of elements to read.",
+        "type": "integer"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       },
+       "width_bits": {
+        "description": "Element width in bits.",
+        "enum": [
+         8,
+         16,
+         32,
+         64
+        ],
+        "type": "integer"
+       }
+      },
+      "required": [
+       "action",
+       "address",
+       "width_bits",
+       "count"
+      ],
+      "title": "read",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "write",
+        "type": "string"
+       },
+       "address": {
+        "description": "Hex address to write to, e.g., '0x20000000'.",
+        "type": "string"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       },
+       "value": {
+        "description": "Value to write, e.g., '0x12345678'.",
+        "type": "string"
+       },
+       "width_bits": {
+        "description": "Element width in bits.",
+        "enum": [
+         8,
+         16,
+         32,
+         64
+        ],
+        "type": "integer"
+       }
+      },
+      "required": [
+       "action",
+       "address",
+       "value",
+       "width_bits"
+      ],
+      "title": "write",
+      "type": "object"
+     }
+    ],
+    "properties": {
+     "action": {
+      "description": "Which operation to perform.",
+      "enum": [
+       "read",
+       "write"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   },
+   "name": "typed_memory",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Memory-write guardrail. action=policy(mode,allow) | audit.",
+   "inputSchema": {
+    "oneOf": [
+     {
+      "properties": {
+       "action": {
+        "const": "policy",
+        "type": "string"
+       },
+       "add_allow": {
+        "description": "Regions to explicitly allow, overriding protection.",
+        "items": {
+         "properties": {
+          "end": {
+           "type": "integer"
+          },
+          "name": {
+           "type": "string"
+          },
+          "start": {
+           "type": "integer"
+          }
+         },
+         "type": "object"
+        },
+        "type": "array"
+       },
+       "add_protected": {
+        "description": "Additional regions to protect from writes.",
+        "items": {
+         "properties": {
+          "end": {
+           "type": "integer"
+          },
+          "name": {
+           "type": "string"
+          },
+          "start": {
+           "type": "integer"
+          }
+         },
+         "type": "object"
+        },
+        "type": "array"
+       },
+       "mode": {
+        "description": "Guard mode.",
+        "enum": [
+         "enforce",
+         "dry_run"
+        ],
+        "type": "string"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "action"
+      ],
+      "title": "policy",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "audit",
+        "type": "string"
+       },
+       "limit": {
+        "description": "Return only the most recent N entries.",
+        "type": "integer"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "action"
+      ],
+      "title": "audit",
+      "type": "object"
+     }
+    ],
+    "properties": {
+     "action": {
+      "description": "Which operation to perform.",
+      "enum": [
+       "policy",
+       "audit"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   },
+   "name": "write_guard",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "One-shot diagnostic snapshot. scope=full(regs+stack+faults) | rtos(task/queue state).",
+   "inputSchema": {
+    "oneOf": [
+     {
+      "properties": {
+       "include_logs": {
+        "description": "Include captured RTT logs.",
+        "type": "boolean"
+       },
+       "include_project": {
+        "description": "Include project discovery context.",
+        "type": "boolean"
+       },
+       "include_rtos": {
+        "description": "Include FreeRTOS runtime context.",
+        "type": "boolean"
+       },
+       "log_limit": {
+        "description": "Maximum number of RTT log entries to include.",
+        "type": "integer"
+       },
+       "project_root": {
+        "description": "Optional project root for discovery.",
+        "type": "string"
+       },
+       "scope": {
+        "const": "full",
+        "type": "string"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "scope"
+      ],
+      "title": "full",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "scope": {
+        "const": "rtos",
+        "type": "string"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "scope"
+      ],
+      "title": "rtos",
+      "type": "object"
+     }
+    ],
+    "properties": {
+     "scope": {
+      "description": "Which operation to perform.",
+      "enum": [
+       "full",
+       "rtos"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "scope"
+    ],
+    "type": "object"
+   },
+   "name": "snapshot",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Stack-frame navigation. action=select(number) | source(around a frame) | variables(of selected frame).",
+   "inputSchema": {
+    "oneOf": [
+     {
+      "properties": {
+       "action": {
+        "const": "select",
+        "type": "string"
+       },
+       "level": {
+        "description": "Frame level, 0 is the innermost/current frame.",
+        "type": "integer"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "action",
+       "level"
+      ],
+      "title": "select",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "source",
+        "type": "string"
+       },
+       "count": {
+        "description": "Approximate number of lines (default 10).",
+        "type": "integer"
+       },
+       "location": {
+        "description": "Where to list around. Omit to continue from current.",
+        "type": "string"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "action"
+      ],
+      "title": "source",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "variables",
+        "type": "string"
+       },
+       "include_raw": {
+        "description": "Include the raw GDB transcript (default false).",
+        "type": "boolean"
+       },
+       "level": {
+        "description": "Optional frame level to select first (0 = innermost).",
+        "type": "integer"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "action"
+      ],
+      "title": "variables",
+      "type": "object"
+     }
+    ],
+    "properties": {
+     "action": {
+      "description": "Which operation to perform.",
+      "enum": [
+       "select",
+       "source",
+       "variables"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   },
+   "name": "frame",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Session/transport diagnostics. what=health | events(recent GDB/MI) | server_logs(GDB-server stderr).",
+   "inputSchema": {
+    "oneOf": [
+     {
+      "properties": {
+       "reconnect": {
+        "description": "If true, try to reconnect the GDB client to the running server.",
+        "type": "boolean"
+       },
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       },
+       "what": {
+        "const": "health",
+        "type": "string"
+       }
+      },
+      "required": [
+       "what"
+      ],
+      "title": "health",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       },
+       "what": {
+        "const": "events",
+        "type": "string"
+       }
+      },
+      "required": [
+       "what"
+      ],
+      "title": "events",
+      "type": "object"
+     },
+     {
+      "properties": {
+       "session": {
+        "description": "Optional debug-session name. Omit for the default target.",
+        "type": "string"
+       },
+       "what": {
+        "const": "server_logs",
+        "type": "string"
+       }
+      },
+      "required": [
+       "what"
+      ],
+      "title": "server_logs",
+      "type": "object"
+     }
+    ],
+    "properties": {
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "what": {
+      "description": "Which operation to perform.",
+      "enum": [
+       "health",
+       "events",
+       "server_logs"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "what"
+    ],
+    "type": "object"
+   },
+   "name": "session_diagnostics",
+   "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {},
+     "error": {
+      "anyOf": [
+       {
+        "type": "null"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "code": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "message": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "message",
+         "code"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "ok": {
+      "type": "boolean"
+     },
+     "raw_response": {},
+     "suggested_next_actions": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "ok",
+     "data",
+     "error",
+     "raw_response",
+     "suggested_next_actions"
+    ],
+    "type": "object"
+   }
+  }
+ ]
+}

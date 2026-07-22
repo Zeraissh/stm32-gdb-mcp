@@ -1,61 +1,8 @@
 import pytest
+from conftest import FakeGdbClient as FakeClient
 
 from mcp_server.composites import capture_state, debug_until, flash_and_run, run_for_duration
 from mcp_server.sampling import sample_expressions
-
-
-class FakeClient:
-    """Records calls and returns canned, already-decoded values."""
-
-    def __init__(self, stop_reason="breakpoint-hit"):
-        self.calls = []
-        self._stop_reason = stop_reason
-        self.expressions = {"rx_count": "42"}
-
-    def set_breakpoint(self, location, condition=None, temporary=False, ignore_count=None):
-        self.calls.append(("set_breakpoint", location, condition, temporary, ignore_count))
-        return [{"message": "bp"}]
-
-    def run_and_wait(self, timeout_sec):
-        self.calls.append(("run_and_wait", timeout_sec))
-        return {
-            "stopped": self._stop_reason != "timeout",
-            "reason": self._stop_reason,
-            "frame": {"func": "trigger_divzero", "file": "main.c", "line": 21, "addr": "0x08000046"},
-            "raw_response": [],
-        }
-
-    def read_call_stack_decoded(self):
-        self.calls.append(("read_call_stack_decoded",))
-        return [{"level": 0, "func": "trigger_divzero", "file": "main.c", "line": 21, "addr": "0x08000046"}]
-
-    def read_frame_variables_decoded(self, level=None):
-        self.calls.append(("read_frame_variables_decoded", level))
-        return {"g_divisor": "0"}
-
-    def read_core_registers_decoded(self):
-        self.calls.append(("read_core_registers_decoded",))
-        return {"pc": "0x08000046", "lr": "0xfffffff9", "sp": "0x200040b0"}
-
-    def load_firmware(self, path):
-        self.calls.append(("load_firmware", path))
-        return [{"message": "flashed"}]
-
-    def reset_halt(self, command="monitor reset halt"):
-        self.calls.append(("reset_halt", command))
-        return [{"message": "reset"}]
-
-    def continue_execution(self):
-        self.calls.append(("continue_execution",))
-        return [{"message": "running"}]
-
-    def halt_execution(self):
-        self.calls.append(("halt_execution",))
-        return [{"message": "stopped"}]
-
-    def read_variable(self, expression):
-        self.calls.append(("read_variable", expression))
-        return [{"payload": {"value": self.expressions[expression]}}]
 
 
 def test_debug_until_sets_temp_conditional_breakpoint_runs_and_gathers_context():

@@ -1,5 +1,68 @@
 # Changelog / 更新日志
 
+## [0.6.0] - 2026-07-22
+
+Internal architecture release: the 3,600-line server.py monolith is decomposed into a
+tool registry plus 16 domain modules. **The advertised tool surface is byte-identical**
+(pinned by a golden snapshot test) — no client-visible behavior changes.
+
+内部架构版本:3,600 行的 server.py 巨石文件拆分为工具注册表 + 16 个领域模块。
+**对外工具面逐字节一致**(由金快照测试锁定)——客户端可见行为无任何变化。
+
+### Architecture / 架构
+
+- New `mcp_server/tools/` package: `@register(Tool(...))` co-locates every tool schema
+  with its handler in a domain module (session, firmware, execution, breakpoint, memory,
+  inspect, fault, rtos, logging, peripheral, config, meta, board, acceptance, design,
+  pipeline); `TOOL_ORDER` pins the advertised order. server.py shrinks from 3,651 to
+  ~500 lines and remains the composition root: session resolution, per-session locking,
+  MERGED-family translation, error envelopes, and batch/call/run_scenario. /
+  新增 `mcp_server/tools/` 包:`@register` 将每个工具的 schema 与 handler 同置于领域
+  模块;`TOOL_ORDER` 锁定广告顺序。server.py 从 3,651 行缩至约 500 行,仅保留组合根职责。
+- Handlers receive a per-dispatch `ToolContext` built from server globals at call time,
+  preserving existing test monkeypatch surfaces and the recovery/journaling semantics. /
+  handler 通过每次调度构建的 `ToolContext` 访问会话对象,保留既有测试 patch 面与恢复/
+  日志语义。
+- A golden snapshot test pins the full advertised surface (names, order, schemas,
+  annotations, compact mode); mypy now covers the entire src tree with no exemptions,
+  and CI enforces a coverage floor (81%). / 金快照测试锁定完整工具面;mypy 全树无豁免,
+  CI 覆盖率下限 81%。
+
+## [0.5.1] - 2026-07-22
+
+Reliability polish: every GDB operation deadline is now centrally configurable, and several
+small resource-management gaps are closed. No tool schemas or defaults changed.
+
+可靠性打磨:所有 GDB 操作超时现已全部集中可配置,并修补了若干资源管理小缺口。
+工具 schema 与默认值均无变化。
+
+### Timeouts / 超时
+
+- All previously hardcoded GDB deadlines in `gdb_client` (symbols, monitor, breakpoint list,
+  step/finish, stack, source, disassembly, symbol lists, evaluation, coredump capture/load,
+  flash verify) now route through named `TimeoutConfig` entries, so `set_timeouts` can widen
+  any of them once for a slow probe and replayed sessions stay deterministic. Default values
+  are unchanged. / `gdb_client` 中所有硬编码超时(符号加载、monitor、断点列表、单步/finish、
+  栈、源码、反汇编、符号列表、表达式求值、coredump 采集/加载、烧录校验)全部改走命名
+  `TimeoutConfig`,`set_timeouts` 可一次性放宽,重放会话保持确定性;默认值不变。
+- A regression test asserts every timeout name used by `gdb_client` exists in `DEFAULTS`,
+  guarding against silent fallback to the 1s default. / 新增回归测试断言 `gdb_client` 使用的
+  超时名全部存在于 `DEFAULTS`,防止静默回退到 1 秒默认值。
+
+### Robustness / 健壮性
+
+- PC-sample symbolization (`profile_pc`) caches `info symbol` results (LRU, 4096 entries),
+  cleared whenever the symbol table changes — repeated profiling no longer re-queries hot
+  addresses. / PC 采样符号化新增 LRU 缓存(4096 条,符号表变更即清空),重复分析不再重复
+  查询热点地址。
+- Named-session port allocation probes each candidate with a real bind, skipping ports held
+  by zombie OpenOCD or foreign processes, and fails loudly after 100 slots instead of looping.
+  / 命名会话端口分配改为真实 bind 探测,跳过被僵尸 OpenOCD 或外部进程占用的端口,超过
+  100 个槽位时明确报错而非死循环。
+- `close_session` now prunes the closed session's dispatch lock, so `_session_locks` no
+  longer grows without bound. / `close_session` 现在会清理已关闭会话的调度锁,
+  `_session_locks` 不再无限增长。
+
 ## [0.5.0] - 2026-07-21
 
 This update converges installation, configuration, MCP contracts, and hardware diagnostics.

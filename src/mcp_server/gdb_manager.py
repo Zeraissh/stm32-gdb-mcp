@@ -3,6 +3,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import sys
 import threading
 import time
 
@@ -24,7 +25,7 @@ class GdbServerManager:
                 if len(self.log_buffer) > 1000:
                     self.log_buffer.pop(0)
 
-    def start(self, server_type: str, args: list[str] = None):
+    def start(self, server_type: str, args: list[str] | None = None):
         if self.process and self.process.poll() is None:
             raise RuntimeError("A GDB server is already running.")
 
@@ -62,8 +63,13 @@ class GdbServerManager:
 
         self.log_buffer = []
         
-        # We create a new process group so we can send CTRL_BREAK_EVENT on Windows
-        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
+        # We create a new process group so we can send CTRL_BREAK_EVENT on Windows.
+        # sys.platform in an if-statement (not os.name, not a ternary) so mypy skips the
+        # Windows-only attribute when checking other platforms.
+        if sys.platform == "win32":
+            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            creationflags = 0
         
         # stdin=DEVNULL is critical: the MCP server talks JSON-RPC over its own stdin,
         # so a spawned child must NEVER inherit it (it would steal protocol bytes and

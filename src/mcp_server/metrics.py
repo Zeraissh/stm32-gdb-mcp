@@ -7,7 +7,7 @@ fail, where the time goes — without an external system.
 
 
 def compute_metrics(entries) -> dict:
-    by_tool = {}
+    by_tool: dict[str, dict[str, float]] = {}
     for entry in entries or []:
         tool = entry.get("tool")
         stats = by_tool.setdefault(tool, {"calls": 0, "ok": 0, "failed": 0, "total_ms": 0.0})

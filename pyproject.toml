@@ -1,12 +1,12 @@
 [project]
 name = "stm32-gdb-mcp"
-version = "0.5.0"
+version = "0.6.0"
 description = "MCP server for STM32 debugging with GDB"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "mcp>=1.1.2",
+    "mcp>=1.7.0,<2",
     "pygdbmi>=0.11.0.0",
     "pyserial>=3.5",
     "PyYAML>=6.0",
@@ -15,8 +15,12 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "build>=1.2",
+    "mypy>=1.14",
     "pytest>=8",
+    "pytest-cov>=6",
     "ruff>=0.8",
+    "types-PyYAML",
+    "types-pyserial",
 ]
 
 [build-system]
@@ -66,3 +70,14 @@ exclude = [
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src"]
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["pygdbmi.*", "serial.*"]
+ignore_missing_imports = true

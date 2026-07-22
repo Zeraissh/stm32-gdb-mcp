@@ -16,7 +16,7 @@ async def _run_hil_smoke(config: dict, call_tool=None) -> dict:
         raise ValueError("HIL config must define the expected MCU in 'mcu'.")
 
     hil = config.get("hil", {})
-    steps = []
+    steps: list[dict] = []
     started = False
     result = {
         "ok": False,

@@ -176,7 +176,7 @@ def build_board_description(
             warnings.append(f"Multiple MCU candidates ({refs}); using {candidates[0].get('ref')}.")
         mcu = _build_mcu(candidates[0], nets)
 
-    power = {"power": [], "ground": []}
+    power: dict[str, list] = {"power": [], "ground": []}
     for net in nets:
         kind = classify_power_net(net.get("name"))
         if kind:

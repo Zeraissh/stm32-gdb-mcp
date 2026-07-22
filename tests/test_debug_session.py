@@ -1,3 +1,6 @@
+import pytest
+
+import mcp_server.debug_session as debug_session_module
 from mcp_server.debug_session import DebugSession, SessionManager
 
 
@@ -47,6 +50,22 @@ def test_manager_does_not_reuse_a_live_sessions_port_after_middle_close():
     assert m.close("rackA") is True
 
     assert m.get("rackC").gdb_port != rack_b_port
+
+
+def test_manager_skips_ports_held_by_foreign_processes(monkeypatch):
+    # A zombie OpenOCD (or anything else) listening on 3343 must not be handed out.
+    monkeypatch.setattr(debug_session_module, "_port_is_free", lambda port: port != 3343)
+
+    m = SessionManager()
+    assert m.get("rackA").gdb_port == 3353
+
+
+def test_manager_raises_clearly_when_no_port_slot_is_free(monkeypatch):
+    monkeypatch.setattr(debug_session_module, "_port_is_free", lambda port: False)
+
+    m = SessionManager()
+    with pytest.raises(RuntimeError, match="No free GDB-server port"):
+        m.get("rackA")
 
 
 def test_session_teardown_stops_debug_and_all_log_readers():

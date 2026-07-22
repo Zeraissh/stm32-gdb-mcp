@@ -7,6 +7,7 @@ rather than high-speed oscilloscope-style acquisition.
 
 import math
 import time
+from typing import Any
 
 from .debug_experiments import capture_expressions
 
@@ -101,7 +102,7 @@ def _validate_sample_budget(duration: float, interval: float, max_samples: int) 
 
 
 def _sample_row(index: int, elapsed_sec: float, capture: dict) -> dict:
-    row = {
+    row: dict[str, Any] = {
         "index": index,
         "t_sec": round(max(0.0, elapsed_sec), 6),
         "values": {},
