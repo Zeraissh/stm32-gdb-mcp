@@ -40,12 +40,13 @@ from .framework_solver import build_framework_plan, framework_view, merge_af_map
 from .freertos_inspector import FreeRTOSInspector
 from .gdb_client import GdbClientManager
 from .gdb_manager import GdbServerManager
-from .issue_reporter import DEFAULT_REPO, build_issue_body, file_issue, issue_fingerprint
+
+# file_issue stays a module global for the same reason as the composites above.
+from .issue_reporter import file_issue  # noqa: F401
 from .log_reader import FileLogReader, ProcessLogReader, SerialLogReader
 from .loop_control import loop_decision, new_loop_state, summarize_loop
 from .loop_orchestrator import GdbLoopSteps, run_iteration
 from .memory_guard import MemoryWriteGuard
-from .metrics import compute_metrics
 from .netlist_parser import load_netlist_file, parse_netlist
 from .openocd_config import detect_probe, find_openocd_scripts, suggest_server_args
 from .provenance import annotate_spec_sources
@@ -53,7 +54,6 @@ from .reliability import retry_call
 from .scenario import load_scenario, replay_scenario, step_summary
 from .self_check import evaluate_self_check
 from .server_metadata import SERVER_INSTRUCTIONS
-from .server_metadata import mcp_version as _mcp_version
 from .session_journal import SessionJournal
 from .spec_model import build_design
 from .svd_parser import SVDParser
@@ -333,17 +333,7 @@ async def handle_list_tools() -> list[Tool]:
                 "required": ["tool"]
             }
         ),
-        Tool(
-            name="tool_help",
-            description="Returns descriptions and complete schemas for full-surface tools, including tools hidden in compact mode.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "description": "Exact tool name."},
-                    "query": {"type": "string", "description": "Case-insensitive name/description search."},
-                },
-            },
-        ),
+        # (tool_help moved to tools/meta_tools.py)
         Tool(
             name="recover_session",
             description="Recovers a dropped or wedged session: cleanly tears down the GDB client and "
@@ -397,24 +387,7 @@ async def handle_list_tools() -> list[Tool]:
         # --- Step 7: Tracing ---
         # (track_variable moved to tools/memory_tools.py)
         # --- Phase 2: determinism (journal + replayable scenarios) ---
-        Tool(
-            name="get_session",
-            description="Returns this session's record by view: 'journal' (every tool call with "
-                        "args/ok/summary/duration; supports limit), 'timeline' (compact human-readable "
-                        "replay), or 'metrics' (per-tool call counts, success/failure, durations).",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "view": {"type": "string", "enum": ["journal", "timeline", "metrics"], "description": "Which view (default journal)."},
-                    "limit": {"type": "integer", "description": "journal: return only the most recent N entries."}
-                }
-            }
-        ),
-        Tool(
-            name="clear_session_journal",
-            description="Clears the session journal (keeps the run-id).",
-            inputSchema={"type": "object", "properties": {}}
-        ),
+        # (get_session .. clear_session_journal moved to tools/meta_tools.py)
         Tool(
             name="list_sessions",
             description="Lists all debug target sessions (the 'default' one plus any named) with "
@@ -434,44 +407,7 @@ async def handle_list_tools() -> list[Tool]:
                 "required": ["session_id"]
             }
         ),
-        Tool(
-            name="get_timeouts",
-            description="Returns the current named GDB operation timeouts (connect, reset, memory, "
-                        "registers, source, run, download).",
-            inputSchema={"type": "object", "properties": {}}
-        ),
-        Tool(
-            name="set_timeouts",
-            description="Overrides one or more named timeouts (positive seconds). Useful for a slow "
-                        "or flaky probe. Recorded in the journal so replays are deterministic.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "overrides": {
-                        "type": "object",
-                        "description": "Map of timeout name -> seconds, e.g. {\"memory\": 4.0, \"connect\": 8.0}."
-                    }
-                },
-                "required": ["overrides"]
-            }
-        ),
-        Tool(
-            name="report_issue",
-            description="Files a GitHub issue about an MCP problem from THIS session — auto-bundling "
-                        "the session journal, metrics, and MCP version into a structured report (via "
-                        "the gh CLI). Call this when a tool misbehaves or confuses you. Deduplicated "
-                        "per session so retries don't spam. Defaults to the stm32-gdb-mcp repo.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string", "description": "Short issue title, e.g. '[agent] start_debug_session ignores server_args'."},
-                    "description": {"type": "string", "description": "What you were doing and what went wrong."},
-                    "env": {"type": "string", "description": "Agent/IDE + model, e.g. 'Cursor / deepseek-v4-pro'."},
-                    "repo": {"type": "string", "description": "owner/repo to file under (default the MCP repo)."}
-                },
-                "required": ["title", "description"]
-            }
-        ),
+        # (get_timeouts .. report_issue moved to tools/meta_tools.py)
         # (export_debug_report moved to tools/fault_tools.py)
         Tool(
             name="run_scenario",
@@ -956,27 +892,7 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
         if _spec_entry is not None:
             return _spec_entry.handler(_make_context(_sess), arguments)
 
-        if name == "tool_help":
-            requested_name = arguments.get("name")
-            query = (arguments.get("query") or "").strip().lower()
-            if requested_name:
-                matches = [_tool_catalog[requested_name]] if requested_name in _tool_catalog else []
-            elif query:
-                matches = [
-                    tool
-                    for tool in _tool_catalog.values()
-                    if query in tool.name.lower() or query in (tool.description or "").lower()
-                ]
-            else:
-                return [content_error(
-                    "tool_help requires name or query.",
-                    code="missing_argument",
-                )]
-            return [content_success({
-                "count": len(matches),
-                "tools": [tool.model_dump(by_alias=True, exclude_none=True) for tool in matches],
-            })]
-
+        # (tool_help moved to tools/meta_tools.py)
         if name == "start_debug_session":
             profile = debug_profile.get()
             server_type = arguments.get("server_type") or profile.get("server_type")
@@ -1221,21 +1137,7 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
             logs = gdb_manager.get_logs()
             return [content_success({"logs": logs, "message": "GDB server logs captured" if logs else "No GDB server logs captured"})]
 
-        elif name == "get_session":
-            view = arguments.get("view", "journal")
-            if view == "timeline":
-                return [content_success({"run_id": session_journal.run_id, "timeline": session_journal.timeline()})]
-            if view == "metrics":
-                return [content_success({"run_id": session_journal.run_id, **compute_metrics(session_journal.get())})]
-            if view == "journal":
-                entries = session_journal.get(limit=arguments.get("limit"))
-                return [content_success({"run_id": session_journal.run_id, "count": len(entries), "entries": entries})]
-            raise ValueError(f"Unknown session view '{view}'. Use journal, timeline, or metrics.")
-
-        elif name == "clear_session_journal":
-            session_journal.clear()
-            return [content_success({"message": "Session journal cleared", "run_id": session_journal.run_id})]
-
+        # (get_session .. clear_session_journal moved to tools/meta_tools.py)
         elif name == "list_sessions":
             g = globals()
             default_row = {
@@ -1263,40 +1165,7 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                 "closed": closed, "session_id": sid,
             })]
 
-        elif name == "get_timeouts":
-            return [content_success({"timeouts": gdb_client.timeouts.as_dict()})]
-
-        elif name == "set_timeouts":
-            updated = gdb_client.timeouts.set(arguments["overrides"])
-            return [content_success({"message": "Timeouts updated", "timeouts": updated})]
-
-        elif name == "report_issue":
-            title = arguments["title"]
-            fp = issue_fingerprint(title)
-            if fp in _reported_issues:
-                return [content_success({
-                    "message": "Already reported this session (deduplicated)",
-                    "url": _reported_issues[fp],
-                })]
-            body = build_issue_body(
-                description=arguments.get("description"),
-                env=arguments.get("env"),
-                version=_mcp_version(),
-                journal=session_journal.get(limit=25),
-                metrics=compute_metrics(session_journal.get()),
-            )
-            repo = arguments.get("repo") or DEFAULT_REPO
-            result = file_issue(repo, title, body)
-            if result["ok"]:
-                _reported_issues[fp] = result["url"]
-                return [content_success({"message": "Issue filed", "url": result["url"], "repo": repo})]
-            return [content_error(
-                f"Could not file the issue automatically: {result['error']}",
-                code="issue_filing_failed",
-                raw_response={"repo": repo, "title": title, "prepared_body": result.get("body")},
-                suggested_next_actions=["get_session"],
-            )]
-
+        # (get_timeouts .. report_issue moved to tools/meta_tools.py)
         # (run_to_line moved to tools/execution_tools.py)
         # (verify_flash moved to tools/firmware_tools.py)
         elif name == "import_netlist":
