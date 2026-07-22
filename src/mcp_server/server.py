@@ -453,40 +453,7 @@ async def handle_list_tools() -> list[Tool]:
             }
         ),
         # --- Step 5: Core Debug Interaction ---
-        Tool(
-            name="set_breakpoint",
-            description="Sets a breakpoint at a function, line, or address. Supports an optional "
-                        "condition (break only when true), temporary (auto-delete on first hit), "
-                        "and ignore_count (skip N hits) so the AI can set a hypothesis trap and resume.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "location": {"type": "string", "description": "Location to break at, e.g., 'main', 'main.c:42', or '*0x08001000'."},
-                    "condition": {"type": "string", "description": "Optional C expression; break only when it is non-zero, e.g. 'count > 5'."},
-                    "temporary": {"type": "boolean", "description": "If true, the breakpoint is deleted after its first hit."},
-                    "ignore_count": {"type": "integer", "description": "Number of hits to ignore before stopping."}
-                },
-                "required": ["location"]
-            }
-        ),
-        Tool(
-            name="list_breakpoints",
-            description="Lists breakpoints with their HIT COUNTS. A hit_count of 0 means the code "
-                        "path was never reached — so a run_and_wait timeout means the precondition "
-                        "(a flag/state) to get there was not satisfied. Use this instead of retrying.",
-            inputSchema={"type": "object", "properties": {}}
-        ),
-        Tool(
-            name="delete_breakpoint",
-            description="Deletes a breakpoint by its ID.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "breakpoint_id": {"type": "string", "description": "ID of the breakpoint to delete (e.g., '1')."}
-                },
-                "required": ["breakpoint_id"]
-            }
-        ),
+        # (set_breakpoint .. delete_breakpoint moved to tools/breakpoint_tools.py)
         Tool(
             name="continue_execution",
             description="Resumes execution of the target device until the next breakpoint.",
@@ -919,18 +886,7 @@ async def handle_list_tools() -> list[Tool]:
                 "required": ["expressions", "action"]
             }
         ),
-        Tool(
-            name="set_watchpoint",
-            description="Sets a hardware watchpoint on a memory address or variable.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "location": {"type": "string", "description": "Variable or address to watch."},
-                    "access_type": {"type": "string", "enum": ["r", "w", "a"], "description": "Read (r), Write (w), or Access (a)."}
-                },
-                "required": ["location", "access_type"]
-            }
-        ),
+        # (set_watchpoint moved to tools/breakpoint_tools.py)
         Tool(
             name="load_svd",
             description="Loads an SVD file for peripheral parsing.",
@@ -2147,38 +2103,6 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
             resp = gdb_client.reset_halt(command=resolved["command"])
             return [content_success({"message": "Target reset", "reset": resolved}, raw_response=resp)]
 
-        elif name == "set_breakpoint":
-            resp = gdb_client.set_breakpoint(
-                arguments["location"],
-                condition=arguments.get("condition"),
-                temporary=arguments.get("temporary", False),
-                ignore_count=arguments.get("ignore_count"),
-            )
-            return [content_success(
-                {
-                    "message": "Breakpoint set",
-                    "location": arguments["location"],
-                    "condition": arguments.get("condition"),
-                    "temporary": arguments.get("temporary", False),
-                },
-                raw_response=resp,
-                suggested_next_actions=["run_and_wait"],
-            )]
-
-        elif name == "list_breakpoints":
-            bps = gdb_client.list_breakpoints_decoded()
-            never_hit = [b["number"] for b in bps if b.get("hit_count") == 0]
-            summary = (f"{len(bps)} breakpoints; never reached (hit_count=0): {never_hit}"
-                       if never_hit else f"{len(bps)} breakpoints, all reached at least once")
-            return [content_success({"breakpoints": bps, "summary": summary})]
-
-        elif name == "delete_breakpoint":
-            resp = gdb_client.delete_breakpoint(arguments["breakpoint_id"])
-            return [content_success(
-                {"message": "Breakpoint deleted", "breakpoint_id": arguments["breakpoint_id"]},
-                raw_response=resp,
-            )]
-
         elif name == "continue_execution":
             resp = gdb_client.continue_execution()
             return [content_success({"message": "Execution continued"}, raw_response=resp)]
@@ -2527,13 +2451,6 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
             action = action_map[action_name]
             result = compare_expressions_after_action(gdb_client, arguments["expressions"], action_name, action)
             return [content_success(result)]
-
-        elif name == "set_watchpoint":
-            resp = gdb_client.set_watchpoint(arguments["location"], arguments["access_type"])
-            return [content_success(
-                {"message": "Watchpoint set", "location": arguments["location"], "access_type": arguments["access_type"]},
-                raw_response=resp,
-            )]
 
         elif name == "load_svd":
             svd_parser.load(arguments["filepath"])
