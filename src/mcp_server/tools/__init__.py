@@ -9,6 +9,7 @@ def load_all() -> None:
     Explicit imports, no directory scanning: the import list IS the roster.
     """
     from . import (  # noqa: F401
+        board_tools,
         breakpoint_tools,
         config_tools,
         execution_tools,
