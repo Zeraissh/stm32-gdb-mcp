@@ -1,5 +1,40 @@
 # Changelog / 更新日志
 
+## [0.5.1] - 2026-07-22
+
+Reliability polish: every GDB operation deadline is now centrally configurable, and several
+small resource-management gaps are closed. No tool schemas or defaults changed.
+
+可靠性打磨:所有 GDB 操作超时现已全部集中可配置,并修补了若干资源管理小缺口。
+工具 schema 与默认值均无变化。
+
+### Timeouts / 超时
+
+- All previously hardcoded GDB deadlines in `gdb_client` (symbols, monitor, breakpoint list,
+  step/finish, stack, source, disassembly, symbol lists, evaluation, coredump capture/load,
+  flash verify) now route through named `TimeoutConfig` entries, so `set_timeouts` can widen
+  any of them once for a slow probe and replayed sessions stay deterministic. Default values
+  are unchanged. / `gdb_client` 中所有硬编码超时(符号加载、monitor、断点列表、单步/finish、
+  栈、源码、反汇编、符号列表、表达式求值、coredump 采集/加载、烧录校验)全部改走命名
+  `TimeoutConfig`,`set_timeouts` 可一次性放宽,重放会话保持确定性;默认值不变。
+- A regression test asserts every timeout name used by `gdb_client` exists in `DEFAULTS`,
+  guarding against silent fallback to the 1s default. / 新增回归测试断言 `gdb_client` 使用的
+  超时名全部存在于 `DEFAULTS`,防止静默回退到 1 秒默认值。
+
+### Robustness / 健壮性
+
+- PC-sample symbolization (`profile_pc`) caches `info symbol` results (LRU, 4096 entries),
+  cleared whenever the symbol table changes — repeated profiling no longer re-queries hot
+  addresses. / PC 采样符号化新增 LRU 缓存(4096 条,符号表变更即清空),重复分析不再重复
+  查询热点地址。
+- Named-session port allocation probes each candidate with a real bind, skipping ports held
+  by zombie OpenOCD or foreign processes, and fails loudly after 100 slots instead of looping.
+  / 命名会话端口分配改为真实 bind 探测,跳过被僵尸 OpenOCD 或外部进程占用的端口,超过
+  100 个槽位时明确报错而非死循环。
+- `close_session` now prunes the closed session's dispatch lock, so `_session_locks` no
+  longer grows without bound. / `close_session` 现在会清理已关闭会话的调度锁,
+  `_session_locks` 不再无限增长。
+
 ## [0.5.0] - 2026-07-21
 
 This update converges installation, configuration, MCP contracts, and hardware diagnostics.
