@@ -1,4 +1,9 @@
+import inspect
+import re
+
+import mcp_server.gdb_client as gdb_client_module
 from mcp_server.gdb_client import GdbClientManager
+from mcp_server.timeouts import DEFAULTS
 
 
 class FakeGdb:
@@ -46,6 +51,55 @@ def test_symbolize_pc_returns_empty_when_no_symbol_matches():
     assert client.symbolize_pc(0x20000000) == ""
 
 
+def test_every_named_timeout_used_by_gdb_client_has_a_default():
+    # TimeoutConfig.get silently falls back to 'default' (1.0) for unknown names, so a
+    # typo'd or missing name would quietly shrink an operation's deadline. Guard against it.
+    source = inspect.getsource(gdb_client_module)
+    used = set(re.findall(r'timeouts\.get\("(\w+)"\)', source))
+    assert used, "expected gdb_client to route timeouts through TimeoutConfig"
+    assert used <= set(DEFAULTS), f"names missing from DEFAULTS: {used - set(DEFAULTS)}"
+
+
+def test_symbolize_pc_caches_lookups_and_load_symbols_invalidates():
+    class CountingGdb:
+        def __init__(self):
+            self.symbol_lookups = 0
+
+        def write(self, command, timeout_sec=1.0):
+            if command.startswith("info symbol"):
+                self.symbol_lookups += 1
+                return [{"type": "console", "payload": "vTaskDelay + 4 in section .text\n"}]
+            return [{"message": "done"}]
+
+    client = GdbClientManager()
+    client.gdb = CountingGdb()
+
+    assert client.symbolize_pc(0x08000400) == "vTaskDelay"
+    assert client.symbolize_pc(0x08000400) == "vTaskDelay"
+    assert client.gdb.symbol_lookups == 1  # second call served from the cache
+
+    client.load_symbols("fw.axf")  # new symbol table -> cache must be dropped
+    assert client.symbolize_pc(0x08000400) == "vTaskDelay"
+    assert client.gdb.symbol_lookups == 2
+
+
+def test_symbolize_pc_caches_negative_results_too():
+    class CountingGdb:
+        def __init__(self):
+            self.symbol_lookups = 0
+
+        def write(self, command, timeout_sec=1.0):
+            self.symbol_lookups += 1
+            return [{"type": "console", "payload": "No symbol matches 0x20000000.\n"}]
+
+    client = GdbClientManager()
+    client.gdb = CountingGdb()
+
+    assert client.symbolize_pc(0x20000000) == ""
+    assert client.symbolize_pc(0x20000000) == ""
+    assert client.gdb.symbol_lookups == 1
+
+
 def test_reset_halt_primes_the_ap_with_a_throwaway_read():
     client = GdbClientManager()
     client.gdb = FakeGdb()
@@ -77,6 +131,26 @@ def test_halt_execution_uses_configured_halt_timeout():
     client.halt_execution()
 
     assert client.gdb.commands == [("-exec-interrupt", 4.5)]
+
+
+def test_formerly_hardcoded_timeouts_are_overridable():
+    # These call sites used to carry literal deadlines; they must now honor set_timeouts.
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+    client.timeouts.set({"symbols": 7.0, "step": 3.5, "run": 42.0, "verify": 99.0})
+
+    client.load_symbols("fw.axf")
+    client.step_over()
+    client.run_to_line("main.c:10")
+    client.verify_flash("fw.axf")
+
+    assert client.gdb.commands == [
+        ("-file-exec-and-symbols fw.axf", 7.0),
+        ("-exec-next", 3.5),
+        ("-exec-until main.c:10", 42.0),
+        ("-file-exec-and-symbols fw.axf", 7.0),
+        ("compare-sections", 99.0),
+    ]
 
 
 def test_write_typed_memory_uses_explicit_c_width():

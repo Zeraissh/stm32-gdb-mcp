@@ -1,4 +1,5 @@
 import time
+from collections import OrderedDict
 
 from pygdbmi.gdbcontroller import GdbController
 
@@ -25,21 +26,29 @@ def build_break_insert_command(location, condition=None, temporary=False, ignore
     return " ".join(parts)
 
 
+_SYMBOL_CACHE_MAX = 4096
+
+
 class GdbClientManager:
     def __init__(self):
         self.gdb = None
         self.timeouts = TimeoutConfig()
-        
+        # PC -> symbol name cache for profiling; entries are only valid for the
+        # currently loaded symbol table, so every symbol-table mutation clears it.
+        self._symbol_cache: OrderedDict[int, str] = OrderedDict()
+
     def start_gdb(self, gdb_path="arm-none-eabi-gdb"):
         if self.gdb:
             self.stop_gdb()
+        self._symbol_cache.clear()
         # Use mi3 for latest GDB machine interface features
         self.gdb = GdbController(command=[gdb_path, "--interpreter=mi3"])
-        
+
     def stop_gdb(self):
         if self.gdb:
             self.gdb.exit()
             self.gdb = None
+        self._symbol_cache.clear()
 
     def is_alive(self) -> bool:
         return self.gdb is not None
@@ -54,12 +63,14 @@ class GdbClientManager:
         except Exception:
             return False
 
-    def execute_command(self, cmd: str, timeout_sec: float = 1.0):
+    def execute_command(self, cmd: str, timeout_sec: float | None = None):
         if not self.gdb:
             raise RuntimeError("GDB is not running.")
+        if timeout_sec is None:
+            timeout_sec = self.timeouts.get("default")
         return self.gdb.write(cmd, timeout_sec=timeout_sec)
 
-    def execute_cli_command(self, cmd: str, timeout_sec: float = 1.0):
+    def execute_cli_command(self, cmd: str, timeout_sec: float | None = None):
         return self.execute_command(cmd, timeout_sec=timeout_sec)
 
     def connect(self, host="localhost", port=3333):
@@ -74,7 +85,8 @@ class GdbClientManager:
         Symbols are per-GDB-session, so after a fresh connect (or recover_session)
         this is needed before symbol breakpoints resolve — unless load_firmware ran.
         """
-        return self.execute_command(f"-file-exec-and-symbols {filepath}", timeout_sec=2.0)
+        self._symbol_cache.clear()
+        return self.execute_command(f"-file-exec-and-symbols {filepath}", timeout_sec=self.timeouts.get("symbols"))
 
     def load_firmware(self, filepath: str):
         """Loads symbols and flashes the firmware to the device."""
@@ -103,7 +115,7 @@ class GdbClientManager:
 
     def set_adapter_speed(self, khz: int):
         """Set the SWD/JTAG adapter clock at runtime (kHz). Higher = faster flash/reads."""
-        return self.execute_cli_command(f"monitor adapter speed {int(khz)}", timeout_sec=2.0)
+        return self.execute_cli_command(f"monitor adapter speed {int(khz)}", timeout_sec=self.timeouts.get("monitor"))
 
     def _drain(self, rounds: int = 5):
         """Consume any pending async/stale GDB responses left in the buffer."""
@@ -126,29 +138,29 @@ class GdbClientManager:
 
     def list_breakpoints_decoded(self):
         """Return breakpoints with hit counts (times each has actually been reached)."""
-        return decode_breakpoints(self.execute_command("-break-list", timeout_sec=2.0))
+        return decode_breakpoints(self.execute_command("-break-list", timeout_sec=self.timeouts.get("breakpoint")))
 
     def continue_execution(self):
-        return self.execute_command("-exec-continue", timeout_sec=1.0)
+        return self.execute_command("-exec-continue", timeout_sec=self.timeouts.get("default"))
 
     def halt_execution(self):
         return self.execute_command("-exec-interrupt", timeout_sec=self.timeouts.get("halt"))
 
     def step_over(self):
-        return self.execute_command("-exec-next", timeout_sec=1.0)
+        return self.execute_command("-exec-next", timeout_sec=self.timeouts.get("step"))
 
     def step_into(self):
-        return self.execute_command("-exec-step", timeout_sec=1.0)
+        return self.execute_command("-exec-step", timeout_sec=self.timeouts.get("step"))
 
     def step_out(self):
-        return self.execute_command("-exec-finish", timeout_sec=2.0)
+        return self.execute_command("-exec-finish", timeout_sec=self.timeouts.get("finish"))
 
     def step_instruction(self, over: bool = False):
         cmd = "-exec-next-instruction" if over else "-exec-step-instruction"
-        return self.execute_command(cmd, timeout_sec=1.0)
+        return self.execute_command(cmd, timeout_sec=self.timeouts.get("step"))
 
     def run_to_line(self, location: str):
-        return self.execute_command(f"-exec-until {location}", timeout_sec=10.0)
+        return self.execute_command(f"-exec-until {location}", timeout_sec=self.timeouts.get("run"))
 
     def read_variable(self, name: str):
         return self.execute_command(f"-data-evaluate-expression {name}")
@@ -163,7 +175,7 @@ class GdbClientManager:
         """List locals + arguments (with values) for a frame."""
         if level is not None:
             self.select_frame(level)
-        return self.execute_command("-stack-list-variables --all-values", timeout_sec=2.0)
+        return self.execute_command("-stack-list-variables --all-values", timeout_sec=self.timeouts.get("stack"))
 
     def read_frame_variables_decoded(self, level: int | None = None):
         return decode_variables(self.read_frame_variables(level))
@@ -171,66 +183,67 @@ class GdbClientManager:
     def read_frame_arguments(self, level: int | None = None):
         if level is not None:
             self.select_frame(level)
-        return self.execute_command("-stack-list-arguments --all-values", timeout_sec=2.0)
+        return self.execute_command("-stack-list-arguments --all-values", timeout_sec=self.timeouts.get("stack"))
 
     def list_source(self, location: str | None = None, count: int = 10):
         """List source lines around a location (function, file:line, or *addr)."""
         if location:
-            self.execute_cli_command(f"list {location}", timeout_sec=2.0)
-        return self.execute_cli_command(f"list +{int(count)}", timeout_sec=2.0)
+            self.execute_cli_command(f"list {location}", timeout_sec=self.timeouts.get("source"))
+        return self.execute_cli_command(f"list +{int(count)}", timeout_sec=self.timeouts.get("source"))
 
     def resolve_address(self, expr: str):
         """Map an address/expression to source line and nearest symbol."""
         responses = []
-        responses.extend(self.execute_cli_command(f"info line *({expr})", timeout_sec=2.0))
-        responses.extend(self.execute_cli_command(f"info symbol {expr}", timeout_sec=2.0))
+        responses.extend(self.execute_cli_command(f"info line *({expr})", timeout_sec=self.timeouts.get("symbols")))
+        responses.extend(self.execute_cli_command(f"info symbol {expr}", timeout_sec=self.timeouts.get("symbols")))
         return responses
 
     def read_core_registers(self):
-        return self.execute_cli_command("info registers", timeout_sec=2.0)
+        return self.execute_cli_command("info registers", timeout_sec=self.timeouts.get("registers"))
 
     def read_core_registers_decoded(self):
         """Return {name: hex} via the structured MI register queries."""
-        names = self.execute_command("-data-list-register-names", timeout_sec=2.0)
-        values = self.execute_command("-data-list-register-values x", timeout_sec=2.0)
+        names = self.execute_command("-data-list-register-names", timeout_sec=self.timeouts.get("registers"))
+        values = self.execute_command("-data-list-register-values x", timeout_sec=self.timeouts.get("registers"))
         return decode_registers(names, values)
 
     def read_call_stack_decoded(self):
         return decode_backtrace(self.read_call_stack())
 
     def disassemble_around_pc(self, instructions: int = 8):
-        return self.execute_cli_command(f"x/{instructions}i $pc", timeout_sec=2.0)
+        return self.execute_cli_command(f"x/{instructions}i $pc", timeout_sec=self.timeouts.get("source"))
 
     def disassemble(self, location: str = "$pc", instructions: int = 8):
-        return self.execute_cli_command(f"x/{int(instructions)}i {location}", timeout_sec=2.0)
+        return self.execute_cli_command(f"x/{int(instructions)}i {location}", timeout_sec=self.timeouts.get("source"))
 
     def list_functions(self, regex: str | None = None):
         cmd = f"info functions {regex}" if regex else "info functions"
-        return self.execute_cli_command(cmd, timeout_sec=3.0)
+        return self.execute_cli_command(cmd, timeout_sec=self.timeouts.get("symbol_list"))
 
     def list_variables(self, regex: str | None = None):
         cmd = f"info variables {regex}" if regex else "info variables"
-        return self.execute_cli_command(cmd, timeout_sec=3.0)
+        return self.execute_cli_command(cmd, timeout_sec=self.timeouts.get("symbol_list"))
 
     def lookup_type(self, expr: str):
-        return self.execute_cli_command(f"ptype {expr}", timeout_sec=2.0)
+        return self.execute_cli_command(f"ptype {expr}", timeout_sec=self.timeouts.get("symbols"))
 
     def sizeof(self, expr: str):
-        return self.execute_command(f"-data-evaluate-expression sizeof({expr})", timeout_sec=2.0)
+        return self.execute_command(f"-data-evaluate-expression sizeof({expr})", timeout_sec=self.timeouts.get("evaluate"))
 
     def address_of(self, symbol: str):
-        return self.execute_command(f"-data-evaluate-expression &{symbol}", timeout_sec=2.0)
+        return self.execute_command(f"-data-evaluate-expression &{symbol}", timeout_sec=self.timeouts.get("evaluate"))
 
     def capture_coredump(self, path: str):
-        return self.execute_cli_command(f"generate-core-file {path}", timeout_sec=30.0)
+        return self.execute_cli_command(f"generate-core-file {path}", timeout_sec=self.timeouts.get("coredump"))
 
     def load_coredump(self, path: str):
-        return self.execute_cli_command(f"core-file {path}", timeout_sec=10.0)
+        self._symbol_cache.clear()
+        return self.execute_cli_command(f"core-file {path}", timeout_sec=self.timeouts.get("coredump_load"))
 
     def verify_flash(self, file_path: str):
         responses = []
-        responses.extend(self.execute_command(f"-file-exec-and-symbols {file_path}", timeout_sec=2.0))
-        responses.extend(self.execute_cli_command("compare-sections", timeout_sec=30.0))
+        responses.extend(self.load_symbols(file_path))
+        responses.extend(self.execute_cli_command("compare-sections", timeout_sec=self.timeouts.get("verify")))
         return responses
 
     def enable_cycle_counter(self):
@@ -249,9 +262,21 @@ class GdbClientManager:
 
     def symbolize_pc(self, pc: int) -> str:
         """Best-effort function name for a PC via `info symbol` (e.g. 'vTaskDelay')."""
+        key = pc & 0xFFFFFFFF
+        cached = self._symbol_cache.get(key)
+        if cached is not None:
+            self._symbol_cache.move_to_end(key)
+            return cached
+        name = self._symbolize_pc_uncached(key)
+        self._symbol_cache[key] = name
+        if len(self._symbol_cache) > _SYMBOL_CACHE_MAX:
+            self._symbol_cache.popitem(last=False)
+        return name
+
+    def _symbolize_pc_uncached(self, pc: int) -> str:
         try:
             responses = self.execute_cli_command(
-                f"info symbol 0x{pc & 0xFFFFFFFF:08x}", timeout_sec=2.0)
+                f"info symbol 0x{pc:08x}", timeout_sec=self.timeouts.get("evaluate"))
         except Exception:
             return ""
         # The real answer comes as 'console' stream records; 'log' records are just the
@@ -277,7 +302,7 @@ class GdbClientManager:
 
     def read_register_value(self, expr: str) -> int:
         """Evaluate a register/convenience expression (e.g. '$lr', '$msp') to an int."""
-        response = self.execute_command(f"-data-evaluate-expression {expr}", timeout_sec=2.0)
+        response = self.execute_command(f"-data-evaluate-expression {expr}", timeout_sec=self.timeouts.get("evaluate"))
         for record in response:
             payload = record.get("payload")
             if isinstance(payload, dict) and payload.get("value") is not None:
@@ -358,19 +383,23 @@ class GdbClientManager:
                     return event, records
         return parse_stop_event(records), records
 
-    def run_and_wait(self, timeout_sec: float = 10.0):
+    def run_and_wait(self, timeout_sec: float | None = None):
         """Resume the target and report why it next stops (or a timeout)."""
         if not self.gdb:
             raise RuntimeError("GDB is not running.")
+        if timeout_sec is None:
+            timeout_sec = self.timeouts.get("run")
         initial = self.gdb.write("-exec-continue", timeout_sec=0.2)
         event, records = self._wait_for_stop(initial, timeout_sec)
         event["raw_response"] = records
         return event
 
-    def wait_for_stop(self, timeout_sec: float = 10.0):
+    def wait_for_stop(self, timeout_sec: float | None = None):
         """Wait for the next stop event without resuming the target."""
         if not self.gdb:
             raise RuntimeError("GDB is not running.")
+        if timeout_sec is None:
+            timeout_sec = self.timeouts.get("run")
         event, records = self._wait_for_stop([], timeout_sec)
         event["raw_response"] = records
         return event
