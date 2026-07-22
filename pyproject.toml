@@ -1,6 +1,6 @@
 [project]
 name = "stm32-gdb-mcp"
-version = "0.5.1"
+version = "0.6.0"
 description = "MCP server for STM32 debugging with GDB"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -81,9 +81,3 @@ warn_unused_ignores = true
 [[tool.mypy.overrides]]
 module = ["pygdbmi.*", "serial.*"]
 ignore_missing_imports = true
-
-# Temporary: the tool-registry decomposition (v0.6.0) extracts this into typed
-# modules; drop the entry once server.py is decomposed.
-[[tool.mypy.overrides]]
-module = ["mcp_server.server"]
-ignore_errors = true

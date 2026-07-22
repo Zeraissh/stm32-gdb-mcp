@@ -69,14 +69,14 @@ swo_file_reader = FileLogReader("swo")
 uart_log_reader = SerialLogReader()
 memory_guard = MemoryWriteGuard()
 session_journal = SessionJournal()
-_last_session = {"server_type": None, "server_args": []}
+_last_session: dict = {"server_type": None, "server_args": []}
 _board = {"current": None}  # imported BoardDescription (netlist -> BSP model) for the default session
 _acceptance = {"current": None, "last_result": None}  # loaded AcceptanceSpec + last verdict (default session)
 _loop = {"current": None}  # bounded acceptance-loop state (Pillar C) for the default session
 _design = {"current": None, "last_render": None}  # FrameworkPlan + last render (Pillar D) for default session
 _spec = {"current": None}  # translated product spec (spec_model -> design params) for the default session
-_reported_issues = {}  # fingerprint -> issue url (in-session dedup)
-_tool_catalog = {}
+_reported_issues: dict[str, str] = {}  # fingerprint -> issue url (in-session dedup)
+_tool_catalog: dict[str, Tool] = {}
 
 # Phase 3: named per-target sessions for multi-board / CI. The "default" session reuses
 # the module globals above (single-target back-compat + existing tests); named sessions get

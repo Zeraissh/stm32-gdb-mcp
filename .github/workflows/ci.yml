@@ -52,7 +52,7 @@ jobs:
       # cross-platform threshold noisy; this leg is the canonical coverage signal.
       - name: Run tests with coverage
         if: runner.os != 'Windows'
-        run: python -m pytest -q --cov=mcp_server --cov-report=term-missing:skip-covered --cov-report=xml
+        run: python -m pytest -q --cov=mcp_server --cov-report=term-missing:skip-covered --cov-report=xml --cov-fail-under=81
 
       - name: Lint
         run: python -m ruff check .
