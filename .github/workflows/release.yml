@@ -91,6 +91,11 @@ jobs:
           name: dist
           path: dist/
 
+      # The artifact carries SHA256SUMS.txt for the GitHub-release job, but the
+      # publish action treats every file in dist/ as a distribution and errors on it.
+      - name: Drop non-distribution files before publishing
+        run: rm -f dist/SHA256SUMS.txt
+
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
 
