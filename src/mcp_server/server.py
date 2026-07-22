@@ -30,15 +30,6 @@ from .board_model import board_view, summarize_board
 from .board_validation import load_capability_db, validate_board
 from .clock_solver import resolve_profile, solve_clock_tree, summarize_clock_solution
 from .composites import capture_state, debug_until, flash_and_run, run_for_duration
-from .debug_config import (
-    load_debug_config as load_debug_config_file,
-)
-from .debug_config import (
-    save_debug_config as save_debug_config_file,
-)
-from .debug_config import (
-    validate_debug_config as validate_debug_config_data,
-)
 from .debug_experiments import (
     assert_expressions as run_expression_assertions,
 )
@@ -736,16 +727,7 @@ async def handle_list_tools() -> list[Tool]:
                 }
             }
         ),
-        Tool(
-            name="inspect_project",
-            description="Discovers firmware project artifacts such as ELF, map, linker script, SVD, and STM32CubeMX .ioc metadata.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "project_root": {"type": "string", "description": "Project directory to scan. Uses debug profile project_root if omitted."}
-                }
-            }
-        ),
+        # (inspect_project moved to tools/config_tools.py)
         Tool(
             name="detect_rtos",
             description="Detects whether FreeRTOS symbols are available in the current GDB session.",
@@ -914,63 +896,7 @@ async def handle_list_tools() -> list[Tool]:
                 "required": ["address", "value", "width_bits"]
             }
         ),
-        Tool(
-            name="set_debug_profile",
-            description="Stores board/session defaults such as MCU, probe, GDB server args, ELF path, and SVD path.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "mcu": {"type": "string"},
-                    "board": {"type": "string"},
-                    "probe": {"type": "string"},
-                    "server_type": {"type": "string", "enum": ["openocd", "stlink", "jlink"]},
-                    "server_args": {"type": "array", "items": {"type": "string"}},
-                    "elf_path": {"type": "string"},
-                    "svd_path": {"type": "string"},
-                    "project_root": {"type": "string"},
-                    "notes": {"type": "string"}
-                }
-            }
-        ),
-        Tool(
-            name="get_debug_profile",
-            description="Returns the stored board/session defaults.",
-            inputSchema={"type": "object", "properties": {}}
-        ),
-        Tool(
-            name="load_debug_config",
-            description="Loads a YAML debug config and applies compatible fields to the active debug profile.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "Path to a YAML debug config file."}
-                },
-                "required": ["path"]
-            }
-        ),
-        Tool(
-            name="save_debug_config",
-            description="Saves a YAML debug config file.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "Destination YAML config path."},
-                    "config": {"type": "object", "description": "Config object to save."}
-                },
-                "required": ["path", "config"]
-            }
-        ),
-        Tool(
-            name="validate_debug_config",
-            description="Validates a YAML debug config object without saving it.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "config": {"type": "object", "description": "Config object to validate."}
-                },
-                "required": ["config"]
-            }
-        ),
+        # (set_debug_profile .. validate_debug_config moved to tools/config_tools.py)
         # --- Step 7: Tracing ---
         Tool(
             name="track_variable",
@@ -2299,11 +2225,6 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
             )
             return [content_success(snapshot)]
 
-        elif name == "inspect_project":
-            profile = debug_profile.get()
-            result = inspect_project(arguments.get("project_root") or profile.get("project_root"), profile)
-            return [content_success(result)]
-
         elif name == "detect_rtos":
             result = freertos_inspector.detect()
             return [content_success(result)]
@@ -2441,37 +2362,6 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                 },
                 raw_response=resp,
             )]
-
-        elif name == "set_debug_profile":
-            profile = debug_profile.update(arguments)
-            svd_path = profile.get("svd_path")
-            if svd_path:
-                svd_parser.load(svd_path)
-            return [content_success(profile)]
-
-        elif name == "get_debug_profile":
-            return [content_success(debug_profile.get())]
-
-        elif name == "load_debug_config":
-            result = load_debug_config_file(arguments["path"])
-            if result["validation"]["valid"]:
-                debug_profile.update({
-                    key: value
-                    for key, value in result["config"].items()
-                    if key in debug_profile.ALLOWED_FIELDS
-                })
-                svd_path = result["config"].get("svd_path")
-                if svd_path:
-                    svd_parser.load(svd_path)
-            return [content_success(result)]
-
-        elif name == "save_debug_config":
-            result = save_debug_config_file(arguments["path"], arguments["config"])
-            return [content_success(result)]
-
-        elif name == "validate_debug_config":
-            result = validate_debug_config_data(arguments["config"])
-            return [content_success(result)]
 
         elif name == "track_variable":
             action = arguments["action"]
