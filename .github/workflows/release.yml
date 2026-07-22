@@ -107,6 +107,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      # gh release create needs a git context to resolve the repository; without a
+      # checkout the job fails with "not a git repository" (bit us on v0.6.0).
+      - uses: actions/checkout@v7
+
       - name: Download distributions
         uses: actions/download-artifact@v8
         with:
