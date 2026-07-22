@@ -14,6 +14,7 @@ def load_all() -> None:
         inspect_tools,
         logging_tools,
         peripheral_tools,
+        rtos_tools,
     )
 
 
