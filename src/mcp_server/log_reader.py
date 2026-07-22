@@ -1,6 +1,7 @@
 import os
 import signal
 import subprocess
+import sys
 import threading
 from datetime import datetime, timezone
 from typing import Any, TextIO
@@ -58,7 +59,12 @@ class ProcessLogReader:
             raise ValueError("command must not be empty")
 
         self.command = list(command)
-        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+        # sys.platform in an if-statement (not os.name, not a ternary) so mypy skips the
+        # Windows-only attribute when checking other platforms.
+        if sys.platform == "win32":
+            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            creationflags = 0
         self.process = self.process_factory(
             self.command,
             stdout=subprocess.PIPE,
