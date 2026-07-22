@@ -11,6 +11,7 @@ def load_all() -> None:
     from . import (  # noqa: F401
         breakpoint_tools,
         config_tools,
+        fault_tools,
         inspect_tools,
         logging_tools,
         peripheral_tools,

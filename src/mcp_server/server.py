@@ -39,14 +39,9 @@ from .debug_experiments import (
 from .debug_experiments import (
     compare_expressions_after_action,
 )
-from .debug_freeze import plan_freeze_writes, resolve_freeze_targets, supported_families
 from .debug_profile import DebugProfileStore
-from .debug_report import build_report, write_report
 from .debug_session import SessionManager, teardown_debug_session
-from .debug_snapshot import collect_debug_snapshot
 from .error_taxonomy import classify_error
-from .exception_frame import build_fault_context
-from .fault_analysis import diagnose_fault_registers
 from .framework_render import render_framework
 from .framework_solver import build_framework_plan, framework_view, merge_af_maps, summarize_framework
 from .freertos_inspector import FreeRTOSInspector
@@ -61,7 +56,6 @@ from .memory_guard import MemoryWriteGuard
 from .metrics import compute_metrics
 from .netlist_parser import load_netlist_file, parse_netlist
 from .openocd_config import detect_probe, find_openocd_scripts, suggest_server_args
-from .project_inspector import inspect_project
 from .provenance import annotate_spec_sources
 from .reliability import retry_call
 from .reset_strategy import resolve_reset_command
@@ -676,57 +670,7 @@ async def handle_list_tools() -> list[Tool]:
         ),
         # --- Step 6: Advanced Analysis ---
         # (read_call_stack .. resolve_address moved to tools/inspect_tools.py)
-        Tool(
-            name="read_fault_registers",
-            description="Reads Cortex-M SCB fault status registers (CFSR, HFSR, DFSR, MMFAR, BFAR, AFSR).",
-            inputSchema={"type": "object", "properties": {}}
-        ),
-        Tool(
-            name="diagnose_fault",
-            description="Reads and decodes Cortex-M fault registers into likely fault causes.",
-            inputSchema={"type": "object", "properties": {}}
-        ),
-        Tool(
-            name="configure_debug_freeze",
-            description="Freezes peripherals (IWDG, WWDG, RTC, timers) while the core is halted via "
-                        "the DBGMCU freeze registers, so the watchdog cannot reset the target out "
-                        "from under the debugger. Family is taken from the debug profile MCU if omitted.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "peripherals": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Peripherals to freeze, e.g. ['iwdg', 'wwdg', 'rtc', 'tim2']."
-                    },
-                    "family": {"type": "string", "description": f"STM32 family or part number. Known: {supported_families()}."},
-                    "apply": {"type": "boolean", "description": "If false, only return the planned register writes (default true)."}
-                },
-                "required": ["peripherals"]
-            }
-        ),
-        Tool(
-            name="reconstruct_fault_context",
-            description="Reconstructs the full crash site after a HardFault: decodes fault "
-                        "registers, unwinds the auto-stacked exception frame from MSP/PSP via "
-                        "EXC_RETURN to recover the true faulting PC, and resolves it to source "
-                        "file:line. Run this when halted in a fault handler.",
-            inputSchema={"type": "object", "properties": {}}
-        ),
-        Tool(
-            name="capture_debug_snapshot",
-            description="Captures a structured debug snapshot: core registers, fault registers, call stack, PC disassembly, GDB events, server logs, and optional project/RTOS context.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "include_project": {"type": "boolean", "description": "Include project discovery context."},
-                    "include_rtos": {"type": "boolean", "description": "Include FreeRTOS runtime context."},
-                    "include_logs": {"type": "boolean", "description": "Include captured RTT logs."},
-                    "log_limit": {"type": "integer", "description": "Maximum number of RTT log entries to include."},
-                    "project_root": {"type": "string", "description": "Optional project root for discovery."}
-                }
-            }
-        ),
+        # (read_fault_registers .. capture_debug_snapshot moved to tools/fault_tools.py)
         # (inspect_project moved to tools/config_tools.py)
         # (detect_rtos .. capture_rtos_snapshot moved to tools/rtos_tools.py)
         # (start_logging .. clear_logs moved to tools/logging_tools.py)
@@ -911,21 +855,7 @@ async def handle_list_tools() -> list[Tool]:
                 "required": ["title", "description"]
             }
         ),
-        Tool(
-            name="export_debug_report",
-            description="Writes a single self-contained JSON report (journal + metrics + profile, "
-                        "optionally a state snapshot and a coredump) tied to the run-id, so a bug "
-                        "session is fully reproducible and shareable from one artifact.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "Output path for the report JSON."},
-                    "include_snapshot": {"type": "boolean", "description": "Capture and embed a debug snapshot (requires a halted target)."},
-                    "coredump_path": {"type": "string", "description": "If set, capture a coredump there and reference it in the report."}
-                },
-                "required": ["path"]
-            }
-        ),
+        # (export_debug_report moved to tools/fault_tools.py)
         Tool(
             name="run_scenario",
             description="Replays a declarative scenario — a list of {tool, args} steps — "
@@ -965,29 +895,7 @@ async def handle_list_tools() -> list[Tool]:
             }
         ),
         # (disassemble .. address_of moved to tools/inspect_tools.py)
-        Tool(
-            name="capture_coredump",
-            description="Writes a core dump (RAM + registers) of the halted target to a file for "
-                        "offline postmortem analysis.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "Output path for the core file."}
-                },
-                "required": ["path"]
-            }
-        ),
-        Tool(
-            name="load_coredump",
-            description="Loads a previously captured core file for offline analysis.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "Path to the core file."}
-                },
-                "required": ["path"]
-            }
-        ),
+        # (capture_coredump .. load_coredump moved to tools/fault_tools.py)
         Tool(
             name="verify_flash",
             description="Verifies that target flash matches an ELF by comparing loaded sections "
@@ -1503,11 +1411,7 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
     svd_parser = _sess.svd_parser
     variable_tracker = _sess.variable_tracker
     debug_profile = _sess.debug_profile
-    freertos_inspector = _sess.freertos_inspector
     memory_guard = _sess.memory_guard
-    rtt_log_reader = _sess.rtt_log_reader
-    swo_log_reader = _sess.swo_log_reader
-    uart_log_reader = _sess.uart_log_reader
     _last_session = _sess.last_session
     session_board = _sess.board
     session_acceptance = _sess.acceptance
@@ -2045,77 +1949,6 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
             logs = gdb_manager.get_logs()
             return [content_success({"logs": logs, "message": "GDB server logs captured" if logs else "No GDB server logs captured"})]
 
-        elif name == "read_fault_registers":
-            resp = gdb_client.read_fault_registers()
-            hex_resp = {key: f"0x{value & 0xFFFFFFFF:08x}" for key, value in resp.items()}
-            return [content_success(hex_resp, raw_response=resp)]
-
-        elif name == "diagnose_fault":
-            resp = gdb_client.read_fault_registers()
-            diagnosis = diagnose_fault_registers(resp)
-            return [content_success(diagnosis, raw_response=resp)]
-
-        elif name == "configure_debug_freeze":
-            family = arguments.get("family") or debug_profile.get().get("mcu")
-            if not family:
-                return [content_error(
-                    "No STM32 family given and no MCU in the debug profile.",
-                    code="missing_family",
-                    suggested_next_actions=["set_debug_profile"],
-                )]
-            targets = resolve_freeze_targets(family, arguments["peripherals"])
-            plans = plan_freeze_writes(targets, gdb_client.read_word)
-            applied = arguments.get("apply", True)
-            if applied:
-                for plan in plans:
-                    gdb_client.write_memory(hex(plan["address"]), hex(plan["new_value"]))
-            return [content_success({
-                "message": "Debug freeze applied" if applied else "Debug freeze planned (not applied)",
-                "family": family,
-                "applied": applied,
-                "plans": plans,
-            })]
-
-        elif name == "reconstruct_fault_context":
-            context = build_fault_context(gdb_client)
-            return [content_success(
-                context,
-                suggested_next_actions=["list_source", "read_frame_variables", "read_call_stack"],
-            )]
-
-        elif name == "capture_debug_snapshot":
-            profile = debug_profile.get()
-            project_context = None
-            rtos_context = None
-            log_context = None
-            if arguments.get("include_project"):
-                project_context = inspect_project(arguments.get("project_root") or profile.get("project_root"), profile)
-            if arguments.get("include_rtos"):
-                rtos_context = freertos_inspector.capture_snapshot()
-            if arguments.get("include_logs"):
-                log_context = {
-                    "rtt": {
-                        "status": rtt_log_reader.status(),
-                        "entries": rtt_log_reader.get_logs(limit=arguments.get("log_limit", 200)),
-                    },
-                    "uart": {
-                        "status": uart_log_reader.status(),
-                        "entries": uart_log_reader.get_logs(limit=arguments.get("log_limit", 200)),
-                    },
-                    "swo": {
-                        "status": swo_log_reader.status(),
-                        "entries": swo_log_reader.get_logs(limit=arguments.get("log_limit", 200)),
-                    },
-                }
-            snapshot = collect_debug_snapshot(
-                gdb_client,
-                gdb_manager,
-                project_context=project_context,
-                rtos_context=rtos_context,
-                log_context=log_context,
-            )
-            return [content_success(snapshot)]
-
         elif name == "capture_expressions":
             result = run_expression_capture(
                 gdb_client,
@@ -2257,48 +2090,12 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
                 suggested_next_actions=["get_session"],
             )]
 
-        elif name == "export_debug_report":
-            snapshot = None
-            if arguments.get("include_snapshot"):
-                snapshot = collect_debug_snapshot(gdb_client, gdb_manager)
-            coredump_path = arguments.get("coredump_path")
-            if coredump_path:
-                gdb_client.capture_coredump(coredump_path)
-            report = build_report(
-                run_id=session_journal.run_id,
-                journal_entries=session_journal.get(),
-                profile=debug_profile.get(),
-                snapshot=snapshot,
-                coredump_path=coredump_path,
-            )
-            written = write_report(arguments["path"], report)
-            return [content_success({
-                "message": "Debug report exported",
-                "path": written,
-                "run_id": session_journal.run_id,
-                "entries": len(report["journal"]),
-                "included_snapshot": snapshot is not None,
-                "coredump": coredump_path,
-            })]
-
         elif name == "run_to_line":
             resp = gdb_client.run_to_line(arguments["location"])
             return [content_success(
                 {"message": "Ran to location", "location": arguments["location"]},
                 raw_response=resp,
             )]
-
-        elif name == "capture_coredump":
-            resp = gdb_client.capture_coredump(arguments["path"])
-            return [content_success(
-                {"message": "Core dump captured", "path": arguments["path"]},
-                raw_response=resp,
-                suggested_next_actions=["load_coredump"],
-            )]
-
-        elif name == "load_coredump":
-            resp = gdb_client.load_coredump(arguments["path"])
-            return [content_success({"message": "Core dump loaded", "path": arguments["path"]}, raw_response=resp)]
 
         elif name == "verify_flash":
             resp = gdb_client.verify_flash(arguments["file_path"])
