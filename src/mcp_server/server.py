@@ -3591,6 +3591,15 @@ async def handle_call_tool(name: str, arguments: dict | None) -> CallToolResult:
     result = await asyncio.to_thread(_locked_dispatch)
     duration_ms = round((time.monotonic() - start) * 1000, 1)
 
+    # Prune the closed session's lock so _session_locks doesn't grow forever. Safe here:
+    # this runs on the event-loop thread (the only thread that touches the dict) and only
+    # after the dispatch above released the lock. The "default" lock is kept — that session
+    # object is never removed, only stopped.
+    if name == "close_session":
+        closed_sid = arguments.get("session_id")
+        if closed_sid and closed_sid != "default" and closed_sid not in session_manager.sessions:
+            _session_locks.pop(closed_sid, None)
+
     if name not in _JOURNAL_SKIP:
         try:
             payload = json.loads(result[0].text)

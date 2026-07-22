@@ -284,6 +284,20 @@ def test_list_and_close_sessions():
     assert "rackB" not in server_module.session_manager.sessions
 
 
+def test_close_session_prunes_the_sessions_dispatch_lock():
+    import mcp_server.server as server_module
+
+    asyncio.run(handle_call_tool("self_check", {"session": "rackLock"}))
+    assert "rackLock" in server_module._session_locks
+
+    asyncio.run(handle_call_tool("close_session", {"session_id": "rackLock"}))
+
+    assert "rackLock" not in server_module._session_locks
+    # the default session's lock is never pruned
+    asyncio.run(handle_call_tool("close_session", {"session_id": "default"}))
+    assert "default" in server_module._session_locks
+
+
 def test_stop_debug_session_stops_gdb_server_tracking_and_log_readers(monkeypatch):
     import mcp_server.server as server_module
 
