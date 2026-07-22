@@ -887,41 +887,7 @@ async def handle_list_tools() -> list[Tool]:
             }
         ),
         # (set_watchpoint moved to tools/breakpoint_tools.py)
-        Tool(
-            name="load_svd",
-            description="Loads an SVD file for peripheral parsing.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "filepath": {"type": "string", "description": "Path to the .svd file."}
-                },
-                "required": ["filepath"]
-            }
-        ),
-        Tool(
-            name="read_peripheral_register",
-            description="Reads a peripheral register using its name from the loaded SVD.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "peripheral": {"type": "string", "description": "Peripheral name (e.g., 'GPIOA')."},
-                    "register": {"type": "string", "description": "Register name (e.g., 'ODR')."}
-                },
-                "required": ["peripheral", "register"]
-            }
-        ),
-        Tool(
-            name="decode_peripheral_register",
-            description="Reads and decodes a peripheral register with SVD bitfield names and enumerated values.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "peripheral": {"type": "string", "description": "Peripheral name (e.g., 'GPIOA')."},
-                    "register": {"type": "string", "description": "Register name (e.g., 'MODER')."}
-                },
-                "required": ["peripheral", "register"]
-            }
-        ),
+        # (load_svd .. decode_peripheral_register moved to tools/peripheral_tools.py)
         Tool(
             name="read_typed_memory",
             description="Reads memory with an explicit element width and count.",
@@ -2451,31 +2417,6 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
             action = action_map[action_name]
             result = compare_expressions_after_action(gdb_client, arguments["expressions"], action_name, action)
             return [content_success(result)]
-
-        elif name == "load_svd":
-            svd_parser.load(arguments["filepath"])
-            return [content_success({"message": "SVD file loaded successfully", "filepath": arguments["filepath"]})]
-
-        elif name == "read_peripheral_register":
-            addr = svd_parser.get_register_address(arguments["peripheral"], arguments["register"])
-            resp = gdb_client.read_memory(hex(addr), 4)  # Assuming 32-bit register
-            return [content_success(
-                {
-                    "message": "Peripheral register read",
-                    "peripheral": arguments["peripheral"],
-                    "register": arguments["register"],
-                    "address": hex(addr),
-                },
-                raw_response=resp,
-            )]
-
-        elif name == "decode_peripheral_register":
-            register = svd_parser.get_register(arguments["peripheral"], arguments["register"])
-            resp = gdb_client.read_typed_memory(hex(register["address_int"]), width_bits=register["size"], count=1)
-            value = gdb_client._extract_first_memory_word(resp)
-            decoded = svd_parser.decode_register_value(arguments["peripheral"], arguments["register"], value)
-            decoded["raw_response"] = resp
-            return [content_success(decoded, raw_response=resp)]
 
         elif name == "read_typed_memory":
             resp = gdb_client.read_typed_memory(arguments["address"], arguments["width_bits"], arguments["count"])
