@@ -114,7 +114,7 @@ def parse_kicad_netlist(text: str) -> tuple[list, list]:
     comps_node = _find(export, "components") or []
     nets_node = _find(export, "nets") or []
 
-    components = []
+    components: list[dict] = []
     for comp in _find_all(comps_node, "comp"):
         components.append(
             {

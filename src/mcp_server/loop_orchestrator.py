@@ -52,6 +52,7 @@ class GdbLoopSteps:
 
     def build(self) -> dict:
         cfg = self._build_cfg
+        assert cfg is not None  # callers gate on has_build
         kind = cfg["kind"]
         uv4_path = cfg.get("uv4_path")
         if kind == "keil":
@@ -73,6 +74,7 @@ class GdbLoopSteps:
 
     def flash(self) -> dict:
         cfg = self._flash_cfg
+        assert cfg is not None  # callers gate on has_flash
         result = flash_and_run(
             self._gdb,
             file_path=cfg["file_path"],

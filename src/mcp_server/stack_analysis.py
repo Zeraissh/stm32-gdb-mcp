@@ -19,6 +19,7 @@ def stack_report(sp, stack_top, stack_limit=None) -> dict:
         summary = (f"SP {hex(sp)} is ABOVE stack_top {hex(stack_top)} — wrong stack pointer? "
                    f"check $msp vs $psp")
     elif overflow:
+        assert free is not None  # overflow requires stack_limit, which makes free known
         summary = (f"STACK OVERFLOW: SP {hex(sp)} is {abs(free)} bytes below the stack limit "
                    f"{hex(stack_limit)} (size {size} B)")
     elif free is not None:

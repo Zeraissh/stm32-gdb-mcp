@@ -24,7 +24,7 @@ class GdbServerManager:
                 if len(self.log_buffer) > 1000:
                     self.log_buffer.pop(0)
 
-    def start(self, server_type: str, args: list[str] = None):
+    def start(self, server_type: str, args: list[str] | None = None):
         if self.process and self.process.poll() is None:
             raise RuntimeError("A GDB server is already running.")
 

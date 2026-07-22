@@ -15,7 +15,7 @@ FILE_KINDS = {
 def inspect_project(project_root: str | None = None, profile: dict | None = None) -> dict:
     profile = profile or {}
     root = Path(project_root).resolve() if project_root else None
-    files = {kind: [] for kind in ("elf", "map", "linker_script", "svd", "ioc")}
+    files: dict[str, list[str]] = {kind: [] for kind in ("elf", "map", "linker_script", "svd", "ioc")}
 
     if root:
         for path in _iter_project_files(root):
@@ -58,7 +58,7 @@ def _add_profile_path(files: dict, kind: str, path: str | None):
 
 
 def _parse_ioc(path: Path) -> dict:
-    metadata = {}
+    metadata: dict[str, str] = {}
     keys = {
         "Mcu.Name": "mcu",
         "Mcu.Package": "package",

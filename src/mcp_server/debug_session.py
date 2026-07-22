@@ -8,6 +8,7 @@ session via the ``session`` argument (default ``"default"``).
 """
 
 import socket
+from typing import Any
 
 from .debug_profile import DebugProfileStore
 from .freertos_inspector import FreeRTOSInspector
@@ -70,7 +71,7 @@ class DebugSession:
         self.swo_file_reader = FileLogReader("swo")  # OpenOCD-internal ITM decode (no external tool)
         self.uart_log_reader = SerialLogReader()
         self.memory_guard = MemoryWriteGuard()
-        self.last_session = {"server_type": None, "server_args": []}
+        self.last_session: dict[str, Any] = {"server_type": None, "server_args": []}
         self.board = {"current": None}  # imported BoardDescription (netlist -> BSP model)
         self.acceptance = {"current": None, "last_result": None}  # loaded AcceptanceSpec + last verdict
         self.loop = {"current": None}  # bounded acceptance-loop state (Pillar C)

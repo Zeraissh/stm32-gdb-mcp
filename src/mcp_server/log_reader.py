@@ -3,12 +3,13 @@ import signal
 import subprocess
 import threading
 from datetime import datetime, timezone
+from typing import Any, TextIO
 
 
 class LogRingBuffer:
     def __init__(self, max_entries: int = 2000):
         self.max_entries = max_entries
-        self.entries = []
+        self.entries: list[dict] = []
         self._next_index = 1
         self._lock = threading.Lock()
 
@@ -46,9 +47,9 @@ class ProcessLogReader:
         self.source = source
         self.buffer = LogRingBuffer(max_entries=max_entries)
         self.process_factory = process_factory or subprocess.Popen
-        self.process = None
-        self.command = None
-        self._reader_thread = None
+        self.process: subprocess.Popen | None = None
+        self.command: list[str] | None = None
+        self._reader_thread: threading.Thread | None = None
 
     def start(self, command: list[str]):
         if self.is_running():
@@ -121,9 +122,9 @@ class FileLogReader:
         self.source = source
         self.buffer = LogRingBuffer(max_entries=max_entries)
         self.poll_interval = poll_interval
-        self.path = None
-        self._handle = None
-        self._reader_thread = None
+        self.path: str | None = None
+        self._handle: TextIO | None = None
+        self._reader_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
 
     def start(self, path: str):
@@ -182,10 +183,10 @@ class SerialLogReader:
         self.buffer = LogRingBuffer(max_entries=max_entries)
         self.serial_factory = serial_factory
         self.encoding = encoding
-        self.serial_port = None
-        self.port = None
-        self.baudrate = None
-        self._reader_thread = None
+        self.serial_port: Any = None
+        self.port: str | None = None
+        self.baudrate: int | None = None
+        self._reader_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
 
     def start(self, port: str, baudrate: int = 115200, timeout: float = 0.1):

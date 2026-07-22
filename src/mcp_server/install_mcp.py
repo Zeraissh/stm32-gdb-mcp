@@ -45,7 +45,7 @@ def server_entry(wants_type: bool) -> dict:
 
 
 def install_json(path: str, key: str, wants_type: bool) -> None:
-    data = {}
+    data: dict = {}
     if os.path.exists(path):
         with open(path, encoding="utf-8") as handle:
             text = handle.read().strip()

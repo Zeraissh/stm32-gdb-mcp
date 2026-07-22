@@ -1,4 +1,5 @@
 import json
+from collections.abc import Sequence
 
 from mcp.types import CallToolResult, TextContent
 
@@ -61,10 +62,10 @@ def content_error(message: str, code: str | None = None, raw_response=None, sugg
     )
 
 
-def call_tool_result(content: list[TextContent]) -> CallToolResult:
+def call_tool_result(content: Sequence[TextContent]) -> CallToolResult:
     payload = parse_content_text(content[0])
     return _CompatibleCallToolResult(
-        content=content,
+        content=list(content),
         structuredContent=payload,
         isError=not bool(payload.get("ok")),
     )

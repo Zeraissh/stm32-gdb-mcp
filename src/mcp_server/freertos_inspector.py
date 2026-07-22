@@ -27,7 +27,7 @@ class FreeRTOSInspector:
 
     def read_tasks(self, max_priorities: int | None = None, max_tasks: int = 64) -> dict:
         priority_count = max_priorities or self._read_int("configMAX_PRIORITIES") or 8
-        tasks = []
+        tasks: list[dict] = []
 
         for priority in range(priority_count):
             tasks.extend(self._walk_list(f"pxReadyTasksLists[{priority}]", "Ready", max_tasks - len(tasks)))

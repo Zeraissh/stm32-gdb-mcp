@@ -1,9 +1,11 @@
 import operator as operator_module
 import re
+from collections.abc import Callable
+from typing import Any
 
 from .gdb_decode import decode_evaluated_value
 
-OPERATORS = {
+OPERATORS: dict[str, Callable[[Any, Any], bool]] = {
     "==": operator_module.eq,
     "!=": operator_module.ne,
     ">": operator_module.gt,

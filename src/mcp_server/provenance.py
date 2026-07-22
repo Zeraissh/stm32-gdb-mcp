@@ -128,7 +128,7 @@ def resolve_source(provenance: dict, by_key: dict, functions: dict) -> dict:
         return {"located": False,
                 "reason": f"no init function {fn_name!r} in the rendered source"}
 
-    join = _ORIGIN_JOIN.get(origin)
+    join = _ORIGIN_JOIN.get(origin) if origin is not None else None
     if join is None:
         return {"located": False, "reason": f"unknown provenance origin {origin!r}"}
     tag, key_field = join

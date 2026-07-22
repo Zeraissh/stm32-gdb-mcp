@@ -73,7 +73,7 @@ _INFRA_KINDS = frozenset({"debug", "system", "clock"})
 
 # HAL config for each abstract GPIO role. ``speed=None`` omits the Speed line
 # (analog pins take no speed).
-_ROLE_HAL = {
+_ROLE_HAL: dict[str, dict] = {
     "af_pp": {"mode": "GPIO_MODE_AF_PP", "pull": "GPIO_NOPULL", "speed": "GPIO_SPEED_FREQ_HIGH"},
     "af_od": {"mode": "GPIO_MODE_AF_OD", "pull": "GPIO_NOPULL", "speed": "GPIO_SPEED_FREQ_HIGH"},
     "analog": {"mode": "GPIO_MODE_ANALOG", "pull": "GPIO_NOPULL", "speed": None},
@@ -173,7 +173,7 @@ _KIND_META = {
 }
 
 # Kinds with no ``.Init`` field map yet: still get a handle + honest pass-through.
-_GENERIC_META = {
+_GENERIC_META: dict[str, dict] = {
     "dac": {"hal_type": "DAC_HandleTypeDef", "handle_prefix": "hdac", "hal_init_call": "HAL_DAC_Init"},
     "can": {"hal_type": "CAN_HandleTypeDef", "handle_prefix": "hcan", "hal_init_call": "HAL_CAN_Init"},
     "usb": {"hal_type": "PCD_HandleTypeDef", "handle_prefix": "hpcd", "hal_init_call": "HAL_PCD_Init"},
@@ -207,7 +207,7 @@ def _kind_meta(kind: str) -> dict:
 # leaving members uninitialized; every defaulted field is tagged ``default`` so it
 # never looks hand-tuned. Required fields, when the engineer does not supply them,
 # stay honest ``TODO`` holes — never guessed.
-_KIND_PARAMS = {
+_KIND_PARAMS: dict[str, dict] = {
     "uart": {
         "order": ["BaudRate", "WordLength", "StopBits", "Parity", "Mode", "HwFlowCtl", "OverSampling"],
         "defaults": {

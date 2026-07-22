@@ -15,7 +15,7 @@ extension is intentionally left to additional table entries.
 DBGMCU_BASE = 0xE0042000
 
 # peripheral -> (register_name, bit) ; register_name -> offset from DBGMCU_BASE
-_FAMILIES = {
+_FAMILIES: dict[str, dict[str, dict]] = {
     "stm32f4": {
         "registers": {"apb1_fz": 0x08, "apb2_fz": 0x0C},
         "bits": {
@@ -86,7 +86,7 @@ def plan_freeze_writes(targets, read_word) -> list:
     ``read_word(address) -> int`` reads the current register value; the plan
     sets every requested freeze bit without disturbing the others.
     """
-    by_address = {}
+    by_address: dict[int, dict] = {}
     for target in targets:
         entry = by_address.setdefault(target["address"], {"address": target["address"], "mask": 0, "peripherals": []})
         entry["mask"] |= target["mask"]
