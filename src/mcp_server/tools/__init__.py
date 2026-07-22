@@ -22,6 +22,7 @@ def load_all() -> None:
         memory_tools,
         meta_tools,
         peripheral_tools,
+        pipeline_tools,
         rtos_tools,
         session_tools,
     )
