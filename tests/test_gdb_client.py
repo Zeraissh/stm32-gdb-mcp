@@ -1,21 +1,11 @@
 import inspect
 import re
 
+from conftest import FakeGdb
+
 import mcp_server.gdb_client as gdb_client_module
 from mcp_server.gdb_client import GdbClientManager
 from mcp_server.timeouts import DEFAULTS
-
-
-class FakeGdb:
-    def __init__(self):
-        self.commands = []
-
-    def write(self, command, timeout_sec=1.0):
-        self.commands.append((command, timeout_sec))
-        return [{"message": "done"}]
-
-    def get_gdb_response(self, timeout_sec=0.1, raise_error_on_timeout=False):
-        return []
 
 
 def test_load_symbols_uses_file_exec_and_symbols_without_download():
