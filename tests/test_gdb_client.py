@@ -288,17 +288,44 @@ def test_windows_backslash_paths_are_normalized_for_gdb():
 
 
 def test_halt_execution_does_not_interrupt_an_already_halted_target():
-    # A pending -exec-interrupt on a halted target fires as a spurious SIGINT on
-    # the NEXT resume, which is what made continue_execution useless in issue #22.
+    # A redundant -exec-interrupt leaves a pending interrupt that fires as a
+    # spurious SIGINT on the next resume (issue #22). The halted state is known
+    # from the *stopped GDB already sent - never by probing the target.
     client = GdbClientManager()
-    client.gdb = ScriptedGdb({
-        "-data-evaluate-expression": [{"type": "result", "message": "done", "payload": {"value": "0x8000123"}}]
-    })
+    client.gdb = ScriptedGdb({"-exec-continue": []}, pending=[
+        {"type": "notify", "message": "stopped", "payload": {"reason": "breakpoint-hit", "bkptno": "1"}},
+    ])
 
     response = client.halt_execution()
 
     assert was_already_halted(response)
     assert not any(cmd.startswith("-exec-interrupt") for cmd, _ in client.gdb.commands)
+
+
+def test_halt_execution_interrupts_a_target_known_to_be_running():
+    client = GdbClientManager()
+    client.gdb = ScriptedGdb({"-exec-continue": [
+        {"type": "notify", "message": "running", "payload": {"thread-id": "all"}},
+    ]})
+    client.run_and_wait(timeout_sec=0.01)          # leaves it running
+    assert client.is_running() is True
+
+    client.halt_execution()
+
+    assert any(cmd.startswith("-exec-interrupt") for cmd, _ in client.gdb.commands)
+
+
+def test_wait_for_stop_timeout_sends_no_command_to_the_target():
+    # THE desync regression, found on a real L151: probing a RUNNING target with
+    # an MI command queues it until the target halts, and the late reply offsets
+    # every later response, wedging the session. A timeout must stay silent.
+    client = GdbClientManager()
+    client.gdb = ScriptedGdb({})
+
+    event = client.wait_for_stop(timeout_sec=0.05)
+
+    assert event["stopped"] is False and event["reason"] == "timeout"
+    assert client.gdb.commands == [], f"timeout path sent {client.gdb.commands}"
 
 
 def test_run_and_wait_drops_stale_stop_records_before_resuming():
@@ -314,26 +341,34 @@ def test_run_and_wait_drops_stale_stop_records_before_resuming():
     assert event["reason"] == "timeout"
 
 
-def test_wait_for_stop_reports_a_halted_target_whose_notification_was_missed():
-    # Windows pipe polling was observed to drop the *stopped of a hit breakpoint;
-    # the probe proves the core is halted, so report it instead of a false timeout.
+def test_wait_for_stop_catches_a_late_stopped_notification():
+    # Windows pipe polling delivered the *stopped of a hit breakpoint late - it
+    # only surfaced on a later call (issue #22). The final patient drain picks up
+    # the straggler instead of reporting a false timeout.
+    class LateGdb(ScriptedGdb):
+        def __init__(self):
+            super().__init__({})
+            self._reads = 0
+
+        def get_gdb_response(self, timeout_sec=0.1, raise_error_on_timeout=False):
+            self._reads += 1
+            if timeout_sec >= 0.5:   # only the longer final read sees it
+                return [{"type": "notify", "message": "stopped",
+                         "payload": {"reason": "breakpoint-hit", "bkptno": "2",
+                                     "frame": {"func": "trigger_divzero", "file": "main.c",
+                                               "line": "21", "addr": "0x8000046"}}}]
+            return []
+
     client = GdbClientManager()
-    client.gdb = ScriptedGdb({
-        "-data-evaluate-expression": [{"type": "result", "message": "done", "payload": {"value": "0x8000123"}}],
-        "-stack-info-frame": [{
-            "type": "result",
-            "message": "done",
-            "payload": {"frame": {"func": "trigger_divzero", "file": "main.c", "line": "21", "addr": "0x8000046"}},
-        }],
-    })
+    client.gdb = LateGdb()
 
     event = client.wait_for_stop(timeout_sec=0.05)
 
     assert event["stopped"] is True
-    assert event["reason"] == "stopped-no-notification"
+    assert event["reason"] == "breakpoint-hit"
     assert event["frame"]["func"] == "trigger_divzero"
     assert event["frame"]["line"] == 21
-    assert "hit counts" in event["note"]
+    assert client.gdb.commands == [], "the straggler must be read, not commanded for"
 
 
 def test_verify_flash_raises_when_sections_are_mis_matched():
@@ -361,3 +396,81 @@ def test_verify_flash_passes_when_every_section_matches():
     })
 
     assert client.verify_flash("fw.elf")
+
+
+def test_connect_seeds_the_halted_state_so_the_first_halt_sends_no_interrupt():
+    # Attaching emits no *stopped (measured on hardware), so without the seed the
+    # first halt_execution interrupts an already-halted target and the stub
+    # queues a SIGINT that fires on the next resume (issue #22).
+    client = GdbClientManager()
+    client.gdb = ScriptedGdb({"-target-select": [
+        {"type": "notify", "message": "thread-group-added", "payload": {"id": "i1"}},
+    ]})
+
+    client.connect()
+    assert client.is_running() is False
+
+    response = client.halt_execution()
+
+    assert was_already_halted(response)
+    assert not any(cmd.startswith("-exec-interrupt") for cmd, _ in client.gdb.commands)
+
+
+def test_connect_does_not_override_a_state_gdb_already_reported():
+    client = GdbClientManager()
+    client.gdb = ScriptedGdb({"-target-select": [
+        {"type": "notify", "message": "running", "payload": {"thread-id": "all"}},
+    ]})
+
+    client.connect()
+
+    assert client.is_running() is True
+
+
+def test_start_gdb_enables_mi_async_before_any_target_is_attached():
+    """Without async, GDB accepts NO command while the target runs — not even
+    -exec-interrupt, which never answers and wedges every command behind it
+    (measured on an L151). GDB refuses the setting once an inferior exists, so it
+    has to be the first thing sent after launching GDB."""
+    import mcp_server.gdb_client as gdb_client_module
+
+    launched = []
+
+    class FakeController(ScriptedGdb):
+        def __init__(self, command=None):
+            super().__init__({})
+            launched.append(command)
+
+    original = gdb_client_module.GdbController
+    gdb_client_module.GdbController = FakeController
+    try:
+        client = GdbClientManager()
+        client.start_gdb()
+    finally:
+        gdb_client_module.GdbController = original
+
+    assert launched, "GDB was not launched"
+    sent = [cmd for cmd, _ in client.gdb.commands]
+    assert sent and sent[0] == "-gdb-set mi-async on", f"first command was {sent[:2]}"
+
+
+def test_start_gdb_survives_a_gdb_without_mi_async():
+    import mcp_server.gdb_client as gdb_client_module
+
+    class RefusingController(ScriptedGdb):
+        def __init__(self, command=None):
+            super().__init__({})
+
+        def write(self, command, timeout_sec=1.0, **kw):
+            super().write(command, timeout_sec=timeout_sec, **kw)
+            raise RuntimeError("Undefined command: mi-async")
+
+    original = gdb_client_module.GdbController
+    gdb_client_module.GdbController = RefusingController
+    try:
+        client = GdbClientManager()
+        client.start_gdb()          # must not raise
+    finally:
+        gdb_client_module.GdbController = original
+
+    assert client.is_alive()

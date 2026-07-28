@@ -7,7 +7,7 @@ from . import dwt
 from .fault_analysis import FAULT_REGISTER_ADDRESSES
 from .gdb_decode import decode_backtrace, decode_breakpoints, decode_registers, decode_variables
 from .mi_guard import GdbCommandError, ensure_ok
-from .stop_event import ALREADY_HALTED_RECORD, parse_stop_event, synthesized_stop_event
+from .stop_event import ALREADY_HALTED_RECORD, parse_stop_event
 from .timeouts import TimeoutConfig
 
 
@@ -44,25 +44,60 @@ class GdbClientManager:
         # PC -> symbol name cache for profiling; entries are only valid for the
         # currently loaded symbol table, so every symbol-table mutation clears it.
         self._symbol_cache: OrderedDict[int, str] = OrderedDict()
+        # Whether the target is running, tracked from GDB's own *running/*stopped
+        # async records. None = not known yet. Never probe a running target with a
+        # command to find this out: the command is queued and only answered once
+        # the target halts, which offsets every later response by one and wedges
+        # the session (found on real L151 hardware).
+        self._running: bool | None = None
 
     def start_gdb(self, gdb_path="arm-none-eabi-gdb"):
         if self.gdb:
             self.stop_gdb()
         self._symbol_cache.clear()
+        self._running = None
         # Use mi3 for latest GDB machine interface features
         self.gdb = GdbController(command=[gdb_path, "--interpreter=mi3"])
+        self._enable_async()
+
+    def _enable_async(self):
+        """Turn on MI async mode, which must happen BEFORE a target is attached.
+
+        In the default all-stop synchronous mode GDB accepts no command at all
+        while the target runs — not even -exec-interrupt, which simply never
+        answers (measured on an L151: 5 s, zero records, and every later command
+        wedged behind it). halt_execution can only work on a running target with
+        async on. GDB rejects the setting once an inferior exists ("Cannot change
+        this setting while the inferior is running"), hence doing it here.
+        """
+        try:
+            self.execute_command("-gdb-set mi-async on", timeout_sec=self.timeouts.get("default"))
+        except Exception:
+            # An old GDB without mi-async still works for halted-target flows.
+            pass
 
     def stop_gdb(self):
         if self.gdb:
             self.gdb.exit()
             self.gdb = None
         self._symbol_cache.clear()
+        self._running = None
 
     def is_alive(self) -> bool:
         return self.gdb is not None
 
+    def is_running(self) -> bool | None:
+        """Last known run state from GDB's async records (None = unknown)."""
+        return self._running
+
     def probe_target(self) -> bool:
-        """Lightweight check that the target still answers an MI evaluation."""
+        """Check that the target answers an MI evaluation.
+
+        Only safe when the target is expected to be HALTED — on a running target
+        the evaluation is not answered until it stops, and the late reply
+        desynchronizes the pipe. Callers that merely need the run state should
+        read ``is_running()`` instead.
+        """
         if not self.gdb:
             return False
         try:
@@ -71,21 +106,47 @@ class GdbClientManager:
         except Exception:
             return False
 
+    def _note_state(self, records):
+        """Update the running/halted state from GDB's async notifications."""
+        for record in records or []:
+            message = record.get("message")
+            if message == "running":
+                self._running = True
+            elif message == "stopped":
+                self._running = False
+        return records
+
     def execute_command(self, cmd: str, timeout_sec: float | None = None):
         if not self.gdb:
             raise RuntimeError("GDB is not running.")
         if timeout_sec is None:
             timeout_sec = self.timeouts.get("default")
-        return self.gdb.write(cmd, timeout_sec=timeout_sec)
+        return self._note_state(self.gdb.write(cmd, timeout_sec=timeout_sec))
 
     def execute_cli_command(self, cmd: str, timeout_sec: float | None = None):
         return self.execute_command(cmd, timeout_sec=timeout_sec)
 
     def connect(self, host="localhost", port=3333):
-        """Connects to the GDB Server."""
-        return self.execute_command(
+        """Connects to the GDB Server.
+
+        Attaching does not produce a ``*stopped`` record (measured against
+        OpenOCD on an L151: only thread-group-added and console text), so the run
+        state has to be seeded here. Halted is the right seed because GDB servers
+        halt the target when GDB attaches — that is exactly why self_check's
+        identity reads succeed immediately after connect. Any later
+        ``*running``/``*stopped`` corrects it.
+
+        Seeding matters: without it the first halt_execution has no state to
+        consult, sends -exec-interrupt at an already-halted target, and the stub
+        queues an interrupt that fires as a spurious SIGINT on the next resume —
+        the symptom reported in issue #22.
+        """
+        resp = self.execute_command(
             f"-target-select extended-remote {host}:{port}", timeout_sec=self.timeouts.get("connect")
         )
+        if self._running is None:
+            self._running = False
+        return resp
 
     def load_symbols(self, filepath: str):
         """Loads symbols/exec from an ELF/AXF without flashing the device.
@@ -138,20 +199,24 @@ class GdbClientManager:
         """Consume any pending async/stale GDB responses left in the buffer."""
         self._drain_collect(rounds)
 
-    def _drain_collect(self, rounds: int = 5) -> list:
+    def _drain_collect(self, rounds: int = 5, per_read_sec: float = 0.1) -> list:
         """Like _drain, but returns the drained records for inspection."""
         records: list = []
         if not self.gdb:
             return records
         for _ in range(rounds):
-            try:
-                extra = self.gdb.get_gdb_response(timeout_sec=0.1, raise_error_on_timeout=False)
-            except TypeError:
-                extra = self.gdb.get_gdb_response(timeout_sec=0.1)
+            extra = self._read_async(per_read_sec)
             if not extra:
                 break
             records.extend(extra)
-        return records
+        return self._note_state(records)
+
+    def _read_async(self, timeout_sec: float):
+        """One non-raising async read (older pygdbmi lacks the keyword)."""
+        try:
+            return self.gdb.get_gdb_response(timeout_sec=timeout_sec, raise_error_on_timeout=False)
+        except TypeError:
+            return self.gdb.get_gdb_response(timeout_sec=timeout_sec)
 
     def set_breakpoint(self, location: str, condition=None, temporary=False, ignore_count=None):
         command = build_break_insert_command(location, condition, temporary, ignore_count)
@@ -173,17 +238,19 @@ class GdbClientManager:
 
         Sending -exec-interrupt to an already-halted target leaves a pending
         interrupt in the remote stub that fires on the NEXT resume as a spurious
-        immediate SIGINT (issue #22). So first drain pending async records and
-        probe: if the target is already stopped, report that without interrupting.
+        immediate SIGINT (issue #22). So drain first and consult the run state
+        GDB has already told us about; the state must never be established by
+        sending a command, which on a running target would not be answered until
+        it halts and would desynchronize every later response.
         """
         pending = self._drain_collect()
-        if parse_stop_event(pending)["stopped"] or self.probe_target():
+        if parse_stop_event(pending)["stopped"] or self._running is False:
             pending.append(ALREADY_HALTED_RECORD.copy())
             return pending
         resp = self.execute_command("-exec-interrupt", timeout_sec=self.timeouts.get("halt"))
         # Absorb the *stopped the interrupt produces so it cannot later be mistaken
         # for the stop of the NEXT resume.
-        return pending + list(resp) + self._drain_collect()
+        return pending + list(resp) + self._drain_collect(per_read_sec=0.3)
 
     def step_over(self):
         return self.execute_command("-exec-next", timeout_sec=self.timeouts.get("step"))
@@ -420,11 +487,14 @@ class GdbClientManager:
     def _wait_for_stop(self, initial, timeout_sec: float):
         """Drain async records until a `*stopped` arrives or timeout elapses.
 
-        On timeout, probe the target: on Windows the `*stopped` notification of
-        a hit breakpoint has been observed to go missing in the pipe polling
-        (issue #22), leaving the agent convinced the path was never reached. If
-        a halted-only read succeeds, the target DID stop — drain once more for
-        the late notification, else synthesize a stop event from the current frame.
+        Windows pipe polling has been observed to deliver the `*stopped` of a hit
+        breakpoint late — it only surfaced on a later call (issue #22), leaving
+        the agent convinced the path was never reached. So before declaring a
+        timeout, read once more with a longer per-read window to catch a
+        straggler. This deliberately does NOT probe the target with a command:
+        on a still-running target that command is only answered once it halts,
+        and the late reply desynchronizes every later response (seen wedging a
+        real L151 session).
         """
         records = list(initial or [])
         event = parse_stop_event(records)
@@ -433,36 +503,17 @@ class GdbClientManager:
 
         deadline = time.monotonic() + timeout_sec
         while time.monotonic() < deadline:
-            try:
-                more = self.gdb.get_gdb_response(timeout_sec=0.2, raise_error_on_timeout=False)
-            except TypeError:
-                # Older pygdbmi without the keyword still returns [] on timeout.
-                more = self.gdb.get_gdb_response(timeout_sec=0.2)
+            more = self._read_async(0.2)
             if more:
-                records.extend(more)
+                records.extend(self._note_state(more))
                 event = parse_stop_event(records)
                 if event["stopped"]:
                     return event, records
 
-        if self.probe_target():
-            records.extend(self._drain_collect())
-            event = parse_stop_event(records)
-            if event["stopped"]:
-                return event, records
-            return synthesized_stop_event(self._current_frame()), records
+        straggler = self._drain_collect(rounds=2, per_read_sec=0.5)
+        if straggler:
+            records.extend(straggler)
         return parse_stop_event(records), records
-
-    def _current_frame(self) -> dict | None:
-        """The selected frame of a halted target via -stack-info-frame."""
-        try:
-            resp = self.execute_command("-stack-info-frame", timeout_sec=self.timeouts.get("stack"))
-        except Exception:
-            return None
-        for record in resp:
-            payload = record.get("payload")
-            if isinstance(payload, dict) and isinstance(payload.get("frame"), dict):
-                return payload["frame"]
-        return None
 
     def run_and_wait(self, timeout_sec: float | None = None):
         """Resume the target and report why it next stops (or a timeout)."""
@@ -477,6 +528,7 @@ class GdbClientManager:
             initial = self.gdb.write("-exec-continue", timeout_sec=0.2, raise_error_on_timeout=False)
         except TypeError:
             initial = self.gdb.write("-exec-continue", timeout_sec=0.2)
+        self._note_state(initial)
         ensure_ok(initial, "run_and_wait: continue")
         event, records = self._wait_for_stop(initial, timeout_sec)
         event["raw_response"] = records
