@@ -1,9 +1,10 @@
 """Golden snapshot of the advertised tool surface.
 
 The v0.6.0 decomposition moves every Tool schema out of server.py; this snapshot
-pins the complete advertised surface (names, order, descriptions, input/output
-schemas including merged oneOf branches, annotations) plus the compact-mode name
-list, so any behavioral drift during the refactor fails loudly.
+pins the complete advertised surface (names, order, descriptions, input schemas
+including merged oneOf branches, annotations) plus the compact-mode name list,
+so any behavioral drift fails loudly. Tools carry no per-tool outputSchema —
+they share one response envelope, documented in the server instructions.
 
 To regenerate after an INTENTIONAL surface change:
     STM32_GDB_MCP_REGEN_GOLDEN=1 python -m pytest tests/test_tool_surface_snapshot.py
