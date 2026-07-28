@@ -12,6 +12,7 @@ import time
 from .debug_experiments import capture_expressions
 from .gdb_decode import registers_summary
 from .sampling import sample_expressions, sample_interval_from_config
+from .stop_event import parse_stop_event, was_already_halted
 
 
 def _halted_context(gdb_client) -> dict:
@@ -92,38 +93,59 @@ def run_for_duration(
     monotonic_fn = monotonic or time.monotonic
     started = monotonic_fn()
     run_response = gdb_client.continue_execution()
+    # If the target stopped the instant it resumed (pending interrupt, instant
+    # breakpoint, fault), sleeping through the duration and reporting it as a
+    # clean free-run would be a lie (issue #22) — capture the stop instead.
+    stopped_early = None
+    run_event = parse_stop_event(run_response)
+    if run_event["stopped"]:
+        stopped_early = run_event
     sample_result = None
-    if sample:
-        sample_result = sample_expressions(
-            gdb_client,
-            duration_sec=duration_sec,
-            interval_sec=sample_interval_from_config(sample),
-            expressions=sample.get("expressions"),
-            table=sample.get("table"),
-            max_samples=sample.get("max_samples", 10_000),
-            sleep=sleep_fn,
-            monotonic=monotonic_fn,
-        )
-    else:
-        sleep_fn(float(duration_sec))
+    if stopped_early is None:
+        if sample:
+            sample_result = sample_expressions(
+                gdb_client,
+                duration_sec=duration_sec,
+                interval_sec=sample_interval_from_config(sample),
+                expressions=sample.get("expressions"),
+                table=sample.get("table"),
+                max_samples=sample.get("max_samples", 10_000),
+                sleep=sleep_fn,
+                monotonic=monotonic_fn,
+            )
+        else:
+            sleep_fn(float(duration_sec))
     elapsed = monotonic_fn() - started
 
     halt_method = "halt_execution"
     halt_error = None
-    try:
-        halt_response = gdb_client.halt_execution()
-    except Exception as exc:
-        halt_error = str(exc)
-        if recover is None:
-            raise
-        recover()
-        halt_response = gdb_client.halt_execution()
-        halt_method = "recover_session+halt_execution"
+    if stopped_early is not None:
+        halt_method = "already_stopped"
+        halt_response = []
+    else:
+        try:
+            halt_response = gdb_client.halt_execution()
+        except Exception as exc:
+            halt_error = str(exc)
+            if recover is None:
+                raise
+            recover()
+            halt_response = gdb_client.halt_execution()
+            halt_method = "recover_session+halt_execution"
+        # A halt of our own making stops with signal-received/SIGINT; any other
+        # reason (or a target found already halted) means it stopped on its own
+        # inside the window — a breakpoint, watchpoint, or fault we must report.
+        halt_event = parse_stop_event(halt_response)
+        if was_already_halted(halt_response):
+            stopped_early = halt_event if halt_event["stopped"] else {"stopped": True, "reason": "unknown"}
+        elif halt_event["stopped"] and halt_event.get("reason") not in (None, "signal-received"):
+            stopped_early = halt_event
 
     context = _halted_context(gdb_client)
     result = {
         "duration_sec": float(duration_sec),
         "elapsed_sec": round(elapsed, 3),
+        "ran_full_duration": stopped_early is None,
         "run": {"method": "continue_execution", "raw_response": run_response},
         "halt": {"method": halt_method, "raw_response": halt_response},
         "final_frame": context["backtrace"][0] if context["backtrace"] else None,
@@ -132,6 +154,8 @@ def run_for_duration(
         "capture": {},
         "resume_after": bool(resume_after),
     }
+    if stopped_early is not None:
+        result["stopped_early"] = stopped_early
     if sample_result is not None:
         result["sample"] = sample_result
     if halt_error is not None:

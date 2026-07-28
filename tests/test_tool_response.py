@@ -15,17 +15,27 @@ from mcp_server.tool_response import (
 def test_success_response_wraps_data_and_next_actions():
     response = success_response(
         {"value": 42},
-        raw_response=[{"message": "done"}],
         suggested_next_actions=["capture_debug_snapshot"],
     )
 
     assert response == {
         "ok": True,
         "data": {"value": 42},
-        "error": None,
-        "raw_response": [{"message": "done"}],
         "suggested_next_actions": ["capture_debug_snapshot"],
     }
+
+
+def test_success_response_omits_empty_envelope_fields():
+    assert success_response() == {"ok": True}
+
+
+def test_success_response_drops_raw_response_unless_verbose(monkeypatch):
+    monkeypatch.delenv("STM32_GDB_MCP_VERBOSE", raising=False)
+    assert "raw_response" not in success_response({"v": 1}, raw_response=[{"message": "done"}])
+
+    monkeypatch.setenv("STM32_GDB_MCP_VERBOSE", "1")
+    verbose = success_response({"v": 1}, raw_response=[{"message": "done"}])
+    assert verbose["raw_response"] == [{"message": "done"}]
 
 
 def test_error_response_uses_stable_shape():
@@ -33,22 +43,25 @@ def test_error_response_uses_stable_shape():
 
     assert response == {
         "ok": False,
-        "data": None,
         "error": {"message": "GDB is not running", "code": "gdb_not_running"},
-        "raw_response": None,
-        "suggested_next_actions": [],
     }
 
 
-def test_content_success_returns_textcontent_with_json_envelope():
-    content = content_success({"message": "ok"}, raw_response=[{"message": "done"}])
+def test_error_response_always_keeps_raw_response(monkeypatch):
+    monkeypatch.delenv("STM32_GDB_MCP_VERBOSE", raising=False)
+    response = error_response("boom", code="x", raw_response=[{"message": "error"}])
+    assert response["raw_response"] == [{"message": "error"}]
+
+
+def test_content_success_returns_compact_json_envelope():
+    content = content_success({"message": "ok"})
 
     assert isinstance(content, TextContent)
+    assert "\n" not in content.text  # compact, not pretty-printed
     payload = json.loads(content.text)
     assert payload["ok"] is True
     assert payload["data"] == {"message": "ok"}
-    assert payload["raw_response"] == [{"message": "done"}]
-    assert payload["error"] is None
+    assert "error" not in payload
 
 
 def test_content_error_returns_textcontent_with_json_envelope():

@@ -81,61 +81,7 @@
     },
     "type": "object"
    },
-   "name": "start_debug_session",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "start_debug_session"
   },
   {
    "annotations": {
@@ -154,61 +100,7 @@
     },
     "type": "object"
    },
-   "name": "stop_debug_session",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "stop_debug_session"
   },
   {
    "annotations": {
@@ -235,61 +127,7 @@
     },
     "type": "object"
    },
-   "name": "self_check",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "self_check"
   },
   {
    "annotations": {
@@ -308,61 +146,7 @@
     },
     "type": "object"
    },
-   "name": "detect_probe",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "detect_probe"
   },
   {
    "annotations": {
@@ -396,61 +180,7 @@
     ],
     "type": "object"
    },
-   "name": "suggest_server_args",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "suggest_server_args"
   },
   {
    "annotations": {
@@ -476,61 +206,7 @@
     ],
     "type": "object"
    },
-   "name": "set_adapter_speed",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "set_adapter_speed"
   },
   {
    "annotations": {
@@ -574,61 +250,7 @@
     ],
     "type": "object"
    },
-   "name": "batch",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "batch"
   },
   {
    "annotations": {
@@ -658,61 +280,7 @@
     ],
     "type": "object"
    },
-   "name": "call",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "call"
   },
   {
    "annotations": {
@@ -739,61 +307,7 @@
     },
     "type": "object"
    },
-   "name": "tool_help",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "tool_help"
   },
   {
    "annotations": {
@@ -812,61 +326,7 @@
     },
     "type": "object"
    },
-   "name": "recover_session",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "recover_session"
   },
   {
    "annotations": {
@@ -941,61 +401,7 @@
     ],
     "type": "object"
    },
-   "name": "build_firmware",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "build_firmware"
   },
   {
    "annotations": {
@@ -1018,61 +424,7 @@
     },
     "type": "object"
    },
-   "name": "load_symbols",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "load_symbols"
   },
   {
    "annotations": {
@@ -1102,61 +454,7 @@
     ],
     "type": "object"
    },
-   "name": "flash_firmware",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "flash_firmware"
   },
   {
    "annotations": {
@@ -1190,61 +488,7 @@
     ],
     "type": "object"
    },
-   "name": "reset_target",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "reset_target"
   },
   {
    "annotations": {
@@ -1263,61 +507,7 @@
     },
     "type": "object"
    },
-   "name": "continue_execution",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "continue_execution"
   },
   {
    "annotations": {
@@ -1336,61 +526,7 @@
     },
     "type": "object"
    },
-   "name": "halt_execution",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "halt_execution"
   },
   {
    "annotations": {
@@ -1413,61 +549,7 @@
     },
     "type": "object"
    },
-   "name": "run_and_wait",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "run_and_wait"
   },
   {
    "annotations": {
@@ -1509,61 +591,7 @@
     ],
     "type": "object"
    },
-   "name": "debug_until",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "debug_until"
   },
   {
    "annotations": {
@@ -1582,61 +610,7 @@
     },
     "type": "object"
    },
-   "name": "capture_state",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "capture_state"
   },
   {
    "annotations": {
@@ -1670,61 +644,7 @@
     ],
     "type": "object"
    },
-   "name": "flash_and_run",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "flash_and_run"
   },
   {
    "annotations": {
@@ -1806,61 +726,7 @@
     ],
     "type": "object"
    },
-   "name": "run_for_duration",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "run_for_duration"
   },
   {
    "annotations": {
@@ -1883,61 +749,7 @@
     },
     "type": "object"
    },
-   "name": "wait_for_stop",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "wait_for_stop"
   },
   {
    "annotations": {
@@ -1970,61 +782,7 @@
     },
     "type": "object"
    },
-   "name": "step",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "step"
   },
   {
    "annotations": {
@@ -2050,61 +808,7 @@
     ],
     "type": "object"
    },
-   "name": "read_variable",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "read_variable"
   },
   {
    "annotations": {
@@ -2135,61 +839,7 @@
     ],
     "type": "object"
    },
-   "name": "read_memory",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "read_memory"
   },
   {
    "annotations": {
@@ -2220,61 +870,7 @@
     ],
     "type": "object"
    },
-   "name": "write_memory",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "write_memory"
   },
   {
    "annotations": {
@@ -2297,61 +893,7 @@
     },
     "type": "object"
    },
-   "name": "read_call_stack",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "read_call_stack"
   },
   {
    "annotations": {
@@ -2370,61 +912,7 @@
     },
     "type": "object"
    },
-   "name": "diagnose_fault",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "diagnose_fault"
   },
   {
    "annotations": {
@@ -2461,61 +949,7 @@
     ],
     "type": "object"
    },
-   "name": "configure_debug_freeze",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "configure_debug_freeze"
   },
   {
    "annotations": {
@@ -2550,61 +984,7 @@
     },
     "type": "object"
    },
-   "name": "analyze_stack",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "analyze_stack"
   },
   {
    "annotations": {
@@ -2623,61 +1003,7 @@
     },
     "type": "object"
    },
-   "name": "reconstruct_fault_context",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "reconstruct_fault_context"
   },
   {
    "annotations": {
@@ -2700,61 +1026,7 @@
     },
     "type": "object"
    },
-   "name": "inspect_project",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "inspect_project"
   },
   {
    "annotations": {
@@ -2773,61 +1045,7 @@
     },
     "type": "object"
    },
-   "name": "detect_rtos",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "detect_rtos"
   },
   {
    "annotations": {
@@ -2872,61 +1090,7 @@
     ],
     "type": "object"
    },
-   "name": "read_freertos",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "read_freertos"
   },
   {
    "annotations": {
@@ -2952,61 +1116,7 @@
     ],
     "type": "object"
    },
-   "name": "load_svd",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "load_svd"
   },
   {
    "annotations": {
@@ -3037,61 +1147,7 @@
     ],
     "type": "object"
    },
-   "name": "read_peripheral_register",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "read_peripheral_register"
   },
   {
    "annotations": {
@@ -3122,61 +1178,7 @@
     ],
     "type": "object"
    },
-   "name": "decode_peripheral_register",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "decode_peripheral_register"
   },
   {
    "annotations": {
@@ -3215,61 +1217,7 @@
     ],
     "type": "object"
    },
-   "name": "track_variable",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "track_variable"
   },
   {
    "annotations": {
@@ -3301,61 +1249,7 @@
     },
     "type": "object"
    },
-   "name": "get_session",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "get_session"
   },
   {
    "annotations": {
@@ -3374,61 +1268,7 @@
     },
     "type": "object"
    },
-   "name": "clear_session_journal",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "clear_session_journal"
   },
   {
    "annotations": {
@@ -3447,61 +1287,7 @@
     },
     "type": "object"
    },
-   "name": "list_sessions",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "list_sessions"
   },
   {
    "annotations": {
@@ -3527,61 +1313,7 @@
     ],
     "type": "object"
    },
-   "name": "close_session",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "close_session"
   },
   {
    "annotations": {
@@ -3620,61 +1352,7 @@
     ],
     "type": "object"
    },
-   "name": "report_issue",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "report_issue"
   },
   {
    "annotations": {
@@ -3708,61 +1386,7 @@
     ],
     "type": "object"
    },
-   "name": "export_debug_report",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "export_debug_report"
   },
   {
    "annotations": {
@@ -3807,61 +1431,7 @@
     },
     "type": "object"
    },
-   "name": "run_scenario",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "run_scenario"
   },
   {
    "annotations": {
@@ -3887,61 +1457,7 @@
     ],
     "type": "object"
    },
-   "name": "run_to_line",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "run_to_line"
   },
   {
    "annotations": {
@@ -3968,61 +1484,7 @@
     },
     "type": "object"
    },
-   "name": "disassemble",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "disassemble"
   },
   {
    "annotations": {
@@ -4048,61 +1510,7 @@
     ],
     "type": "object"
    },
-   "name": "verify_flash",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "verify_flash"
   },
   {
    "annotations": {
@@ -4148,61 +1556,7 @@
     ],
     "type": "object"
    },
-   "name": "setup_swo",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "setup_swo"
   },
   {
    "annotations": {
@@ -4229,61 +1583,7 @@
     },
     "type": "object"
    },
-   "name": "sample_pc",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "sample_pc"
   },
   {
    "annotations": {
@@ -4314,61 +1614,7 @@
     },
     "type": "object"
    },
-   "name": "import_netlist",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "import_netlist"
   },
   {
    "annotations": {
@@ -4391,61 +1637,7 @@
     },
     "type": "object"
    },
-   "name": "describe_board",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "describe_board"
   },
   {
    "annotations": {
@@ -4468,61 +1660,7 @@
     },
     "type": "object"
    },
-   "name": "validate_board",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "validate_board"
   },
   {
    "annotations": {
@@ -4549,61 +1687,7 @@
     },
     "type": "object"
    },
-   "name": "load_acceptance",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "load_acceptance"
   },
   {
    "annotations": {
@@ -4622,61 +1706,7 @@
     },
     "type": "object"
    },
-   "name": "run_acceptance",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "run_acceptance"
   },
   {
    "annotations": {
@@ -4699,61 +1729,7 @@
     },
     "type": "object"
    },
-   "name": "describe_acceptance",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "describe_acceptance"
   },
   {
    "annotations": {
@@ -4788,61 +1764,7 @@
     },
     "type": "object"
    },
-   "name": "start_acceptance_loop",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "start_acceptance_loop"
   },
   {
    "annotations": {
@@ -4865,61 +1787,7 @@
     },
     "type": "object"
    },
-   "name": "run_acceptance_iteration",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "run_acceptance_iteration"
   },
   {
    "annotations": {
@@ -4938,61 +1806,7 @@
     },
     "type": "object"
    },
-   "name": "acceptance_loop_status",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "acceptance_loop_status"
   },
   {
    "annotations": {
@@ -5015,61 +1829,7 @@
     },
     "type": "object"
    },
-   "name": "import_spec",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "import_spec"
   },
   {
    "annotations": {
@@ -5104,61 +1864,7 @@
     },
     "type": "object"
    },
-   "name": "design_framework",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "design_framework"
   },
   {
    "annotations": {
@@ -5181,61 +1887,7 @@
     },
     "type": "object"
    },
-   "name": "describe_framework",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "describe_framework"
   },
   {
    "annotations": {
@@ -5258,61 +1910,7 @@
     },
     "type": "object"
    },
-   "name": "render_framework",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "render_framework"
   },
   {
    "annotations": {
@@ -5367,61 +1965,7 @@
     },
     "type": "object"
    },
-   "name": "synthesize_acceptance",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "synthesize_acceptance"
   },
   {
    "annotations": {
@@ -5464,61 +2008,7 @@
     },
     "type": "object"
    },
-   "name": "solve_clock_tree",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "solve_clock_tree"
   },
   {
    "annotations": {
@@ -5561,61 +2051,7 @@
     },
     "type": "object"
    },
-   "name": "solve_timer",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "solve_timer"
   },
   {
    "annotations": {
@@ -5646,61 +2082,7 @@
     },
     "type": "object"
    },
-   "name": "load_device_pack",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "load_device_pack"
   },
   {
    "annotations": {
@@ -5783,61 +2165,7 @@
     },
     "type": "object"
    },
-   "name": "run_pipeline",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "run_pipeline"
   },
   {
    "annotations": {
@@ -6015,61 +2343,7 @@
     ],
     "type": "object"
    },
-   "name": "logging",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "logging"
   },
   {
    "annotations": {
@@ -6208,61 +2482,7 @@
     ],
     "type": "object"
    },
-   "name": "breakpoint",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "breakpoint"
   },
   {
    "annotations": {
@@ -6414,61 +2634,7 @@
     ],
     "type": "object"
    },
-   "name": "expressions",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "expressions"
   },
   {
    "annotations": {
@@ -6544,61 +2710,7 @@
     ],
     "type": "object"
    },
-   "name": "coredump",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "coredump"
   },
   {
    "annotations": {
@@ -6669,61 +2781,7 @@
     ],
     "type": "object"
    },
-   "name": "timeouts",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "timeouts"
   },
   {
    "annotations": {
@@ -6827,61 +2885,7 @@
     ],
     "type": "object"
    },
-   "name": "debug_config",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "debug_config"
   },
   {
    "annotations": {
@@ -6982,61 +2986,7 @@
     ],
     "type": "object"
    },
-   "name": "debug_profile",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "debug_profile"
   },
   {
    "annotations": {
@@ -7128,61 +3078,7 @@
     ],
     "type": "object"
    },
-   "name": "read_registers",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "read_registers"
   },
   {
    "annotations": {
@@ -7348,61 +3244,7 @@
     ],
     "type": "object"
    },
-   "name": "inspect_symbol",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "inspect_symbol"
   },
   {
    "annotations": {
@@ -7510,61 +3352,7 @@
     ],
     "type": "object"
    },
-   "name": "typed_memory",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "typed_memory"
   },
   {
    "annotations": {
@@ -7678,61 +3466,7 @@
     ],
     "type": "object"
    },
-   "name": "write_guard",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "write_guard"
   },
   {
    "annotations": {
@@ -7818,61 +3552,7 @@
     ],
     "type": "object"
    },
-   "name": "snapshot",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "snapshot"
   },
   {
    "annotations": {
@@ -7977,61 +3657,7 @@
     ],
     "type": "object"
    },
-   "name": "frame",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "frame"
   },
   {
    "annotations": {
@@ -8119,61 +3745,7 @@
     ],
     "type": "object"
    },
-   "name": "session_diagnostics",
-   "outputSchema": {
-    "additionalProperties": false,
-    "properties": {
-     "data": {},
-     "error": {
-      "anyOf": [
-       {
-        "type": "null"
-       },
-       {
-        "additionalProperties": false,
-        "properties": {
-         "code": {
-          "anyOf": [
-           {
-            "type": "string"
-           },
-           {
-            "type": "null"
-           }
-          ]
-         },
-         "message": {
-          "type": "string"
-         }
-        },
-        "required": [
-         "message",
-         "code"
-        ],
-        "type": "object"
-       }
-      ]
-     },
-     "ok": {
-      "type": "boolean"
-     },
-     "raw_response": {},
-     "suggested_next_actions": {
-      "items": {
-       "type": "string"
-      },
-      "type": "array"
-     }
-    },
-    "required": [
-     "ok",
-     "data",
-     "error",
-     "raw_response",
-     "suggested_next_actions"
-    ],
-    "type": "object"
-   }
+   "name": "session_diagnostics"
   }
  ]
 }

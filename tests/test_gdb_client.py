@@ -1,10 +1,13 @@
 import inspect
 import re
 
+import pytest
 from conftest import FakeGdb
 
 import mcp_server.gdb_client as gdb_client_module
 from mcp_server.gdb_client import GdbClientManager
+from mcp_server.mi_guard import GdbCommandError
+from mcp_server.stop_event import was_already_halted
 from mcp_server.timeouts import DEFAULTS
 
 
@@ -59,7 +62,7 @@ def test_symbolize_pc_caches_lookups_and_load_symbols_invalidates():
             if command.startswith("info symbol"):
                 self.symbol_lookups += 1
                 return [{"type": "console", "payload": "vTaskDelay + 4 in section .text\n"}]
-            return [{"message": "done"}]
+            return [{"type": "result", "message": "done", "payload": None}]
 
     client = GdbClientManager()
     client.gdb = CountingGdb()
@@ -109,18 +112,18 @@ def test_read_core_registers_uses_gdb_cli_info_registers():
 
     response = client.read_core_registers()
 
-    assert response == [{"message": "done"}]
+    assert response == [{"type": "result", "message": "done", "payload": None}]
     assert client.gdb.commands == [("info registers", 2.0)]
 
 
 def test_halt_execution_uses_configured_halt_timeout():
     client = GdbClientManager()
-    client.gdb = FakeGdb()
+    client.gdb = FakeGdb()  # canned replies carry no register value -> probe says "running"
     client.timeouts.set({"halt": 4.5})
 
     client.halt_execution()
 
-    assert client.gdb.commands == [("-exec-interrupt", 4.5)]
+    assert ("-exec-interrupt", 4.5) in client.gdb.commands
 
 
 def test_formerly_hardcoded_timeouts_are_overridable():
@@ -193,3 +196,168 @@ def test_extract_first_memory_word_prefers_structured_memory_over_stop_console()
     ]
 
     assert client._extract_first_memory_word(response) == 0x412FC230
+
+
+# --- issue #21: ok:true despite raw GDB errors -------------------------------
+
+
+class ScriptedGdb:
+    """Answers each write from a {command-prefix: records} script."""
+
+    def __init__(self, script, default=None, pending=None):
+        self.commands = []
+        self._script = script
+        self._default = default if default is not None else [
+            {"type": "result", "message": "done", "payload": None}
+        ]
+        self._pending = list(pending or [])
+
+    def write(self, command, timeout_sec=1.0, raise_error_on_timeout=True):
+        self.commands.append((command, timeout_sec))
+        for prefix, records in self._script.items():
+            if command.startswith(prefix):
+                return list(records)
+        return list(self._default)
+
+    def get_gdb_response(self, timeout_sec=0.1, raise_error_on_timeout=False):
+        batch, self._pending = self._pending, []
+        return list(batch)
+
+
+def test_load_symbols_raises_when_gdb_says_no_such_file():
+    client = GdbClientManager()
+    client.gdb = ScriptedGdb({
+        "-file-exec-and-symbols": [
+            {"type": "console", "payload": "fw.axf: No such file or directory."},
+            {"type": "result", "message": "done", "payload": None},
+        ]
+    })
+
+    with pytest.raises(GdbCommandError, match="No such file or directory"):
+        client.load_symbols("fw.axf")
+
+
+def test_flash_raises_when_the_erase_fails_instead_of_reporting_success():
+    client = GdbClientManager()
+    client.gdb = ScriptedGdb({
+        "-target-download": [
+            {"type": "log", "payload": "Error erasing flash with vFlashErase packet\n"},
+            {"type": "result", "message": "done", "payload": None},
+        ]
+    })
+
+    with pytest.raises(GdbCommandError, match="Error erasing flash"):
+        client.load_firmware("fw.elf")
+
+
+def test_flash_raises_when_the_download_never_reports_completion():
+    client = GdbClientManager()
+    client.gdb = ScriptedGdb({
+        "-target-download": [{"type": "console", "payload": "Loading section .text\n"}]
+    })
+
+    with pytest.raises(GdbCommandError, match="did not report completion"):
+        client.load_firmware("fw.elf")
+
+
+def test_typed_memory_write_raises_when_no_symbol_table_is_loaded():
+    client = GdbClientManager()
+    client.gdb = ScriptedGdb({
+        "set {": [
+            {"type": "log", "payload": "No symbol table is loaded.  Use the \"file\" command."},
+            {"type": "result", "message": "done", "payload": None},
+        ]
+    })
+
+    with pytest.raises(GdbCommandError, match="No symbol table"):
+        client.write_typed_memory("0x20000000", "1", width_bits=32)
+
+
+def test_windows_backslash_paths_are_normalized_for_gdb():
+    # GDB/MI eats backslashes as escapes, so C:\proj\fw.elf silently became a
+    # nonexistent path that still reported ok:true (issue #22, second half).
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+
+    client.load_symbols(r"C:\proj\build\fw.elf")
+
+    assert client.gdb.commands[0][0] == "-file-exec-and-symbols C:/proj/build/fw.elf"
+
+
+# --- issue #22: missed stops and leaked SIGINT --------------------------------
+
+
+def test_halt_execution_does_not_interrupt_an_already_halted_target():
+    # A pending -exec-interrupt on a halted target fires as a spurious SIGINT on
+    # the NEXT resume, which is what made continue_execution useless in issue #22.
+    client = GdbClientManager()
+    client.gdb = ScriptedGdb({
+        "-data-evaluate-expression": [{"type": "result", "message": "done", "payload": {"value": "0x8000123"}}]
+    })
+
+    response = client.halt_execution()
+
+    assert was_already_halted(response)
+    assert not any(cmd.startswith("-exec-interrupt") for cmd, _ in client.gdb.commands)
+
+
+def test_run_and_wait_drops_stale_stop_records_before_resuming():
+    # Without the pre-drain, the *stopped left over from a previous halt is
+    # returned as if it were the stop of THIS run.
+    stale = [{"type": "notify", "message": "stopped", "payload": {"reason": "breakpoint-hit", "bkptno": "1"}}]
+    client = GdbClientManager()
+    client.gdb = ScriptedGdb({"-exec-continue": []}, pending=stale)
+
+    event = client.run_and_wait(timeout_sec=0.05)
+
+    assert event["stopped"] is False
+    assert event["reason"] == "timeout"
+
+
+def test_wait_for_stop_reports_a_halted_target_whose_notification_was_missed():
+    # Windows pipe polling was observed to drop the *stopped of a hit breakpoint;
+    # the probe proves the core is halted, so report it instead of a false timeout.
+    client = GdbClientManager()
+    client.gdb = ScriptedGdb({
+        "-data-evaluate-expression": [{"type": "result", "message": "done", "payload": {"value": "0x8000123"}}],
+        "-stack-info-frame": [{
+            "type": "result",
+            "message": "done",
+            "payload": {"frame": {"func": "trigger_divzero", "file": "main.c", "line": "21", "addr": "0x8000046"}},
+        }],
+    })
+
+    event = client.wait_for_stop(timeout_sec=0.05)
+
+    assert event["stopped"] is True
+    assert event["reason"] == "stopped-no-notification"
+    assert event["frame"]["func"] == "trigger_divzero"
+    assert event["frame"]["line"] == 21
+    assert "hit counts" in event["note"]
+
+
+def test_verify_flash_raises_when_sections_are_mis_matched():
+    # compare-sections reports a mismatch in console text while the MI command
+    # itself succeeds — the exact shape of a false ok:true (issue #21).
+    client = GdbClientManager()
+    client.gdb = ScriptedGdb({
+        "compare-sections": [
+            {"type": "console", "payload": "Section .text, range 0x8000000 -- 0x8001234: MIS-MATCHED!\n"},
+            {"type": "result", "message": "done", "payload": None},
+        ]
+    })
+
+    with pytest.raises(GdbCommandError, match="does not match the ELF"):
+        client.verify_flash("fw.elf")
+
+
+def test_verify_flash_passes_when_every_section_matches():
+    client = GdbClientManager()
+    client.gdb = ScriptedGdb({
+        "compare-sections": [
+            {"type": "console", "payload": "Section .text, range 0x8000000 -- 0x8001234: matched.\n"},
+            {"type": "result", "message": "done", "payload": None},
+        ]
+    })
+
+    assert client.verify_flash("fw.elf")

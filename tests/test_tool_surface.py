@@ -35,12 +35,13 @@ def test_every_tool_exposes_session():
         assert tool.inputSchema["properties"]["session"]["type"] == "string"
 
 
-def test_every_tool_exposes_shared_output_schema():
+def test_no_tool_advertises_a_per_tool_output_schema():
+    # The shared envelope lives in tool_response.OUTPUT_SCHEMA and the server
+    # instructions; repeating it per tool cost ~460 chars x every tool.
+    # getattr, not attribute access: the mcp dependency floor (1.7.0) predates
+    # the outputSchema field entirely, so it is absent rather than None there.
     for tool in _tools().values():
-        assert tool.outputSchema["type"] == "object"
-        assert {"ok", "data", "error", "raw_response", "suggested_next_actions"} <= set(
-            tool.outputSchema["properties"]
-        )
+        assert getattr(tool, "outputSchema", None) is None
 
 
 def test_tool_annotations_distinguish_read_write_and_external_actions():

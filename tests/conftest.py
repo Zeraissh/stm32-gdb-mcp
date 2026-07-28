@@ -19,7 +19,11 @@ class FakeGdb:
 
     def __init__(self, response=None):
         self.commands = []
-        self._response = response if response is not None else [{"message": "done"}]
+        # Shaped like a real pygdbmi terminal result record (type matters:
+        # mi_guard.has_terminal_result keys off it).
+        self._response = response if response is not None else [
+            {"type": "result", "message": "done", "payload": None}
+        ]
 
     def write(self, command, timeout_sec=1.0):
         self.commands.append((command, timeout_sec))

@@ -4,8 +4,6 @@ from copy import deepcopy
 
 from mcp.types import Tool, ToolAnnotations
 
-from .tool_response import OUTPUT_SCHEMA
-
 RENAMED_TOOLS = {
     **{
         f"{action}_{channel}_log{suffix}": f'{action}_log{suffix}(channel="{channel}")'
@@ -157,11 +155,13 @@ def _annotations(name: str) -> ToolAnnotations | None:
 
 
 def _decorate(tool: Tool) -> Tool:
+    # No per-tool outputSchema: every tool shares the same envelope (see
+    # tool_response.OUTPUT_SCHEMA), and advertising it on each tool cost ~460
+    # chars x every tool for zero information gain.
     return tool.model_copy(
         deep=True,
         update={
             "inputSchema": _with_session(tool.inputSchema),
-            "outputSchema": deepcopy(OUTPUT_SCHEMA),
             "annotations": _annotations(tool.name),
         },
     )
