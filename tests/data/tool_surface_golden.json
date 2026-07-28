@@ -2174,152 +2174,56 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Firmware log capture over a channel. action=start|stop|get|clear; channel=rtt|swo|uart (start also takes the channel's config args).",
+   "description": "Firmware log capture over a channel. action=start(channel[,port,baudrate,command,args,file,timeout]) | stop(channel) | get(channel[,limit,since_index,clear]) | clear(channel). channel=rtt|swo|uart; uart takes port/baudrate, rtt/swo take command/args or file.",
    "inputSchema": {
     "oneOf": [
      {
       "properties": {
        "action": {
-        "const": "start",
-        "type": "string"
-       },
-       "args": {
-        "description": "rtt/swo: command arguments.",
-        "items": {
-         "type": "string"
-        },
-        "type": "array"
-       },
-       "baudrate": {
-        "description": "uart: baudrate (default 115200).",
-        "type": "integer"
-       },
-       "channel": {
-        "description": "Log channel.",
-        "enum": [
-         "rtt",
-         "swo",
-         "uart"
-        ],
-        "type": "string"
-       },
-       "command": {
-        "description": "rtt/swo: executable to launch (rtt defaults to JLinkRTTClient).",
-        "type": "string"
-       },
-       "file": {
-        "description": "swo: tail OpenOCD's ITM decode file (run setup_swo first) \u2014 no external decoder needed.",
-        "type": "string"
-       },
-       "port": {
-        "description": "uart: serial port, e.g. COM3 or /dev/ttyUSB0.",
-        "type": "string"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
-       },
-       "timeout": {
-        "description": "uart: read timeout seconds (default 0.1).",
-        "type": "number"
+        "const": "start"
        }
       },
       "required": [
        "action",
        "channel"
       ],
-      "title": "start",
-      "type": "object"
+      "title": "start"
      },
      {
       "properties": {
        "action": {
-        "const": "stop",
-        "type": "string"
-       },
-       "channel": {
-        "enum": [
-         "rtt",
-         "swo",
-         "uart"
-        ],
-        "type": "string"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
+        "const": "stop"
        }
       },
       "required": [
        "action",
        "channel"
       ],
-      "title": "stop",
-      "type": "object"
+      "title": "stop"
      },
      {
       "properties": {
        "action": {
-        "const": "get",
-        "type": "string"
-       },
-       "channel": {
-        "enum": [
-         "rtt",
-         "swo",
-         "uart"
-        ],
-        "type": "string"
-       },
-       "clear": {
-        "description": "Clear returned entries after reading.",
-        "type": "boolean"
-       },
-       "limit": {
-        "description": "Max recent entries to return.",
-        "type": "integer"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
-       },
-       "since_index": {
-        "description": "Only entries with index greater than this.",
-        "type": "integer"
+        "const": "get"
        }
       },
       "required": [
        "action",
        "channel"
       ],
-      "title": "get",
-      "type": "object"
+      "title": "get"
      },
      {
       "properties": {
        "action": {
-        "const": "clear",
-        "type": "string"
-       },
-       "channel": {
-        "enum": [
-         "rtt",
-         "swo",
-         "uart"
-        ],
-        "type": "string"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
+        "const": "clear"
        }
       },
       "required": [
        "action",
        "channel"
       ],
-      "title": "clear",
-      "type": "object"
+      "title": "clear"
      }
     ],
     "properties": {
@@ -2333,9 +2237,57 @@
       ],
       "type": "string"
      },
+     "args": {
+      "description": "rtt/swo: command arguments.",
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "baudrate": {
+      "description": "uart: baudrate (default 115200).",
+      "type": "integer"
+     },
+     "channel": {
+      "description": "Log channel.",
+      "enum": [
+       "rtt",
+       "swo",
+       "uart"
+      ],
+      "type": "string"
+     },
+     "clear": {
+      "description": "Clear returned entries after reading.",
+      "type": "boolean"
+     },
+     "command": {
+      "description": "rtt/swo: executable to launch (rtt defaults to JLinkRTTClient).",
+      "type": "string"
+     },
+     "file": {
+      "description": "swo: tail OpenOCD's ITM decode file (run setup_swo first) \u2014 no external decoder needed.",
+      "type": "string"
+     },
+     "limit": {
+      "description": "Max recent entries to return.",
+      "type": "integer"
+     },
+     "port": {
+      "description": "uart: serial port, e.g. COM3 or /dev/ttyUSB0.",
+      "type": "string"
+     },
      "session": {
       "description": "Optional debug-session name. Omit for the default target.",
       "type": "string"
+     },
+     "since_index": {
+      "description": "Only entries with index greater than this.",
+      "type": "integer"
+     },
+     "timeout": {
+      "description": "uart: read timeout seconds (default 0.1).",
+      "type": "number"
      }
     },
     "required": [
@@ -2352,103 +2304,51 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Breakpoint / watchpoint management. action=set(location[,condition,temporary,commands]) | delete(number) | list | watch(expression).",
+   "description": "Breakpoint / watchpoint management. action=set(location[,condition,temporary,ignore_count]) | delete(breakpoint_id) | list | watch(location,access_type). access_type=r|w|a.",
    "inputSchema": {
     "oneOf": [
      {
       "properties": {
        "action": {
-        "const": "set",
-        "type": "string"
-       },
-       "condition": {
-        "description": "Optional C expression; break only when it is non-zero, e.g. 'count > 5'.",
-        "type": "string"
-       },
-       "ignore_count": {
-        "description": "Number of hits to ignore before stopping.",
-        "type": "integer"
-       },
-       "location": {
-        "description": "Location to break at, e.g., 'main', 'main.c:42', or '*0x08001000'.",
-        "type": "string"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
-       },
-       "temporary": {
-        "description": "If true, the breakpoint is deleted after its first hit.",
-        "type": "boolean"
+        "const": "set"
        }
       },
       "required": [
        "action",
        "location"
       ],
-      "title": "set",
-      "type": "object"
+      "title": "set"
      },
      {
       "properties": {
        "action": {
-        "const": "delete",
-        "type": "string"
-       },
-       "breakpoint_id": {
-        "description": "ID of the breakpoint to delete (e.g., '1').",
-        "type": "string"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
+        "const": "delete"
        }
       },
       "required": [
        "action",
        "breakpoint_id"
       ],
-      "title": "delete",
-      "type": "object"
+      "title": "delete"
      },
      {
       "properties": {
        "action": {
-        "const": "list",
-        "type": "string"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
+        "const": "list"
        }
       },
       "required": [
        "action"
       ],
-      "title": "list",
-      "type": "object"
+      "title": "list"
      },
      {
       "properties": {
-       "access_type": {
-        "description": "Read (r), Write (w), or Access (a).",
-        "enum": [
-         "r",
-         "w",
-         "a"
-        ],
-        "type": "string"
-       },
        "action": {
-        "const": "watch",
-        "type": "string"
+        "const": "watch"
        },
        "location": {
         "description": "Variable or address to watch.",
-        "type": "string"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
         "type": "string"
        }
       },
@@ -2457,11 +2357,19 @@
        "location",
        "access_type"
       ],
-      "title": "watch",
-      "type": "object"
+      "title": "watch"
      }
     ],
     "properties": {
+     "access_type": {
+      "description": "Read (r), Write (w), or Access (a).",
+      "enum": [
+       "r",
+       "w",
+       "a"
+      ],
+      "type": "string"
+     },
      "action": {
       "description": "Which operation to perform.",
       "enum": [
@@ -2472,9 +2380,29 @@
       ],
       "type": "string"
      },
+     "breakpoint_id": {
+      "description": "ID of the breakpoint to delete (e.g., '1').",
+      "type": "string"
+     },
+     "condition": {
+      "description": "Optional C expression; break only when it is non-zero, e.g. 'count > 5'.",
+      "type": "string"
+     },
+     "ignore_count": {
+      "description": "Number of hits to ignore before stopping.",
+      "type": "integer"
+     },
+     "location": {
+      "description": "Location to break at, e.g., 'main', 'main.c:42', or '*0x08001000'.",
+      "type": "string"
+     },
      "session": {
       "description": "Optional debug-session name. Omit for the default target.",
       "type": "string"
+     },
+     "temporary": {
+      "description": "If true, the breakpoint is deleted after its first hit.",
+      "type": "boolean"
      }
     },
     "required": [
@@ -2491,97 +2419,31 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Evaluate C/GDB expressions. action=assert(expressions) | capture(expressions or table={index_range,columns}) | compare(expressions, action_to_run_between).",
+   "description": "Evaluate C/GDB expressions. action=assert(assertions) | capture([expressions,table]) | compare(expressions,action). assertions=[{expression,expected[,operator]}]; table={index_range,columns}; compare runs 'action' between the two captures.",
    "inputSchema": {
     "oneOf": [
      {
       "properties": {
        "action": {
-        "const": "assert",
-        "type": "string"
-       },
-       "assertions": {
-        "items": {
-         "properties": {
-          "expected": {},
-          "expression": {
-           "type": "string"
-          },
-          "operator": {
-           "enum": [
-            "==",
-            "!=",
-            ">",
-            ">=",
-            "<",
-            "<="
-           ],
-           "type": "string"
-          }
-         },
-         "required": [
-          "expression",
-          "expected"
-         ],
-         "type": "object"
-        },
-        "type": "array"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
+        "const": "assert"
        }
       },
       "required": [
        "action",
        "assertions"
       ],
-      "title": "assert",
-      "type": "object"
+      "title": "assert"
      },
      {
       "properties": {
        "action": {
-        "const": "capture",
-        "type": "string"
-       },
-       "expressions": {
-        "description": "GDB/C expressions to evaluate.",
-        "items": {
-         "type": "string"
-        },
-        "type": "array"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
-       },
-       "table": {
-        "description": "Optional indexed table request, e.g. columns=['count'], index_range=[2,6].",
-        "properties": {
-         "columns": {
-          "description": "Expression prefixes; each cell reads prefix[index].",
-          "items": {
-           "type": "string"
-          },
-          "type": "array"
-         },
-         "index_range": {
-          "description": "Inclusive [start, end] index range.",
-          "items": {
-           "type": "integer"
-          },
-          "type": "array"
-         }
-        },
-        "type": "object"
+        "const": "capture"
        }
       },
       "required": [
        "action"
       ],
-      "title": "capture",
-      "type": "object"
+      "title": "capture"
      },
      {
       "properties": {
@@ -2594,24 +2456,13 @@
          "reset_halt"
         ],
         "type": "string"
-       },
-       "expressions": {
-        "items": {
-         "type": "string"
-        },
-        "type": "array"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
        }
       },
       "required": [
        "action",
        "expressions"
       ],
-      "title": "compare",
-      "type": "object"
+      "title": "compare"
      }
     ],
     "properties": {
@@ -2624,9 +2475,63 @@
       ],
       "type": "string"
      },
+     "assertions": {
+      "items": {
+       "properties": {
+        "expected": {},
+        "expression": {
+         "type": "string"
+        },
+        "operator": {
+         "enum": [
+          "==",
+          "!=",
+          ">",
+          ">=",
+          "<",
+          "<="
+         ],
+         "type": "string"
+        }
+       },
+       "required": [
+        "expression",
+        "expected"
+       ],
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "expressions": {
+      "description": "GDB/C expressions to evaluate.",
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
      "session": {
       "description": "Optional debug-session name. Omit for the default target.",
       "type": "string"
+     },
+     "table": {
+      "description": "Optional indexed table request, e.g. columns=['count'], index_range=[2,6].",
+      "properties": {
+       "columns": {
+        "description": "Expression prefixes; each cell reads prefix[index].",
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       "index_range": {
+        "description": "Inclusive [start, end] index range.",
+        "items": {
+         "type": "integer"
+        },
+        "type": "array"
+       }
+      },
+      "type": "object"
      }
     },
     "required": [
@@ -2649,37 +2554,22 @@
      {
       "properties": {
        "action": {
-        "const": "capture",
-        "type": "string"
-       },
-       "path": {
-        "description": "Output path for the core file.",
-        "type": "string"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
+        "const": "capture"
        }
       },
       "required": [
        "action",
        "path"
       ],
-      "title": "capture",
-      "type": "object"
+      "title": "capture"
      },
      {
       "properties": {
        "action": {
-        "const": "load",
-        "type": "string"
+        "const": "load"
        },
        "path": {
         "description": "Path to the core file.",
-        "type": "string"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
         "type": "string"
        }
       },
@@ -2687,8 +2577,7 @@
        "action",
        "path"
       ],
-      "title": "load",
-      "type": "object"
+      "title": "load"
      }
     ],
     "properties": {
@@ -2698,6 +2587,10 @@
        "capture",
        "load"
       ],
+      "type": "string"
+     },
+     "path": {
+      "description": "Output path for the core file.",
       "type": "string"
      },
      "session": {
@@ -2719,47 +2612,31 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "GDB operation timeouts. action=get | set(connect,reset,memory,...).",
+   "description": "GDB operation timeouts. action=get | set(overrides). overrides={connect,reset,memory,...} in seconds.",
    "inputSchema": {
     "oneOf": [
      {
       "properties": {
        "action": {
-        "const": "get",
-        "type": "string"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
+        "const": "get"
        }
       },
       "required": [
        "action"
       ],
-      "title": "get",
-      "type": "object"
+      "title": "get"
      },
      {
       "properties": {
        "action": {
-        "const": "set",
-        "type": "string"
-       },
-       "overrides": {
-        "description": "Map of timeout name -> seconds, e.g. {\"memory\": 4.0, \"connect\": 8.0}.",
-        "type": "object"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
+        "const": "set"
        }
       },
       "required": [
        "action",
        "overrides"
       ],
-      "title": "set",
-      "type": "object"
+      "title": "set"
      }
     ],
     "properties": {
@@ -2770,6 +2647,10 @@
        "set"
       ],
       "type": "string"
+     },
+     "overrides": {
+      "description": "Map of timeout name -> seconds, e.g. {\"memory\": 4.0, \"connect\": 8.0}.",
+      "type": "object"
      },
      "session": {
       "description": "Optional debug-session name. Omit for the default target.",
@@ -2790,47 +2671,28 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Debug-config file (.json) management. action=load(path) | save(path) | validate(path).",
+   "description": "Debug-config file (.json) management. action=load(path) | save(path,config) | validate(config).",
    "inputSchema": {
     "oneOf": [
      {
       "properties": {
        "action": {
-        "const": "load",
-        "type": "string"
-       },
-       "path": {
-        "description": "Path to a YAML debug config file.",
-        "type": "string"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
+        "const": "load"
        }
       },
       "required": [
        "action",
        "path"
       ],
-      "title": "load",
-      "type": "object"
+      "title": "load"
      },
      {
       "properties": {
        "action": {
-        "const": "save",
-        "type": "string"
-       },
-       "config": {
-        "description": "Config object to save.",
-        "type": "object"
+        "const": "save"
        },
        "path": {
         "description": "Destination YAML config path.",
-        "type": "string"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
         "type": "string"
        }
       },
@@ -2839,30 +2701,23 @@
        "path",
        "config"
       ],
-      "title": "save",
-      "type": "object"
+      "title": "save"
      },
      {
       "properties": {
        "action": {
-        "const": "validate",
-        "type": "string"
+        "const": "validate"
        },
        "config": {
         "description": "Config object to validate.",
         "type": "object"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
        }
       },
       "required": [
        "action",
        "config"
       ],
-      "title": "validate",
-      "type": "object"
+      "title": "validate"
      }
     ],
     "properties": {
@@ -2873,6 +2728,14 @@
        "save",
        "validate"
       ],
+      "type": "string"
+     },
+     "config": {
+      "description": "Config object to save.",
+      "type": "object"
+     },
+     "path": {
+      "description": "Path to a YAML debug config file.",
       "type": "string"
      },
      "session": {
@@ -2894,77 +2757,30 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Active debug profile (mcu/elf/svd/probe). action=get | set(mcu,elf_path,svd_path,...).",
+   "description": "Active debug profile (mcu/elf/svd/probe). action=get | set([mcu,elf_path,svd_path,board,probe,server_type,server_args,project_root,notes]).",
    "inputSchema": {
     "oneOf": [
      {
       "properties": {
        "action": {
-        "const": "get",
-        "type": "string"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
+        "const": "get"
        }
       },
       "required": [
        "action"
       ],
-      "title": "get",
-      "type": "object"
+      "title": "get"
      },
      {
       "properties": {
        "action": {
-        "const": "set",
-        "type": "string"
-       },
-       "board": {
-        "type": "string"
-       },
-       "elf_path": {
-        "type": "string"
-       },
-       "mcu": {
-        "type": "string"
-       },
-       "notes": {
-        "type": "string"
-       },
-       "probe": {
-        "type": "string"
-       },
-       "project_root": {
-        "type": "string"
-       },
-       "server_args": {
-        "items": {
-         "type": "string"
-        },
-        "type": "array"
-       },
-       "server_type": {
-        "enum": [
-         "openocd",
-         "stlink",
-         "jlink"
-        ],
-        "type": "string"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
-       },
-       "svd_path": {
-        "type": "string"
+        "const": "set"
        }
       },
       "required": [
        "action"
       ],
-      "title": "set",
-      "type": "object"
+      "title": "set"
      }
     ],
     "properties": {
@@ -2976,8 +2792,43 @@
       ],
       "type": "string"
      },
+     "board": {
+      "type": "string"
+     },
+     "elf_path": {
+      "type": "string"
+     },
+     "mcu": {
+      "type": "string"
+     },
+     "notes": {
+      "type": "string"
+     },
+     "probe": {
+      "type": "string"
+     },
+     "project_root": {
+      "type": "string"
+     },
+     "server_args": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "server_type": {
+      "enum": [
+       "openocd",
+       "stlink",
+       "jlink"
+      ],
+      "type": "string"
+     },
      "session": {
       "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "svd_path": {
       "type": "string"
      }
     },
@@ -2995,70 +2846,52 @@
     "openWorldHint": false,
     "readOnlyHint": true
    },
-   "description": "Read CPU register groups. what=core | fault(CFSR/HFSR decode) | cycle(DWT cycle counter).",
+   "description": "Read CPU register groups. what=core([include_raw]) | fault | cycle([enable]). fault decodes CFSR/HFSR; cycle reads the DWT cycle counter.",
    "inputSchema": {
     "oneOf": [
      {
       "properties": {
-       "include_raw": {
-        "description": "Include the raw GDB transcript (default false).",
-        "type": "boolean"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
-       },
        "what": {
-        "const": "core",
-        "type": "string"
+        "const": "core"
        }
       },
       "required": [
        "what"
       ],
-      "title": "core",
-      "type": "object"
+      "title": "core"
      },
      {
       "properties": {
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
-       },
        "what": {
-        "const": "fault",
-        "type": "string"
+        "const": "fault"
        }
       },
       "required": [
        "what"
       ],
-      "title": "fault",
-      "type": "object"
+      "title": "fault"
      },
      {
       "properties": {
-       "enable": {
-        "description": "If true, enable and zero the counter before reading.",
-        "type": "boolean"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
-       },
        "what": {
-        "const": "cycle",
-        "type": "string"
+        "const": "cycle"
        }
       },
       "required": [
        "what"
       ],
-      "title": "cycle",
-      "type": "object"
+      "title": "cycle"
      }
     ],
     "properties": {
+     "enable": {
+      "description": "If true, enable and zero the counter before reading.",
+      "type": "boolean"
+     },
+     "include_raw": {
+      "description": "Include the raw GDB transcript (default false).",
+      "type": "boolean"
+     },
      "session": {
       "description": "Optional debug-session name. Omit for the default target.",
       "type": "string"
@@ -3087,30 +2920,20 @@
     "openWorldHint": false,
     "readOnlyHint": true
    },
-   "description": "Symbol / type introspection. what=size(type) | type(name) | address(symbol) | resolve(address) | functions(regex) | variables.",
+   "description": "Symbol / type introspection. what=size(expr) | type(expr) | address(symbol) | resolve(expr) | functions([regex]) | variables([regex]). resolve maps an address back to source.",
    "inputSchema": {
     "oneOf": [
      {
       "properties": {
-       "expr": {
-        "description": "Type or expression to size, e.g. 'struct foo'.",
-        "type": "string"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
-       },
        "what": {
-        "const": "size",
-        "type": "string"
+        "const": "size"
        }
       },
       "required": [
        "what",
        "expr"
       ],
-      "title": "size",
-      "type": "object"
+      "title": "size"
      },
      {
       "properties": {
@@ -3118,43 +2941,27 @@
         "description": "Expression or type name, e.g. 'my_struct' or 'g_state'.",
         "type": "string"
        },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
-       },
        "what": {
-        "const": "type",
-        "type": "string"
+        "const": "type"
        }
       },
       "required": [
        "what",
        "expr"
       ],
-      "title": "type",
-      "type": "object"
+      "title": "type"
      },
      {
       "properties": {
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
-       },
-       "symbol": {
-        "description": "Symbol name, e.g. 'g_state'.",
-        "type": "string"
-       },
        "what": {
-        "const": "address",
-        "type": "string"
+        "const": "address"
        }
       },
       "required": [
        "what",
        "symbol"
       ],
-      "title": "address",
-      "type": "object"
+      "title": "address"
      },
      {
       "properties": {
@@ -3162,42 +2969,26 @@
         "description": "Address or expression to resolve, e.g. '$pc' or '0x08001234'.",
         "type": "string"
        },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
-       },
        "what": {
-        "const": "resolve",
-        "type": "string"
+        "const": "resolve"
        }
       },
       "required": [
        "what",
        "expr"
       ],
-      "title": "resolve",
-      "type": "object"
+      "title": "resolve"
      },
      {
       "properties": {
-       "regex": {
-        "description": "Optional regex to filter function names.",
-        "type": "string"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
-       },
        "what": {
-        "const": "functions",
-        "type": "string"
+        "const": "functions"
        }
       },
       "required": [
        "what"
       ],
-      "title": "functions",
-      "type": "object"
+      "title": "functions"
      },
      {
       "properties": {
@@ -3205,25 +2996,31 @@
         "description": "Optional regex to filter variable names.",
         "type": "string"
        },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
-       },
        "what": {
-        "const": "variables",
-        "type": "string"
+        "const": "variables"
        }
       },
       "required": [
        "what"
       ],
-      "title": "variables",
-      "type": "object"
+      "title": "variables"
      }
     ],
     "properties": {
+     "expr": {
+      "description": "Type or expression to size, e.g. 'struct foo'.",
+      "type": "string"
+     },
+     "regex": {
+      "description": "Optional regex to filter function names.",
+      "type": "string"
+     },
      "session": {
       "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "symbol": {
+      "description": "Symbol name, e.g. 'g_state'.",
       "type": "string"
      },
      "what": {
@@ -3253,36 +3050,13 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Typed (struct-aware) memory access. action=read(address,type) | write(address,type,value).",
+   "description": "Typed (struct-aware) memory access. action=read(address,width_bits,count) | write(address,value,width_bits). width_bits=8|16|32|64.",
    "inputSchema": {
     "oneOf": [
      {
       "properties": {
        "action": {
-        "const": "read",
-        "type": "string"
-       },
-       "address": {
-        "description": "Hex address to read from, e.g., '0x20000000'.",
-        "type": "string"
-       },
-       "count": {
-        "description": "Number of elements to read.",
-        "type": "integer"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
-       },
-       "width_bits": {
-        "description": "Element width in bits.",
-        "enum": [
-         8,
-         16,
-         32,
-         64
-        ],
-        "type": "integer"
+        "const": "read"
        }
       },
       "required": [
@@ -3291,36 +3065,16 @@
        "width_bits",
        "count"
       ],
-      "title": "read",
-      "type": "object"
+      "title": "read"
      },
      {
       "properties": {
        "action": {
-        "const": "write",
-        "type": "string"
+        "const": "write"
        },
        "address": {
         "description": "Hex address to write to, e.g., '0x20000000'.",
         "type": "string"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
-       },
-       "value": {
-        "description": "Value to write, e.g., '0x12345678'.",
-        "type": "string"
-       },
-       "width_bits": {
-        "description": "Element width in bits.",
-        "enum": [
-         8,
-         16,
-         32,
-         64
-        ],
-        "type": "integer"
        }
       },
       "required": [
@@ -3329,8 +3083,7 @@
        "value",
        "width_bits"
       ],
-      "title": "write",
-      "type": "object"
+      "title": "write"
      }
     ],
     "properties": {
@@ -3342,9 +3095,31 @@
       ],
       "type": "string"
      },
+     "address": {
+      "description": "Hex address to read from, e.g., '0x20000000'.",
+      "type": "string"
+     },
+     "count": {
+      "description": "Number of elements to read.",
+      "type": "integer"
+     },
      "session": {
       "description": "Optional debug-session name. Omit for the default target.",
       "type": "string"
+     },
+     "value": {
+      "description": "Value to write, e.g., '0x12345678'.",
+      "type": "string"
+     },
+     "width_bits": {
+      "description": "Element width in bits.",
+      "enum": [
+       8,
+       16,
+       32,
+       64
+      ],
+      "type": "integer"
      }
     },
     "required": [
@@ -3361,90 +3136,30 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Memory-write guardrail. action=policy(mode,allow) | audit.",
+   "description": "Memory-write guardrail. action=policy([mode,add_allow,add_protected]) | audit([limit]). mode=enforce|dry_run.",
    "inputSchema": {
     "oneOf": [
      {
       "properties": {
        "action": {
-        "const": "policy",
-        "type": "string"
-       },
-       "add_allow": {
-        "description": "Regions to explicitly allow, overriding protection.",
-        "items": {
-         "properties": {
-          "end": {
-           "type": "integer"
-          },
-          "name": {
-           "type": "string"
-          },
-          "start": {
-           "type": "integer"
-          }
-         },
-         "type": "object"
-        },
-        "type": "array"
-       },
-       "add_protected": {
-        "description": "Additional regions to protect from writes.",
-        "items": {
-         "properties": {
-          "end": {
-           "type": "integer"
-          },
-          "name": {
-           "type": "string"
-          },
-          "start": {
-           "type": "integer"
-          }
-         },
-         "type": "object"
-        },
-        "type": "array"
-       },
-       "mode": {
-        "description": "Guard mode.",
-        "enum": [
-         "enforce",
-         "dry_run"
-        ],
-        "type": "string"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
+        "const": "policy"
        }
       },
       "required": [
        "action"
       ],
-      "title": "policy",
-      "type": "object"
+      "title": "policy"
      },
      {
       "properties": {
        "action": {
-        "const": "audit",
-        "type": "string"
-       },
-       "limit": {
-        "description": "Return only the most recent N entries.",
-        "type": "integer"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
+        "const": "audit"
        }
       },
       "required": [
        "action"
       ],
-      "title": "audit",
-      "type": "object"
+      "title": "audit"
      }
     ],
     "properties": {
@@ -3453,6 +3168,54 @@
       "enum": [
        "policy",
        "audit"
+      ],
+      "type": "string"
+     },
+     "add_allow": {
+      "description": "Regions to explicitly allow, overriding protection.",
+      "items": {
+       "properties": {
+        "end": {
+         "type": "integer"
+        },
+        "name": {
+         "type": "string"
+        },
+        "start": {
+         "type": "integer"
+        }
+       },
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "add_protected": {
+      "description": "Additional regions to protect from writes.",
+      "items": {
+       "properties": {
+        "end": {
+         "type": "integer"
+        },
+        "name": {
+         "type": "string"
+        },
+        "start": {
+         "type": "integer"
+        }
+       },
+       "type": "object"
+      },
+      "type": "array"
+     },
+     "limit": {
+      "description": "Return only the most recent N entries.",
+      "type": "integer"
+     },
+     "mode": {
+      "description": "Guard mode.",
+      "enum": [
+       "enforce",
+       "dry_run"
       ],
       "type": "string"
      },
@@ -3475,65 +3238,53 @@
     "openWorldHint": false,
     "readOnlyHint": true
    },
-   "description": "One-shot diagnostic snapshot. scope=full(regs+stack+faults) | rtos(task/queue state).",
+   "description": "One-shot diagnostic snapshot. scope=full([include_project,include_rtos,include_logs,log_limit,project_root]) | rtos. full bundles registers+stack+faults; rtos captures task/queue state.",
    "inputSchema": {
     "oneOf": [
      {
       "properties": {
-       "include_logs": {
-        "description": "Include captured RTT logs.",
-        "type": "boolean"
-       },
-       "include_project": {
-        "description": "Include project discovery context.",
-        "type": "boolean"
-       },
-       "include_rtos": {
-        "description": "Include FreeRTOS runtime context.",
-        "type": "boolean"
-       },
-       "log_limit": {
-        "description": "Maximum number of RTT log entries to include.",
-        "type": "integer"
-       },
-       "project_root": {
-        "description": "Optional project root for discovery.",
-        "type": "string"
-       },
        "scope": {
-        "const": "full",
-        "type": "string"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
+        "const": "full"
        }
       },
       "required": [
        "scope"
       ],
-      "title": "full",
-      "type": "object"
+      "title": "full"
      },
      {
       "properties": {
        "scope": {
-        "const": "rtos",
-        "type": "string"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
+        "const": "rtos"
        }
       },
       "required": [
        "scope"
       ],
-      "title": "rtos",
-      "type": "object"
+      "title": "rtos"
      }
     ],
     "properties": {
+     "include_logs": {
+      "description": "Include captured RTT logs.",
+      "type": "boolean"
+     },
+     "include_project": {
+      "description": "Include project discovery context.",
+      "type": "boolean"
+     },
+     "include_rtos": {
+      "description": "Include FreeRTOS runtime context.",
+      "type": "boolean"
+     },
+     "log_limit": {
+      "description": "Maximum number of RTT log entries to include.",
+      "type": "integer"
+     },
+     "project_root": {
+      "description": "Optional project root for discovery.",
+      "type": "string"
+     },
      "scope": {
       "description": "Which operation to perform.",
       "enum": [
@@ -3561,80 +3312,46 @@
     "openWorldHint": false,
     "readOnlyHint": true
    },
-   "description": "Stack-frame navigation. action=select(number) | source(around a frame) | variables(of selected frame).",
+   "description": "Stack-frame navigation. action=select(level) | source([location,count]) | variables([level,include_raw]). level 0 is the innermost frame.",
    "inputSchema": {
     "oneOf": [
      {
       "properties": {
        "action": {
-        "const": "select",
-        "type": "string"
-       },
-       "level": {
-        "description": "Frame level, 0 is the innermost/current frame.",
-        "type": "integer"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
+        "const": "select"
        }
       },
       "required": [
        "action",
        "level"
       ],
-      "title": "select",
-      "type": "object"
+      "title": "select"
      },
      {
       "properties": {
        "action": {
-        "const": "source",
-        "type": "string"
-       },
-       "count": {
-        "description": "Approximate number of lines (default 10).",
-        "type": "integer"
-       },
-       "location": {
-        "description": "Where to list around. Omit to continue from current.",
-        "type": "string"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
+        "const": "source"
        }
       },
       "required": [
        "action"
       ],
-      "title": "source",
-      "type": "object"
+      "title": "source"
      },
      {
       "properties": {
        "action": {
-        "const": "variables",
-        "type": "string"
-       },
-       "include_raw": {
-        "description": "Include the raw GDB transcript (default false).",
-        "type": "boolean"
+        "const": "variables"
        },
        "level": {
         "description": "Optional frame level to select first (0 = innermost).",
         "type": "integer"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
        }
       },
       "required": [
        "action"
       ],
-      "title": "variables",
-      "type": "object"
+      "title": "variables"
      }
     ],
     "properties": {
@@ -3645,6 +3362,22 @@
        "source",
        "variables"
       ],
+      "type": "string"
+     },
+     "count": {
+      "description": "Approximate number of lines (default 10).",
+      "type": "integer"
+     },
+     "include_raw": {
+      "description": "Include the raw GDB transcript (default false).",
+      "type": "boolean"
+     },
+     "level": {
+      "description": "Frame level, 0 is the innermost/current frame.",
+      "type": "integer"
+     },
+     "location": {
+      "description": "Where to list around. Omit to continue from current.",
       "type": "string"
      },
      "session": {
@@ -3666,66 +3399,48 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Session/transport diagnostics. what=health | events(recent GDB/MI) | server_logs(GDB-server stderr).",
+   "description": "Session/transport diagnostics. what=health([reconnect]) | events | server_logs. events returns recent GDB/MI records; server_logs returns the GDB server's stderr.",
    "inputSchema": {
     "oneOf": [
      {
       "properties": {
-       "reconnect": {
-        "description": "If true, try to reconnect the GDB client to the running server.",
-        "type": "boolean"
-       },
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
-       },
        "what": {
-        "const": "health",
-        "type": "string"
+        "const": "health"
        }
       },
       "required": [
        "what"
       ],
-      "title": "health",
-      "type": "object"
+      "title": "health"
      },
      {
       "properties": {
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
-       },
        "what": {
-        "const": "events",
-        "type": "string"
+        "const": "events"
        }
       },
       "required": [
        "what"
       ],
-      "title": "events",
-      "type": "object"
+      "title": "events"
      },
      {
       "properties": {
-       "session": {
-        "description": "Optional debug-session name. Omit for the default target.",
-        "type": "string"
-       },
        "what": {
-        "const": "server_logs",
-        "type": "string"
+        "const": "server_logs"
        }
       },
       "required": [
        "what"
       ],
-      "title": "server_logs",
-      "type": "object"
+      "title": "server_logs"
      }
     ],
     "properties": {
+     "reconnect": {
+      "description": "If true, try to reconnect the GDB client to the running server.",
+      "type": "boolean"
+     },
      "session": {
       "description": "Optional debug-session name. Omit for the default target.",
       "type": "string"
