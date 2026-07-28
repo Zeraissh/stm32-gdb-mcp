@@ -1,159 +1,99 @@
 # Changelog / 更新日志
 
-## [Unreleased] — part 3 (hardware-validated on STM32L151)
+## [0.7.0] - 2026-07-28
 
-Validating parts 1 and 2 on a real L151 found the root cause under issue #22 —
-and a regression part 1 had introduced. 在真实 L151 上验证第 1、2 部分时找到了
-issue #22 的根因,以及第 1 部分引入的一个回归。
+Token diet, honest errors, and a much leaner tool surface — validated end to end on
+real STM32L151 hardware, which is how the deepest bug in this release was found.
 
-### MI async mode / MI 异步模式 (the root cause)
+Token 瘦身、诚实的错误报告与更精简的工具面 —— 全部在真实 STM32L151 硬件上端到端验证,
+本次最深层的 bug 正是由此发现。
 
-- GDB now runs with `mi-async on`, set immediately after launch and before any
-  target is attached. In the default all-stop synchronous mode GDB accepts **no**
-  command while the target runs — not even `-exec-interrupt`, which simply never
-  answers (measured: 5 s, zero records) and wedges every command queued behind it.
-  So `halt_execution` could never actually stop a running target. /
-  GDB 现在以 `mi-async on` 运行,在启动后、attach 目标前设置。默认的 all-stop 同步模式下,
-  目标运行期间 GDB 不接受任何命令,连 `-exec-interrupt` 也永不应答,后续命令全部堵死,
-  因此 `halt_execution` 从来无法真正停下一个运行中的目标。
-- This is why the old spurious SIGINT existed at all: the only interrupt that ever
-  reached the target was the one leaked at connect time and queued by the stub,
-  which fired on the next resume. Removing the leak without enabling async would
-  have left no way to halt at all. / 这也解释了旧版幽灵 SIGINT 的由来:唯一真正送达
-  目标的中断,正是连接时泄漏、被 stub 排队、在下次恢复执行时触发的那个。只堵住泄漏而不
-  开启 async,就会彻底失去停止运行中目标的能力。
-- GDB rejects the setting once an inferior exists, so it must be the first command
-  after launch; an old GDB without `mi-async` degrades to halted-target flows.
+### Execution control / 执行控制 (#22, the root cause)
 
-### Run-state tracking / 运行状态跟踪 (regression fix)
-
-- Part 1 established "is the target halted?" by probing it with an MI command.
-  On a **running** target that command is not answered until it halts, and the
-  late reply offsets every later response — after any `run_and_wait` timeout the
-  whole session was unusable. State now comes only from GDB's own
-  `*running`/`*stopped` records; no command is ever sent to find it out. /
-  第 1 部分用发送 MI 命令的方式判断目标是否停止;在运行中的目标上该命令要等到目标停下
-  才被应答,迟到的回复会让此后每条响应错位,导致任何 `run_and_wait` 超时后整个会话不可用。
-  现在状态只来自 GDB 自己的 `*running`/`*stopped` 记录,绝不为此发送命令。
-- Attaching emits no `*stopped`, so `connect` seeds the halted state — GDB servers
-  halt the target on attach, which is why identity reads work immediately. /
-  attach 不产生 `*stopped`,因此 `connect` 播种"已停止"状态。
-- A late `*stopped` (Windows pipe polling delivers it after the wait window) is
-  now caught by a patient final drain rather than by probing. /
-  迟到的 `*stopped` 改由末尾的耐心 drain 捕获。
-
-## [Unreleased] — part 2
-
-Leaner family schemas, argument names that are actually real, and a read-only dispatcher
-that stops costing approval prompts.
-
-更精简的族 schema、真实存在的参数名,以及一个不再触发审批提示的只读分发工具。
-
-### Merged-family schemas / 合并族 schema
-
-- Each `oneOf` branch used to repeat the family's entire property map — descriptions and
-  `session` included — making these the largest schemas advertised. Arguments are now hoisted
-  into one top-level `properties` map and a branch carries only its discriminator and its own
-  `required` list. `logging` 2.9k -> 1.8k chars, `breakpoint` 2.5k -> 1.5k. /
-  每个 `oneOf` 分支此前重复整个属性表(含描述与 `session`),现将参数提升到顶层,分支只保留
-  判别值与自身的 `required`。
-- A property that two actions genuinely mean differently stays in its branch —
-  `breakpoint.location` is "where to break" for `set` and "what to watch" for `watch`. Only
-  duplicates that differ by an omitted description are collapsed. /
-  两个动作含义确实不同的属性仍留在各自分支;仅合并"只差一个描述"的重复项。
-
-### Argument names / 参数名 (AI-facing bug)
-
-- Twelve actions across eight families documented arguments that do not exist, or hid required
-  ones: `delete(number)` when the schema wants `breakpoint_id`, `watch(expression)` when it wants
-  `location`+`access_type`, `select(number)` when it wants `level`, `assert(expressions)` when it
-  wants `assertions`, and so on. Every call written from those descriptions was rejected by schema
-  validation and had to be retried. All of them now name the real arguments. /
-  八个族中的十二个动作此前记录了不存在的参数或隐藏了必填参数,导致模型照描述发起的调用必被
-  schema 拒绝并重试;现已全部改为真实参数名。
-- A test pins the contract: inside a `choice(...)` group every identifier must be a real property
-  of that action's schema, and every required property must be listed outside the `[optional]`
-  bracket. / 新增测试锁定该约定,防止再次漂移。
-
-### call_read / 只读分发
-
-- New `call_read(tool, args)`: same escape hatch as `call`, restricted to tools that only read
-  state, and annotated `readOnlyHint` accordingly. `call` is necessarily annotated
-  destructive + open-world (it can reach anything), so reaching a hidden **read-only** tool
-  through it triggered an approval prompt that tool would never have triggered directly —
-  compact mode hides ~78 tools, and 50 of them are read-only. /
-  新增 `call_read(tool, args)`:与 `call` 相同的逃生口,但仅限只读工具,因而可标注为只读。
-  `call` 必须保守地标注为破坏性+开放世界,于是经它访问隐藏的**只读**工具会触发本不该有的
-  审批提示;紧凑模式隐藏约 78 个工具,其中 50 个是只读的。
-- It refuses anything that writes (and the dispatchers, including itself) with a `not_read_only`
-  error pointing at `call`. / 对任何写操作(以及各分发工具本身)返回 `not_read_only` 错误并指向 `call`。
-
-## [Unreleased]
-
-Token diet + honest errors: the advertised surface and every result envelope shrink
-substantially, and tools stop reporting `ok:true` for GDB operations that actually failed.
-
-Token 瘦身 + 诚实错误:工具面与每条结果包络大幅缩小,且工具不再对实际失败的 GDB
-操作报告 `ok:true`。
-
-### Token economy / Token 经济性
-
-- Dropped the per-tool `outputSchema`. Every tool advertised the same ~460-char response
-  envelope; it is now documented once in the server instructions and `tool_response.OUTPUT_SCHEMA`.
-  Compact mode: 41.9k -> 26.3k chars (~10.5k -> ~6.6k tokens); full surface: 110k -> 72k chars. /
-  移除每工具的 `outputSchema`:同一份约 460 字符的响应包络此前在每个工具上重复广告,
-  现只在服务器说明中记录一次。紧凑模式 ~10.5k -> ~6.6k tokens;完整工具面 110k -> 72k 字符。
-- Result JSON is emitted compactly (no indent) and omits empty envelope fields
-  (`data`/`error`/`raw_response`/`suggested_next_actions`). A typical result went from
-  180 to 52 chars. Consumers already used `.get()`, so the shape is compatible. /
-  结果 JSON 改为紧凑输出且省略空字段,典型结果从 180 字符降至 52 字符。
-- Raw GDB/MI records no longer ride along on **successful** results unless the server runs
-  with `STM32_GDB_MCP_VERBOSE=1`. Failures always keep them — that is the evidence needed
-  to diagnose. / 成功结果默认不再附带原始 GDB/MI 记录(除非设置 `STM32_GDB_MCP_VERBOSE=1`);
-  失败结果始终保留,因为那是诊断依据。
+- GDB now runs with **`mi-async on`**, set immediately after launch and before any target
+  is attached. In the default all-stop synchronous mode GDB accepts *no* command while the
+  target runs — not even `-exec-interrupt`, which never answers (measured on hardware: 5 s,
+  zero records) and wedges every command queued behind it. `halt_execution` therefore could
+  never actually stop a running target. / GDB 现以 **`mi-async on`** 运行,在启动后、attach
+  目标前设置。默认 all-stop 同步模式下,目标运行期间 GDB 不接受任何命令,连 `-exec-interrupt`
+  也永不应答并堵死其后所有命令,因此 `halt_execution` 从来无法真正停下运行中的目标。
+- That explains the spurious `SIGINT`: the only interrupt that ever reached the target was
+  one leaked at connect time and queued by the stub, firing on the next resume. /
+  这解释了伪 `SIGINT` 的由来:唯一真正送达目标的中断是连接时泄漏、被 stub 排队、
+  在下次恢复运行时触发的那个。
+- Run state is tracked **only** from GDB's own `*running`/`*stopped` records; no command is
+  ever sent to discover it. Probing a running target queues a command that is answered only
+  once it halts, and the late reply desynchronizes every later response. `connect` seeds the
+  halted state (attaching emits no `*stopped`), and a late `*stopped` is caught by a patient
+  final drain. / 运行状态**只**从 GDB 自身的 `*running`/`*stopped` 记录跟踪,绝不为此发送命令。
+- `halt_execution` no longer interrupts an already-halted target, and `run_and_wait` drains
+  stale async records before resuming. / `halt_execution` 不再中断已停止的目标;
+  `run_and_wait` 恢复运行前清空滞留记录。
+- `run_for_duration` reports `ran_full_duration` and `stopped_early` instead of sleeping
+  through the window and claiming a clean free-run. / `run_for_duration` 新增
+  `ran_full_duration` 与 `stopped_early` 字段。
 
 ### Honest errors / 诚实的错误 (#21)
 
 - New `mi_guard`: the ok/error verdict is derived from the raw MI records, not from "the
   command returned". It catches `^error` results plus the failures GDB only prints as
-  log/console text. / 新增 `mi_guard`:ok/error 判定改为基于原始 MI 记录,同时捕获
-  `^error` 结果与 GDB 仅以 log/console 文本形式输出的失败。
-- `flash_firmware`/`flash_and_run` now fail loudly on `Error erasing flash`, and require a
-  terminal MI result record — a download that returned before completion no longer reads as
-  a successful flash. / `flash_firmware` 现在对 `Error erasing flash` 明确报错,并要求终结
-  MI 结果记录:尚未完成就返回的下载不再被当作烧录成功。
-- `load_symbols`, `write_memory`/`typed_memory`, and `verify_flash` are guarded the same way;
-  `verify_flash` additionally fails on `compare-sections` **MIS-MATCHED** output, so a device
-  running different code than the ELF can no longer pass verification. /
-  `load_symbols`、`write_memory`/`typed_memory`、`verify_flash` 同样受保护;`verify_flash`
-  额外检测 `compare-sections` 的 **MIS-MATCHED**。
-- Error taxonomy gains `elf_load_failed`, `flash_failed`, and `flash_mismatch`. A bad ELF path
-  is no longer classified as a missing host toolchain (GDB says "No such file or directory"
-  for both). / 错误分类新增三类;错误的 ELF 路径不再被误判为"缺少宿主工具链"。
-
-### Stop-event correctness / 停止事件正确性 (#22)
-
-- `halt_execution` no longer sends `-exec-interrupt` to an already-halted target. The pending
-  interrupt used to fire as a spurious `SIGINT` on the **next** resume, which made
-  `continue_execution` and `run_for_duration` useless for the rest of the session. /
-  `halt_execution` 不再对已停止的目标发送 `-exec-interrupt`:此前遗留的中断会在**下一次**
-  恢复运行时以伪 `SIGINT` 触发,导致该会话后续的 `continue_execution` 失效。
-- `run_and_wait` drains stale async records before resuming, so a previous halt's `*stopped`
-  can no longer be reported as the stop of the current run. /
-  `run_and_wait` 在恢复运行前清空滞留异步记录,避免上一次停止被当作本次停止上报。
-- On timeout, the wait probes the target: if the core is verifiably halted, the result is a
-  `stopped-no-notification` stop event with the current frame instead of a false timeout
-  (Windows pipe polling was observed to drop the `*stopped` of a hit breakpoint). /
-  等待超时时会探测目标:若核确实已停止,则返回带当前帧的 `stopped-no-notification` 事件,
-  而非虚假超时(Windows 管道轮询曾丢失断点命中的 `*stopped`)。
-- `run_for_duration` reports `ran_full_duration` and `stopped_early`. It no longer sleeps
-  through the requested window and claims a clean free-run when the target stopped at the
-  start of or during it. / `run_for_duration` 新增 `ran_full_duration` 与 `stopped_early`
-  字段,不再在目标已停止的情况下佯装完成了整段自由运行。
-- Windows backslash paths are normalized before every GDB command. `C:\proj\fw.elf` used to
+  log/console text. / 新增 `mi_guard`:ok/error 判定基于原始 MI 记录,同时捕获 `^error`
+  与 GDB 仅以 log/console 文本输出的失败。
+- `flash_firmware`/`flash_and_run` fail loudly on `Error erasing flash` and require a
+  terminal MI result record, so a download that returned before completion no longer reads
+  as a successful flash. `load_symbols`, `write_memory`/`typed_memory` and `verify_flash`
+  are guarded the same way; `verify_flash` additionally fails on `compare-sections`
+  **MIS-MATCHED**. / 烧录、符号加载、内存写入与校验同样受保护。
+- The **breakpoint family** is guarded too — `set_breakpoint`, `delete_breakpoint`,
+  `set_watchpoint`, the four step variants and `run_to_line`. `watch 0x20000010` is refused
+  by GDB with "Cannot watch constant value" yet the tool used to answer "Watchpoint set".
+  This is the worst place for a false success: the agent then waits for a stop that can
+  never come and reads the timeout as "the code path was not reached". /
+  **断点族**同样受保护:GDB 明确拒绝的断点/监视点此前仍报成功,导致 agent 空等一个
+  永不发生的停止,并把超时误读为"代码路径未被执行到"。
+- Error taxonomy gains `elf_load_failed`, `flash_failed` and `flash_mismatch`. A bad ELF
+  path is no longer classified as a missing host toolchain. / 错误分类新增三类。
+- Windows backslash paths are normalized before every GDB command; `C:\proj\fw.elf` used to
   be eaten by MI escaping and silently load nothing while reporting success. /
-  所有 GDB 命令前统一规范化 Windows 反斜杠路径:`C:\proj\fw.elf` 此前会被 MI 转义吞掉,
-  静默加载失败却报告成功。
+  统一规范化 Windows 反斜杠路径。
+
+### Token economy / Token 经济性
+
+- Dropped the per-tool `outputSchema` — every tool advertised the same ~460-char envelope,
+  now documented once in the server instructions. / 移除每工具的 `outputSchema`。
+- Result JSON is compact (no indent) and omits empty envelope fields; a typical result went
+  from 180 to 52 chars. Raw GDB/MI records no longer ride along on **successful** results
+  unless `STM32_GDB_MCP_VERBOSE=1`; failures always keep them. /
+  结果 JSON 紧凑输出并省略空字段(180 -> 52 字符);成功结果默认不再附带原始记录,失败始终保留。
+- Merged families no longer repeat the whole property map in every `oneOf` branch. Arguments
+  are hoisted to one top-level map; a branch carries only its discriminator and its own
+  `required`. A property two actions genuinely mean differently stays local. `logging`
+  2.9k -> 1.8k chars, `breakpoint` 2.5k -> 1.5k. / 合并族不再在每个分支重复整份属性表。
+- **Compact surface: 41.9k -> 24.2k chars (~10.5k -> ~6.0k tokens), a 42% cut.** /
+  **紧凑工具面下降 42%。**
+
+### Tool surface / 工具面
+
+- Twelve actions across eight families documented arguments that do not exist or hid
+  required ones — `delete(number)` when the schema wants `breakpoint_id`,
+  `watch(expression)` when it wants `location`+`access_type`, `select(number)` when it wants
+  `level`, `assert(expressions)` when it wants `assertions`. Every call written from those
+  descriptions was rejected by schema validation and had to be retried. All now name the
+  real arguments, and a test pins the contract. / 八个族的十二个动作此前记录了不存在的参数
+  或隐藏了必填参数,照描述发起的调用必被拒绝;现已全部改为真实参数名并加测试锁定。
+- New **`call_read(tool, args)`**: the same escape hatch as `call` but restricted to tools
+  that only read state, and annotated `readOnlyHint` accordingly. `call` must be annotated
+  destructive + open-world because it can reach anything, so reaching a hidden *read-only*
+  tool through it triggered an approval prompt that tool would never have triggered
+  directly — compact mode hides ~78 tools and 50 of them are read-only. /
+  新增 **`call_read`**:仅限只读工具的分发入口,因而可标注只读,不再触发本不该有的审批提示。
+
+### Hardware validation / 硬件验证
+
+Validated on a real STM32L151 (Cortex-M3, ST-Link/OpenOCD) over the actual MCP protocol
+with the server launched exactly as the plugin launches it: 25/25 checks. /
+在真实 STM32L151 上以插件相同的启动方式、通过真实 MCP 协议验证:25/25 通过。
+
 
 ## [0.6.0] - 2026-07-22
 

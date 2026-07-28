@@ -176,11 +176,13 @@ def test_release_versions_are_consistent():
     marketplace = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
-    assert project["project"]["version"] == "0.6.0"
-    assert '__version__ = "0.6.0"' in package_init
-    assert plugin["version"] == "0.2.0"
+    assert project["project"]["version"] == "0.7.0"
+    assert '__version__ = "0.7.0"' in package_init
+    # The plugin version moves with the server: marketplace.json ships the plugin
+    # from source "./", so a server release users are meant to receive needs it.
+    assert plugin["version"] == "0.3.0"
     assert marketplace["plugins"][0]["version"] == plugin["version"]
-    assert "## [0.6.0] - 2026-07-22" in changelog
+    assert "## [0.7.0] - 2026-07-28" in changelog
 
 
 def test_sdist_excludes_local_workspace_state():
