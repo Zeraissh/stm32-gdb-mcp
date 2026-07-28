@@ -12,10 +12,22 @@ from .timeouts import TimeoutConfig
 
 
 def gdb_path(path: str) -> str:
-    """GDB/MI treats backslashes as escape characters, so a Windows path like
-    C:\\proj\\fw.elf silently degrades into a nonexistent file. Forward slashes
-    work on every platform GDB runs on."""
-    return str(path).replace("\\", "/")
+    """Render a filesystem path as a GDB command argument.
+
+    Two Windows hazards, both measured on hardware:
+
+    * GDB/MI treats backslashes as escape characters, so ``C:\\proj\\fw.elf``
+      silently degrades into a nonexistent file. Forward slashes work on every
+      platform GDB runs on.
+    * GDB splits a command on whitespace, so an unquoted ``C:/Program Files/...``
+      is truncated to ``C:/Program``. Quoting is not optional on Windows, where
+      Program Files and user names with spaces are everywhere.
+
+    The result includes the surrounding quotes, so callers interpolate it
+    directly: ``f"-file-exec-and-symbols {gdb_path(p)}"``.
+    """
+    normalized = str(path).replace("\\", "/").replace('"', '\\"')
+    return f'"{normalized}"'
 
 
 def build_break_insert_command(location, condition=None, temporary=False, ignore_count=None):
