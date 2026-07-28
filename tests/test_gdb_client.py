@@ -474,3 +474,38 @@ def test_start_gdb_survives_a_gdb_without_mi_async():
         gdb_client_module.GdbController = original
 
     assert client.is_alive()
+
+
+def test_set_watchpoint_raises_when_gdb_refuses_the_expression():
+    # Measured on an L151: `watch 0x20000010` is refused with "Cannot watch
+    # constant value" while the tool still answered "Watchpoint set".
+    client = GdbClientManager()
+    client.gdb = ScriptedGdb({"watch": [
+        {"type": "log", "payload": "Cannot watch constant value `0x20000010'.\n"},
+        {"type": "result", "message": "error", "payload": {"msg": "Cannot watch constant value `0x20000010'."}},
+    ]})
+
+    with pytest.raises(GdbCommandError, match="Cannot watch constant value"):
+        client.set_watchpoint("0x20000010", access_type="w")
+
+
+def test_set_breakpoint_raises_when_gdb_rejects_the_location():
+    # A breakpoint reported as set but never created makes the agent wait for a
+    # stop that cannot come, and read the timeout as "path not reached" (#22).
+    client = GdbClientManager()
+    client.gdb = ScriptedGdb({"-break-insert": [
+        {"type": "result", "message": "error", "payload": {"msg": "Function \"nope\" not defined."}},
+    ]})
+
+    with pytest.raises(GdbCommandError, match="not defined"):
+        client.set_breakpoint("nope")
+
+
+def test_step_raises_when_the_target_refuses_to_step():
+    client = GdbClientManager()
+    client.gdb = ScriptedGdb({"-exec-next": [
+        {"type": "result", "message": "error", "payload": {"msg": "The program is not being run."}},
+    ]})
+
+    with pytest.raises(GdbCommandError, match="not being run"):
+        client.step_over()
