@@ -6,8 +6,16 @@ from pygdbmi.gdbcontroller import GdbController
 from . import dwt
 from .fault_analysis import FAULT_REGISTER_ADDRESSES
 from .gdb_decode import decode_backtrace, decode_breakpoints, decode_registers, decode_variables
-from .stop_event import parse_stop_event
+from .mi_guard import GdbCommandError, ensure_ok
+from .stop_event import ALREADY_HALTED_RECORD, parse_stop_event, synthesized_stop_event
 from .timeouts import TimeoutConfig
+
+
+def gdb_path(path: str) -> str:
+    """GDB/MI treats backslashes as escape characters, so a Windows path like
+    C:\\proj\\fw.elf silently degrades into a nonexistent file. Forward slashes
+    work on every platform GDB runs on."""
+    return str(path).replace("\\", "/")
 
 
 def build_break_insert_command(location, condition=None, temporary=False, ignore_count=None):
@@ -86,14 +94,23 @@ class GdbClientManager:
         this is needed before symbol breakpoints resolve — unless load_firmware ran.
         """
         self._symbol_cache.clear()
-        return self.execute_command(f"-file-exec-and-symbols {filepath}", timeout_sec=self.timeouts.get("symbols"))
+        resp = self.execute_command(
+            f"-file-exec-and-symbols {gdb_path(filepath)}", timeout_sec=self.timeouts.get("symbols")
+        )
+        return ensure_ok(resp, f"load_symbols({filepath})", require_result=True)
 
     def load_firmware(self, filepath: str):
-        """Loads symbols and flashes the firmware to the device."""
+        """Loads symbols and flashes the firmware to the device.
+
+        Both steps are checked against the raw MI records: a flash that errored
+        (or never reported terminal completion) raises instead of pretending
+        success (issue #21).
+        """
         responses = []
         responses.extend(self.load_symbols(filepath))
         # Download (flash) the firmware to target memory
-        responses.extend(self.execute_command("-target-download", timeout_sec=self.timeouts.get("download")))
+        download = self.execute_command("-target-download", timeout_sec=self.timeouts.get("download"))
+        responses.extend(ensure_ok(download, f"flash download({filepath})", require_result=True))
         return responses
 
     def reset_halt(self, command: str = "monitor reset halt"):
@@ -119,8 +136,13 @@ class GdbClientManager:
 
     def _drain(self, rounds: int = 5):
         """Consume any pending async/stale GDB responses left in the buffer."""
+        self._drain_collect(rounds)
+
+    def _drain_collect(self, rounds: int = 5) -> list:
+        """Like _drain, but returns the drained records for inspection."""
+        records: list = []
         if not self.gdb:
-            return
+            return records
         for _ in range(rounds):
             try:
                 extra = self.gdb.get_gdb_response(timeout_sec=0.1, raise_error_on_timeout=False)
@@ -128,6 +150,8 @@ class GdbClientManager:
                 extra = self.gdb.get_gdb_response(timeout_sec=0.1)
             if not extra:
                 break
+            records.extend(extra)
+        return records
 
     def set_breakpoint(self, location: str, condition=None, temporary=False, ignore_count=None):
         command = build_break_insert_command(location, condition, temporary, ignore_count)
@@ -141,10 +165,25 @@ class GdbClientManager:
         return decode_breakpoints(self.execute_command("-break-list", timeout_sec=self.timeouts.get("breakpoint")))
 
     def continue_execution(self):
-        return self.execute_command("-exec-continue", timeout_sec=self.timeouts.get("default"))
+        resp = self.execute_command("-exec-continue", timeout_sec=self.timeouts.get("default"))
+        return ensure_ok(resp, "continue")
 
     def halt_execution(self):
-        return self.execute_command("-exec-interrupt", timeout_sec=self.timeouts.get("halt"))
+        """Interrupt the target — but only if it is actually running.
+
+        Sending -exec-interrupt to an already-halted target leaves a pending
+        interrupt in the remote stub that fires on the NEXT resume as a spurious
+        immediate SIGINT (issue #22). So first drain pending async records and
+        probe: if the target is already stopped, report that without interrupting.
+        """
+        pending = self._drain_collect()
+        if parse_stop_event(pending)["stopped"] or self.probe_target():
+            pending.append(ALREADY_HALTED_RECORD.copy())
+            return pending
+        resp = self.execute_command("-exec-interrupt", timeout_sec=self.timeouts.get("halt"))
+        # Absorb the *stopped the interrupt produces so it cannot later be mistaken
+        # for the stop of the NEXT resume.
+        return pending + list(resp) + self._drain_collect()
 
     def step_over(self):
         return self.execute_command("-exec-next", timeout_sec=self.timeouts.get("step"))
@@ -234,16 +273,31 @@ class GdbClientManager:
         return self.execute_command(f"-data-evaluate-expression &{symbol}", timeout_sec=self.timeouts.get("evaluate"))
 
     def capture_coredump(self, path: str):
-        return self.execute_cli_command(f"generate-core-file {path}", timeout_sec=self.timeouts.get("coredump"))
+        return self.execute_cli_command(f"generate-core-file {gdb_path(path)}", timeout_sec=self.timeouts.get("coredump"))
 
     def load_coredump(self, path: str):
         self._symbol_cache.clear()
-        return self.execute_cli_command(f"core-file {path}", timeout_sec=self.timeouts.get("coredump_load"))
+        return self.execute_cli_command(f"core-file {gdb_path(path)}", timeout_sec=self.timeouts.get("coredump_load"))
 
     def verify_flash(self, file_path: str):
         responses = []
         responses.extend(self.load_symbols(file_path))
-        responses.extend(self.execute_cli_command("compare-sections", timeout_sec=self.timeouts.get("verify")))
+        compared = self.execute_cli_command("compare-sections", timeout_sec=self.timeouts.get("verify"))
+        ensure_ok(compared, f"verify_flash({file_path})")
+        # compare-sections reports differing sections as "MIS-MATCHED!" in console
+        # text while the MI command itself succeeds — the exact shape of a false
+        # ok:true (issue #21).
+        mismatched = [
+            record.get("payload").strip()
+            for record in compared
+            if isinstance(record.get("payload"), str) and "MIS-MATCHED" in record["payload"]
+        ]
+        if mismatched:
+            raise GdbCommandError(
+                f"verify_flash({file_path}) failed: target flash does not match the ELF — "
+                + "; ".join(mismatched)
+            )
+        responses.extend(compared)
         return responses
 
     def enable_cycle_counter(self):
@@ -354,7 +408,8 @@ class GdbClientManager:
             32: "uint32_t",
             64: "uint64_t",
         }[width_bits]
-        return self.execute_cli_command(f"set {{{c_type}}}{address} = {value}")
+        resp = self.execute_cli_command(f"set {{{c_type}}}{address} = {value}")
+        return ensure_ok(resp, f"write to {address}")
 
     def get_responses(self, timeout_sec: float = 0.1):
         """Polls for asynchronous events from GDB (e.g. hit breakpoint)."""
@@ -363,7 +418,14 @@ class GdbClientManager:
         return self.gdb.get_gdb_response(timeout_sec=timeout_sec)
 
     def _wait_for_stop(self, initial, timeout_sec: float):
-        """Drain async records until a `*stopped` arrives or timeout elapses."""
+        """Drain async records until a `*stopped` arrives or timeout elapses.
+
+        On timeout, probe the target: on Windows the `*stopped` notification of
+        a hit breakpoint has been observed to go missing in the pipe polling
+        (issue #22), leaving the agent convinced the path was never reached. If
+        a halted-only read succeeds, the target DID stop — drain once more for
+        the late notification, else synthesize a stop event from the current frame.
+        """
         records = list(initial or [])
         event = parse_stop_event(records)
         if event["stopped"]:
@@ -381,7 +443,26 @@ class GdbClientManager:
                 event = parse_stop_event(records)
                 if event["stopped"]:
                     return event, records
+
+        if self.probe_target():
+            records.extend(self._drain_collect())
+            event = parse_stop_event(records)
+            if event["stopped"]:
+                return event, records
+            return synthesized_stop_event(self._current_frame()), records
         return parse_stop_event(records), records
+
+    def _current_frame(self) -> dict | None:
+        """The selected frame of a halted target via -stack-info-frame."""
+        try:
+            resp = self.execute_command("-stack-info-frame", timeout_sec=self.timeouts.get("stack"))
+        except Exception:
+            return None
+        for record in resp:
+            payload = record.get("payload")
+            if isinstance(payload, dict) and isinstance(payload.get("frame"), dict):
+                return payload["frame"]
+        return None
 
     def run_and_wait(self, timeout_sec: float | None = None):
         """Resume the target and report why it next stops (or a timeout)."""
@@ -389,7 +470,14 @@ class GdbClientManager:
             raise RuntimeError("GDB is not running.")
         if timeout_sec is None:
             timeout_sec = self.timeouts.get("run")
-        initial = self.gdb.write("-exec-continue", timeout_sec=0.2)
+        # Stale async records (e.g. the stop of a previous halt) must not
+        # masquerade as the NEW stop this resume is waiting for.
+        self._drain()
+        try:
+            initial = self.gdb.write("-exec-continue", timeout_sec=0.2, raise_error_on_timeout=False)
+        except TypeError:
+            initial = self.gdb.write("-exec-continue", timeout_sec=0.2)
+        ensure_ok(initial, "run_and_wait: continue")
         event, records = self._wait_for_stop(initial, timeout_sec)
         event["raw_response"] = records
         return event

@@ -127,7 +127,7 @@ def test_get_debug_profile_returns_stable_json_envelope():
 
     assert payload["ok"] is True
     assert isinstance(payload["data"], dict)
-    assert payload["error"] is None
+    assert "error" not in payload  # empty envelope fields are omitted
 
 
 def test_unknown_tool_returns_stable_json_error_envelope():
@@ -709,7 +709,7 @@ def test_read_frame_variables_returns_decoded_map(monkeypatch):
     assert payload["ok"] is True
     assert fake.calls == [1]
     assert payload["data"]["variables"] == {"i": "42", "g_divisor": "0"}
-    assert payload["raw_response"] is None  # raw is opt-in for token economy
+    assert "raw_response" not in payload  # raw is opt-in for token economy
 
 
 def test_flash_firmware_resets_and_runs_by_default(monkeypatch):

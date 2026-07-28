@@ -1,5 +1,72 @@
 # Changelog / 更新日志
 
+## [Unreleased]
+
+Token diet + honest errors: the advertised surface and every result envelope shrink
+substantially, and tools stop reporting `ok:true` for GDB operations that actually failed.
+
+Token 瘦身 + 诚实错误:工具面与每条结果包络大幅缩小,且工具不再对实际失败的 GDB
+操作报告 `ok:true`。
+
+### Token economy / Token 经济性
+
+- Dropped the per-tool `outputSchema`. Every tool advertised the same ~460-char response
+  envelope; it is now documented once in the server instructions and `tool_response.OUTPUT_SCHEMA`.
+  Compact mode: 41.9k -> 26.3k chars (~10.5k -> ~6.6k tokens); full surface: 110k -> 72k chars. /
+  移除每工具的 `outputSchema`:同一份约 460 字符的响应包络此前在每个工具上重复广告,
+  现只在服务器说明中记录一次。紧凑模式 ~10.5k -> ~6.6k tokens;完整工具面 110k -> 72k 字符。
+- Result JSON is emitted compactly (no indent) and omits empty envelope fields
+  (`data`/`error`/`raw_response`/`suggested_next_actions`). A typical result went from
+  180 to 52 chars. Consumers already used `.get()`, so the shape is compatible. /
+  结果 JSON 改为紧凑输出且省略空字段,典型结果从 180 字符降至 52 字符。
+- Raw GDB/MI records no longer ride along on **successful** results unless the server runs
+  with `STM32_GDB_MCP_VERBOSE=1`. Failures always keep them — that is the evidence needed
+  to diagnose. / 成功结果默认不再附带原始 GDB/MI 记录(除非设置 `STM32_GDB_MCP_VERBOSE=1`);
+  失败结果始终保留,因为那是诊断依据。
+
+### Honest errors / 诚实的错误 (#21)
+
+- New `mi_guard`: the ok/error verdict is derived from the raw MI records, not from "the
+  command returned". It catches `^error` results plus the failures GDB only prints as
+  log/console text. / 新增 `mi_guard`:ok/error 判定改为基于原始 MI 记录,同时捕获
+  `^error` 结果与 GDB 仅以 log/console 文本形式输出的失败。
+- `flash_firmware`/`flash_and_run` now fail loudly on `Error erasing flash`, and require a
+  terminal MI result record — a download that returned before completion no longer reads as
+  a successful flash. / `flash_firmware` 现在对 `Error erasing flash` 明确报错,并要求终结
+  MI 结果记录:尚未完成就返回的下载不再被当作烧录成功。
+- `load_symbols`, `write_memory`/`typed_memory`, and `verify_flash` are guarded the same way;
+  `verify_flash` additionally fails on `compare-sections` **MIS-MATCHED** output, so a device
+  running different code than the ELF can no longer pass verification. /
+  `load_symbols`、`write_memory`/`typed_memory`、`verify_flash` 同样受保护;`verify_flash`
+  额外检测 `compare-sections` 的 **MIS-MATCHED**。
+- Error taxonomy gains `elf_load_failed`, `flash_failed`, and `flash_mismatch`. A bad ELF path
+  is no longer classified as a missing host toolchain (GDB says "No such file or directory"
+  for both). / 错误分类新增三类;错误的 ELF 路径不再被误判为"缺少宿主工具链"。
+
+### Stop-event correctness / 停止事件正确性 (#22)
+
+- `halt_execution` no longer sends `-exec-interrupt` to an already-halted target. The pending
+  interrupt used to fire as a spurious `SIGINT` on the **next** resume, which made
+  `continue_execution` and `run_for_duration` useless for the rest of the session. /
+  `halt_execution` 不再对已停止的目标发送 `-exec-interrupt`:此前遗留的中断会在**下一次**
+  恢复运行时以伪 `SIGINT` 触发,导致该会话后续的 `continue_execution` 失效。
+- `run_and_wait` drains stale async records before resuming, so a previous halt's `*stopped`
+  can no longer be reported as the stop of the current run. /
+  `run_and_wait` 在恢复运行前清空滞留异步记录,避免上一次停止被当作本次停止上报。
+- On timeout, the wait probes the target: if the core is verifiably halted, the result is a
+  `stopped-no-notification` stop event with the current frame instead of a false timeout
+  (Windows pipe polling was observed to drop the `*stopped` of a hit breakpoint). /
+  等待超时时会探测目标:若核确实已停止,则返回带当前帧的 `stopped-no-notification` 事件,
+  而非虚假超时(Windows 管道轮询曾丢失断点命中的 `*stopped`)。
+- `run_for_duration` reports `ran_full_duration` and `stopped_early`. It no longer sleeps
+  through the requested window and claims a clean free-run when the target stopped at the
+  start of or during it. / `run_for_duration` 新增 `ran_full_duration` 与 `stopped_early`
+  字段,不再在目标已停止的情况下佯装完成了整段自由运行。
+- Windows backslash paths are normalized before every GDB command. `C:\proj\fw.elf` used to
+  be eaten by MI escaping and silently load nothing while reporting success. /
+  所有 GDB 命令前统一规范化 Windows 反斜杠路径:`C:\proj\fw.elf` 此前会被 MI 转义吞掉,
+  静默加载失败却报告成功。
+
 ## [0.6.0] - 2026-07-22
 
 Internal architecture release: the 3,600-line server.py monolith is decomposed into a

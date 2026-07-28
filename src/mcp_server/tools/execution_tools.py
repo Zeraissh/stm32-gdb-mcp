@@ -3,6 +3,7 @@
 from mcp.types import TextContent, Tool
 
 from ..reset_strategy import resolve_reset_command
+from ..stop_event import was_already_halted
 from ..tool_response import content_success
 from ._helpers import recover_current_session
 from .context import ToolContext
@@ -68,6 +69,11 @@ def continue_execution(ctx: ToolContext, arguments: dict) -> list[TextContent]:
 ))
 def halt_execution(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     resp = ctx.gdb_client.halt_execution()
+    if was_already_halted(resp):
+        return [content_success(
+            {"message": "Target was already halted; no interrupt sent", "already_halted": True},
+            raw_response=resp,
+        )]
     return [content_success({"message": "Execution halted"}, raw_response=resp)]
 
 
@@ -196,6 +202,10 @@ def run_for_duration(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     next_actions = ["capture_state", "read_memory"]
     if result.get("resume_after"):
         next_actions = ["wait_for_stop", "halt_execution"]
+    if not result.get("ran_full_duration", True):
+        # It stopped on its own inside the window: the captured state describes
+        # that stop, not a free-running target — diagnose it rather than re-run.
+        next_actions = ["capture_state", "breakpoint(action=list)", "reconstruct_fault_context"]
     return [content_success(result, suggested_next_actions=next_actions)]
 
 

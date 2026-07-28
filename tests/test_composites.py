@@ -233,3 +233,54 @@ def test_run_for_duration_samples_before_final_halt_and_capture():
     assert result["sample"]["series"][0]["values"]["rx_count"] == 42
     assert result["sample"]["summary"]["rx_count"]["sample_count"] == 3
     assert result["capture"]["expressions"]["values"][0]["value"] == 44
+
+
+# --- issue #22: run_for_duration must not claim a full free-run it never had ---
+
+
+def test_run_for_duration_reports_a_target_that_stopped_the_moment_it_resumed():
+    class InstantStopClient(FakeClient):
+        def continue_execution(self):
+            self.calls.append(("continue_execution",))
+            return [{"type": "notify", "message": "stopped",
+                     "payload": {"reason": "signal-received", "signal-name": "SIGINT"}}]
+
+    client = InstantStopClient()
+    sleeps = []
+
+    result = run_for_duration(
+        client, duration_sec=30.0, sleep=sleeps.append, monotonic=lambda: 0.0,
+    )
+
+    # It must NOT sleep through 30s and report a clean run — the target was stopped.
+    assert sleeps == []
+    assert result["ran_full_duration"] is False
+    assert result["stopped_early"]["signal"] == "SIGINT"
+    assert result["halt"]["method"] == "already_stopped"
+
+
+def test_run_for_duration_reports_a_target_that_stopped_inside_the_window():
+    class BreakpointDuringRunClient(FakeClient):
+        def halt_execution(self):
+            self.calls.append(("halt_execution",))
+            return [{"type": "notify", "message": "stopped",
+                     "payload": {"reason": "breakpoint-hit", "bkptno": "3"}}]
+
+    client = BreakpointDuringRunClient()
+
+    result = run_for_duration(
+        client, duration_sec=2.0, sleep=lambda _: None, monotonic=lambda: 0.0,
+    )
+
+    assert result["ran_full_duration"] is False
+    assert result["stopped_early"]["reason"] == "breakpoint-hit"
+    assert result["stopped_early"]["breakpoint_id"] == "3"
+
+
+def test_run_for_duration_reports_a_genuine_full_run_as_such():
+    result = run_for_duration(
+        FakeClient(), duration_sec=1.0, sleep=lambda _: None, monotonic=lambda: 0.0,
+    )
+
+    assert result["ran_full_duration"] is True
+    assert "stopped_early" not in result

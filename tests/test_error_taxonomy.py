@@ -82,3 +82,32 @@ def test_unknown_error_falls_back():
 
     assert c["code"] == "tool_execution_error"
     assert c["retryable"] is False
+
+
+def test_bad_elf_path_is_not_mistaken_for_a_missing_host_tool():
+    # GDB says "No such file or directory" for a bad ELF path too; routing that to
+    # "install a missing toolchain" sent agents debugging the wrong thing.
+    result = classify_error("load_symbols(C:/proj/fw.elf) failed: fw.elf: No such file or directory.")
+
+    assert result["code"] == "elf_load_failed"
+    assert "debug_profile(action=set, elf_path=...)" in result["suggested_next_actions"]
+
+
+def test_missing_gdb_executable_still_classifies_as_a_missing_tool():
+    result = classify_error("[WinError 2] The system cannot find the file specified")
+
+    assert result["code"] == "tool_missing"
+
+
+def test_flash_download_failure_is_retryable_with_reset_guidance():
+    result = classify_error("flash download(fw.elf) failed: Error erasing flash with vFlashErase packet")
+
+    assert result["code"] == "flash_failed"
+    assert result["retryable"] is True
+    assert "reset_target" in result["suggested_next_actions"]
+
+
+def test_flash_mismatch_tells_the_agent_the_device_runs_other_code():
+    result = classify_error("verify_flash(fw.elf) failed: target flash does not match the ELF — MIS-MATCHED!")
+
+    assert result["code"] == "flash_mismatch"

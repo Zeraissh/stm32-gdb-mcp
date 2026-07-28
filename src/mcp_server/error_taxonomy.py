@@ -8,7 +8,35 @@ clear "halt the target first" signal.
 """
 
 # Ordered (substring, classification) rules; first match wins.
+#
+# The first three rules key off operation labels that mi_guard.ensure_ok puts in
+# the message ("load_symbols(...) failed: ..."). They must stay ahead of the
+# generic host-tool rules below: GDB says "No such file or directory" for a bad
+# ELF path too, and routing that to "install a missing host tool" sent agents
+# chasing their toolchain instead of their path (issue #21/#22).
 _RULES = [
+    (("load_symbols(",), {
+        "code": "elf_load_failed",
+        "retryable": False,
+        "suggested_next_actions": ["inspect_project", "debug_profile(action=set, elf_path=...)"],
+        "hint": "GDB could not load that ELF/AXF. Check the path exists (use forward slashes) "
+                "and that it is the linked output, not an intermediate object.",
+    }),
+    (("flash download(",), {
+        "code": "flash_failed",
+        "retryable": True,
+        "suggested_next_actions": ["reset_target", "self_check", "flash_firmware"],
+        "hint": "The firmware download did not complete. The flash may be write-protected "
+                "(RDP/option bytes), the target may need a reset-halt first, or the adapter "
+                "speed may be too high.",
+    }),
+    (("verify_flash(",), {
+        "code": "flash_mismatch",
+        "retryable": False,
+        "suggested_next_actions": ["flash_firmware", "verify_flash"],
+        "hint": "Target flash does not match the ELF — the device is running different code "
+                "than the one being debugged. Re-flash before trusting any symbol-based result.",
+    }),
     (("[winerror 2]", "no such file or directory", "not recognized as an internal or external command",
       "executable not found", "requires st-util or st-link_gdbserver.exe on path"), {
         "code": "tool_missing",

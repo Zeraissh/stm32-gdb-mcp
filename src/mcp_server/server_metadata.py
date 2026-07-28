@@ -63,6 +63,11 @@ change) and returns a symbolized hot-spot histogram. For printf-over-SWO, call
 setup_swo(hclk_hz, swo_hz) once (it configures TPIU+ITM from the debugger), then capture with
 logging(action=start, channel="swo", file=<output>) - no external decoder needed.
 
+Every result is one compact JSON envelope: {ok, data?, error?, raw_response?,
+suggested_next_actions?} - empty fields are omitted. Successful results omit the raw
+GDB/MI records unless the server runs with STM32_GDB_MCP_VERBOSE=1; failures always
+include them as evidence.
+
 Determinism & sharing: every call is journaled - review it with get_session(view=journal|
 timeline|metrics). Replay a repro with run_scenario; bundle a full, shareable report
 with export_debug_report. Most results carry suggested_next_actions - follow them.
