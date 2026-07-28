@@ -219,11 +219,16 @@ class GdbClientManager:
             return self.gdb.get_gdb_response(timeout_sec=timeout_sec)
 
     def set_breakpoint(self, location: str, condition=None, temporary=False, ignore_count=None):
+        # A breakpoint GDB refused but we reported as set is the worst kind of
+        # false success: the agent then waits for a stop that can never come and
+        # reads the timeout as "the code path was not reached" (issue #22).
         command = build_break_insert_command(location, condition, temporary, ignore_count)
-        return self.execute_command(command)
+        resp = self.execute_command(command)
+        return ensure_ok(resp, f"set breakpoint at {location}")
 
     def delete_breakpoint(self, breakpoint_id: str):
-        return self.execute_command(f"-break-delete {breakpoint_id}")
+        resp = self.execute_command(f"-break-delete {breakpoint_id}")
+        return ensure_ok(resp, f"delete breakpoint {breakpoint_id}")
 
     def list_breakpoints_decoded(self):
         """Return breakpoints with hit counts (times each has actually been reached)."""
@@ -253,20 +258,25 @@ class GdbClientManager:
         return pending + list(resp) + self._drain_collect(per_read_sec=0.3)
 
     def step_over(self):
-        return self.execute_command("-exec-next", timeout_sec=self.timeouts.get("step"))
+        return ensure_ok(self.execute_command("-exec-next", timeout_sec=self.timeouts.get("step")),
+                         "step over")
 
     def step_into(self):
-        return self.execute_command("-exec-step", timeout_sec=self.timeouts.get("step"))
+        return ensure_ok(self.execute_command("-exec-step", timeout_sec=self.timeouts.get("step")),
+                         "step into")
 
     def step_out(self):
-        return self.execute_command("-exec-finish", timeout_sec=self.timeouts.get("finish"))
+        return ensure_ok(self.execute_command("-exec-finish", timeout_sec=self.timeouts.get("finish")),
+                         "step out")
 
     def step_instruction(self, over: bool = False):
         cmd = "-exec-next-instruction" if over else "-exec-step-instruction"
-        return self.execute_command(cmd, timeout_sec=self.timeouts.get("step"))
+        return ensure_ok(self.execute_command(cmd, timeout_sec=self.timeouts.get("step")),
+                         "step instruction")
 
     def run_to_line(self, location: str):
-        return self.execute_command(f"-exec-until {location}", timeout_sec=self.timeouts.get("run"))
+        resp = self.execute_command(f"-exec-until {location}", timeout_sec=self.timeouts.get("run"))
+        return ensure_ok(resp, f"run to {location}")
 
     def read_variable(self, name: str):
         return self.execute_command(f"-data-evaluate-expression {name}")
@@ -450,7 +460,9 @@ class GdbClientManager:
             cmd = f"watch {variable_or_address}"
         else:
             cmd = f"awatch {variable_or_address}"
-        return self.execute_command(cmd)
+        # Measured on hardware: `watch 0x20000010` is refused with "Cannot watch
+        # constant value" while the tool still answered "Watchpoint set".
+        return ensure_ok(self.execute_command(cmd), f"watch {variable_or_address}")
 
     def read_memory(self, address: str, length: int):
         return self.execute_command(
