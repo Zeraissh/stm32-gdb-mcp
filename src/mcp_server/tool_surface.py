@@ -38,24 +38,37 @@ CORE_TOOLS = {
     "read_memory", "write_memory", "read_variable", "read_call_stack",
     "reconstruct_fault_context", "analyze_stack",
     "logging", "read_peripheral_register",
-    "batch", "call", "run_scenario", "get_session", "report_issue",
+    "batch", "call", "call_read", "run_scenario", "get_session", "report_issue",
     "list_sessions", "close_session", "tool_help",
 }
 
 
+# Action-dispatched families: {name: (discriminator, {choice: tool}, summary, arg_help)}.
+#
+# CONTRACT for arg_help, enforced by test_merged_family_arg_help_names_real_arguments:
+# a "choice(...)" group lists that action's REAL argument names — required ones
+# first, optional ones inside [brackets]. Prose belongs outside the parentheses.
+# These strings are how the model learns to call a family, and when they named
+# arguments that did not exist ("watch(expression)" when the schema wants
+# location+access_type) every such call was rejected and had to be retried.
 MERGED = {
     "logging": ("action",
         {"start": "start_logging", "stop": "stop_logging", "get": "get_logs", "clear": "clear_logs"},
         "Firmware log capture over a channel.",
-        "action=start|stop|get|clear; channel=rtt|swo|uart (start also takes the channel's config args)."),
+        "action=start(channel[,port,baudrate,command,args,file,timeout]) | stop(channel) | "
+        "get(channel[,limit,since_index,clear]) | clear(channel). channel=rtt|swo|uart; "
+        "uart takes port/baudrate, rtt/swo take command/args or file."),
     "breakpoint": ("action",
         {"set": "set_breakpoint", "delete": "delete_breakpoint", "list": "list_breakpoints", "watch": "set_watchpoint"},
         "Breakpoint / watchpoint management.",
-        "action=set(location[,condition,temporary,commands]) | delete(number) | list | watch(expression)."),
+        "action=set(location[,condition,temporary,ignore_count]) | delete(breakpoint_id) | list | "
+        "watch(location,access_type). access_type=r|w|a."),
     "expressions": ("action",
         {"assert": "assert_expressions", "capture": "capture_expressions", "compare": "compare_expressions_after_action"},
         "Evaluate C/GDB expressions.",
-        "action=assert(expressions) | capture(expressions or table={index_range,columns}) | compare(expressions, action_to_run_between)."),
+        "action=assert(assertions) | capture([expressions,table]) | compare(expressions,action). "
+        "assertions=[{expression,expected[,operator]}]; table={index_range,columns}; "
+        "compare runs 'action' between the two captures."),
     "coredump": ("action",
         {"capture": "capture_coredump", "load": "load_coredump"},
         "Core-dump capture / load.",
@@ -63,46 +76,50 @@ MERGED = {
     "timeouts": ("action",
         {"get": "get_timeouts", "set": "set_timeouts"},
         "GDB operation timeouts.",
-        "action=get | set(connect,reset,memory,...)."),
+        "action=get | set(overrides). overrides={connect,reset,memory,...} in seconds."),
     "debug_config": ("action",
         {"load": "load_debug_config", "save": "save_debug_config", "validate": "validate_debug_config"},
         "Debug-config file (.json) management.",
-        "action=load(path) | save(path) | validate(path)."),
+        "action=load(path) | save(path,config) | validate(config)."),
     "debug_profile": ("action",
         {"get": "get_debug_profile", "set": "set_debug_profile"},
         "Active debug profile (mcu/elf/svd/probe).",
-        "action=get | set(mcu,elf_path,svd_path,...)."),
+        "action=get | set([mcu,elf_path,svd_path,board,probe,server_type,server_args,project_root,notes])."),
     "read_registers": ("what",
         {"core": "read_core_registers", "fault": "read_fault_registers", "cycle": "read_cycle_counter"},
         "Read CPU register groups.",
-        "what=core | fault(CFSR/HFSR decode) | cycle(DWT cycle counter)."),
+        "what=core([include_raw]) | fault | cycle([enable]). fault decodes CFSR/HFSR; "
+        "cycle reads the DWT cycle counter."),
     "inspect_symbol": ("what",
         {"size": "sizeof", "type": "lookup_type", "address": "address_of",
          "resolve": "resolve_address", "functions": "list_functions", "variables": "list_variables"},
         "Symbol / type introspection.",
-        "what=size(type) | type(name) | address(symbol) | resolve(address) | functions(regex) | variables."),
+        "what=size(expr) | type(expr) | address(symbol) | resolve(expr) | functions([regex]) | "
+        "variables([regex]). resolve maps an address back to source."),
     "typed_memory": ("action",
         {"read": "read_typed_memory", "write": "write_typed_memory"},
         "Typed (struct-aware) memory access.",
-        "action=read(address,type) | write(address,type,value)."),
+        "action=read(address,width_bits,count) | write(address,value,width_bits). width_bits=8|16|32|64."),
     "write_guard": ("action",
         {"policy": "set_write_policy", "audit": "get_write_audit_log"},
         "Memory-write guardrail.",
-        "action=policy(mode,allow) | audit."),
+        "action=policy([mode,add_allow,add_protected]) | audit([limit]). mode=enforce|dry_run."),
     "snapshot": ("scope",
         {"full": "capture_debug_snapshot", "rtos": "capture_rtos_snapshot"},
         "One-shot diagnostic snapshot.",
-        "scope=full(regs+stack+faults) | rtos(task/queue state)."),
+        "scope=full([include_project,include_rtos,include_logs,log_limit,project_root]) | rtos. "
+        "full bundles registers+stack+faults; rtos captures task/queue state."),
     "frame": ("action",
         {"select": "select_frame", "source": "list_source", "variables": "read_frame_variables"},
         "Stack-frame navigation.",
-        "action=select(number) | source(around a frame) | variables(of selected frame)."),
+        "action=select(level) | source([location,count]) | variables([level,include_raw]). "
+        "level 0 is the innermost frame."),
     "session_diagnostics": ("what",
         {"health": "check_session_health", "events": "get_gdb_events", "server_logs": "get_gdb_server_logs"},
         "Session/transport diagnostics.",
-        "what=health | events(recent GDB/MI) | server_logs(GDB-server stderr)."),
+        "what=health([reconnect]) | events | server_logs. events returns recent GDB/MI records; "
+        "server_logs returns the GDB server's stderr."),
 }
-
 
 MERGED_AWAY = {old for _, mapping, *_ in MERGED.values() for old in mapping.values()}
 
@@ -119,6 +136,16 @@ READ_ONLY_TOOLS = {
     "detect_probe", "describe_board", "validate_board", "describe_acceptance",
     "acceptance_loop_status", "describe_framework", "disassemble", "verify_flash",
     "sample_pc", "suggest_server_args", "capture_state", "wait_for_stop",
+    "call_read",
+}
+
+# Read-only singles that no read-only family covers. Admission rule: the tool
+# changes neither target nor host state, and carries no option that would (so
+# get_logs, whose clear=true drops entries, and export_debug_report, which
+# writes a file, stay out).
+READ_ONLY_EXTRAS = {
+    "get_debug_profile", "get_timeouts", "get_write_audit_log", "list_breakpoints",
+    "get_gdb_events", "get_gdb_server_logs", "read_typed_memory",
 }
 
 HARDWARE_WRITE_TOOLS = {
@@ -128,6 +155,22 @@ HARDWARE_WRITE_TOOLS = {
 
 GENERIC_DISPATCH_TOOLS = {"call", "batch", "run_scenario"}
 OPEN_WORLD_TOOLS = {"report_issue", "build_firmware"}
+
+# call_read forwards only to these, so it can be annotated read-only and skip the
+# permission prompt that call's destructive+open-world annotation forces. Compact
+# mode hides ~78 tools, roughly a third of them read-only; reaching those through
+# call meant a prompt they would never have triggered as direct tools.
+READ_ONLY_DISPATCH_EXCLUDED = {"call", "call_read", "batch", "run_scenario"}
+
+
+def read_only_tool_names() -> set[str]:
+    """Every tool call_read may forward to: the read-only set, the actions of a
+    read-only family, and the standalone read-only tools listed above."""
+    names = set(READ_ONLY_TOOLS) | set(READ_ONLY_EXTRAS)
+    for family, (_discriminator, mapping, *_rest) in MERGED.items():
+        if family in READ_ONLY_TOOLS:
+            names.update(mapping.values())
+    return names - READ_ONLY_DISPATCH_EXCLUDED
 
 
 def _with_session(schema: dict) -> dict:
@@ -170,42 +213,92 @@ def _decorate(tool: Tool) -> Tool:
 def merged_tools(base: list[Tool]) -> list[Tool]:
     by_name = {tool.name: tool for tool in base}
     return [
-        Tool(
-            name=name,
-            description=f"{summary} {arg_help}",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    discriminator: {
-                        "type": "string",
-                        "enum": list(mapping),
-                        "description": "Which operation to perform.",
-                    },
-                    "session": deepcopy(SESSION_PROPERTY),
-                },
-                "required": [discriminator],
-                "oneOf": [
-                    _merged_branch(discriminator, choice, by_name.get(tool_name))
-                    for choice, tool_name in mapping.items()
-                ],
-            },
-        )
+        _merged_tool(name, discriminator, mapping, f"{summary} {arg_help}", by_name)
         for name, (discriminator, mapping, summary, arg_help) in MERGED.items()
     ]
 
 
-def _merged_branch(discriminator: str, choice: str, tool: Tool | None) -> dict:
-    schema = _with_session(tool.inputSchema if tool else {"type": "object", "properties": {}})
-    properties = {
-        discriminator: {"type": "string", "const": choice},
-        **schema["properties"],
+def _merged_tool(name: str, discriminator: str, mapping: dict, description: str, by_name: dict) -> Tool:
+    """Assemble one action-dispatched family from its per-action tools.
+
+    Each action's arguments are hoisted into a single top-level ``properties``
+    map, so a branch carries only its discriminator const and its own
+    ``required`` list. Repeating every property (with descriptions, plus
+    ``session``) inside all four branches made these the largest schemas on the
+    surface — ``logging`` alone was 2.9k chars — while saying nothing the
+    hoisted map and the per-branch ``required`` don't already say. Branch
+    property names never collide today; ``_hoist`` keeps a colliding one local
+    to its branch so a future clash degrades instead of silently merging.
+    """
+    branches = {
+        choice: _with_session(_branch_schema(by_name.get(tool_name)))
+        for choice, tool_name in mapping.items()
     }
-    required = list(dict.fromkeys([discriminator, *schema.get("required", [])]))
+    properties: dict = {
+        discriminator: {
+            "type": "string",
+            "enum": list(mapping),
+            "description": "Which operation to perform.",
+        },
+        "session": deepcopy(SESSION_PROPERTY),
+    }
+    local = {choice: _hoist(properties, schema["properties"]) for choice, schema in branches.items()}
+    return Tool(
+        name=name,
+        description=description,
+        inputSchema={
+            "type": "object",
+            "properties": properties,
+            "required": [discriminator],
+            "oneOf": [
+                _merged_branch(discriminator, choice, schema, local[choice])
+                for choice, schema in branches.items()
+            ],
+        },
+    )
+
+
+def _branch_schema(tool: Tool | None) -> dict:
+    return tool.inputSchema if tool else {"type": "object", "properties": {}}
+
+
+def _hoist(shared: dict, branch_properties: dict) -> dict:
+    """Move a branch's properties into ``shared``; return the ones that must stay local.
+
+    A property stays in its branch only when two actions genuinely mean different
+    things by it — ``breakpoint.location`` is "where to break" for set and "what
+    to watch" for watch, and collapsing those would lose real guidance. Differing
+    only by one side omitting a description is not a real clash: the described
+    copy wins and the bare duplicates are dropped.
+    """
+    kept_local = {}
+    for prop, spec in branch_properties.items():
+        existing = shared.get(prop)
+        if existing is None:
+            shared[prop] = deepcopy(spec)
+        elif existing != spec:
+            if _same_shape(existing, spec):
+                if "description" not in existing and "description" in spec:
+                    shared[prop] = deepcopy(spec)
+            else:
+                kept_local[prop] = deepcopy(spec)
+    return kept_local
+
+
+def _same_shape(left: dict, right: dict) -> bool:
+    """True when two property specs differ only by a description one of them omits."""
+    if {k: v for k, v in left.items() if k != "description"} != {
+        k: v for k, v in right.items() if k != "description"
+    }:
+        return False
+    return "description" not in left or "description" not in right
+
+
+def _merged_branch(discriminator: str, choice: str, schema: dict, local_properties: dict) -> dict:
     return {
         "title": choice,
-        "type": "object",
-        "properties": properties,
-        "required": required,
+        "properties": {discriminator: {"const": choice}, **local_properties},
+        "required": list(dict.fromkeys([discriminator, *schema.get("required", [])])),
     }
 
 

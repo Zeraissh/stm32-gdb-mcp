@@ -43,7 +43,7 @@ def register(tool: Tool) -> Callable[[Handler], Handler]:
 # holds this constant; append new tools at the position they should advertise.
 TOOL_ORDER: list[str] = [
     "start_debug_session", "stop_debug_session", "self_check", "detect_probe", "suggest_server_args",
-    "set_adapter_speed", "batch", "call", "tool_help", "recover_session", "check_session_health",
+    "set_adapter_speed", "batch", "call", "call_read", "tool_help", "recover_session", "check_session_health",
     "build_firmware", "load_symbols", "flash_firmware", "reset_target", "set_breakpoint",
     "list_breakpoints", "delete_breakpoint", "continue_execution", "halt_execution", "run_and_wait",
     "debug_until", "capture_state", "flash_and_run", "run_for_duration", "wait_for_stop", "step",

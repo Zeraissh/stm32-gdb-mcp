@@ -1,5 +1,51 @@
 # Changelog / 更新日志
 
+## [Unreleased] — part 2
+
+Leaner family schemas, argument names that are actually real, and a read-only dispatcher
+that stops costing approval prompts.
+
+更精简的族 schema、真实存在的参数名,以及一个不再触发审批提示的只读分发工具。
+
+### Merged-family schemas / 合并族 schema
+
+- Each `oneOf` branch used to repeat the family's entire property map — descriptions and
+  `session` included — making these the largest schemas advertised. Arguments are now hoisted
+  into one top-level `properties` map and a branch carries only its discriminator and its own
+  `required` list. `logging` 2.9k -> 1.8k chars, `breakpoint` 2.5k -> 1.5k. /
+  每个 `oneOf` 分支此前重复整个属性表(含描述与 `session`),现将参数提升到顶层,分支只保留
+  判别值与自身的 `required`。
+- A property that two actions genuinely mean differently stays in its branch —
+  `breakpoint.location` is "where to break" for `set` and "what to watch" for `watch`. Only
+  duplicates that differ by an omitted description are collapsed. /
+  两个动作含义确实不同的属性仍留在各自分支;仅合并"只差一个描述"的重复项。
+
+### Argument names / 参数名 (AI-facing bug)
+
+- Twelve actions across eight families documented arguments that do not exist, or hid required
+  ones: `delete(number)` when the schema wants `breakpoint_id`, `watch(expression)` when it wants
+  `location`+`access_type`, `select(number)` when it wants `level`, `assert(expressions)` when it
+  wants `assertions`, and so on. Every call written from those descriptions was rejected by schema
+  validation and had to be retried. All of them now name the real arguments. /
+  八个族中的十二个动作此前记录了不存在的参数或隐藏了必填参数,导致模型照描述发起的调用必被
+  schema 拒绝并重试;现已全部改为真实参数名。
+- A test pins the contract: inside a `choice(...)` group every identifier must be a real property
+  of that action's schema, and every required property must be listed outside the `[optional]`
+  bracket. / 新增测试锁定该约定,防止再次漂移。
+
+### call_read / 只读分发
+
+- New `call_read(tool, args)`: same escape hatch as `call`, restricted to tools that only read
+  state, and annotated `readOnlyHint` accordingly. `call` is necessarily annotated
+  destructive + open-world (it can reach anything), so reaching a hidden **read-only** tool
+  through it triggered an approval prompt that tool would never have triggered directly —
+  compact mode hides ~78 tools, and 50 of them are read-only. /
+  新增 `call_read(tool, args)`:与 `call` 相同的逃生口,但仅限只读工具,因而可标注为只读。
+  `call` 必须保守地标注为破坏性+开放世界,于是经它访问隐藏的**只读**工具会触发本不该有的
+  审批提示;紧凑模式隐藏约 78 个工具,其中 50 个是只读的。
+- It refuses anything that writes (and the dispatchers, including itself) with a `not_read_only`
+  error pointing at `call`. / 对任何写操作(以及各分发工具本身)返回 `not_read_only` 错误并指向 `call`。
+
 ## [Unreleased]
 
 Token diet + honest errors: the advertised surface and every result envelope shrink

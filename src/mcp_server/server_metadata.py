@@ -11,6 +11,8 @@ observe -> orient (symbolize) -> hypothesize -> act safely -> verify.
 Tool not in your list? Some clients cap how many tools they expose, so a tool you need
 (e.g. start_debug_session) may be hidden. Reach ANY tool via call(tool="<name>", args={...}),
 or run several with batch - these always work even when the tool isn't directly listed.
+For a hidden tool that only READS state, prefer call_read(tool=..., args=...): it is
+annotated read-only, so it does not trigger the approval prompt that call can.
 
 The surface is lean: related ops are action-dispatched families - pass the discriminator.
 breakpoint(action=set|delete|list|watch), logging(action=start|stop|get|clear, channel=...),

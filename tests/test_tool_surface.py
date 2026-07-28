@@ -1,4 +1,5 @@
 import asyncio
+import re
 
 from mcp_server.server import handle_list_tools
 
@@ -23,11 +24,15 @@ def test_merged_tools_expose_action_specific_schemas():
     breakpoint_set = _branch(tools["breakpoint"], "action", "set")
     breakpoint_list = _branch(tools["breakpoint"], "action", "list")
 
+    # Per-action required args are what keep a family callable; the arguments
+    # themselves are hoisted to the family's top-level properties.
     assert {"action", "channel"} <= set(logging_start["required"])
-    assert {"port", "baudrate", "file", "command", "args"} <= set(logging_start["properties"])
     assert set(logging_stop["required"]) == {"action", "channel"}
     assert {"action", "location"} <= set(breakpoint_set["required"])
     assert breakpoint_list["required"] == ["action"]
+    assert {"port", "baudrate", "file", "command", "args"} <= set(
+        tools["logging"].inputSchema["properties"]
+    )
 
 
 def test_every_tool_exposes_session():
@@ -73,3 +78,70 @@ def test_generic_dispatch_and_custom_build_are_conservatively_annotated():
     assert tools["build_firmware"].annotations.readOnlyHint is False
     assert tools["build_firmware"].annotations.openWorldHint is True
     assert tools["logging"].annotations.readOnlyHint is False
+
+
+# --- the arg_help contract ----------------------------------------------------
+
+
+def _arg_group(arg_help, choice):
+    """The 'choice(...)' argument list from an arg_help string, if it has one."""
+    match = re.search(rf"\b{re.escape(choice)}\(([^)]*)\)", arg_help)
+    return match.group(1) if match else None
+
+
+def test_merged_family_arg_help_names_real_arguments():
+    """Every argument a family's description names must exist in that action's schema.
+
+    These strings are how the model learns to call an action. Naming an argument
+    that does not exist (e.g. "watch(expression)" when the schema wants
+    location+access_type) makes every such call fail validation and cost a retry.
+    """
+    from mcp_server.tool_surface import MERGED
+    from mcp_server.tools.registry import REGISTRY
+
+    problems = []
+    for family, (_disc, mapping, _summary, arg_help) in MERGED.items():
+        for choice, tool_name in mapping.items():
+            spec = REGISTRY.get(tool_name)
+            if spec is None:
+                continue
+            schema = spec.tool.inputSchema
+            properties = set(schema.get("properties", {}))
+            required = [p for p in schema.get("required", [])]
+            group = _arg_group(arg_help, choice)
+
+            if group is None:
+                if required:
+                    problems.append(f"{family}({choice}) hides required args {required}")
+                continue
+
+            named = set(re.findall(r"[a-z_][a-z0-9_]*", group))
+            unreal = named - properties
+            if unreal:
+                problems.append(f"{family}({choice}) names non-existent args {sorted(unreal)}")
+
+            # Required args must be listed, and outside the [optional] bracket.
+            mandatory_part = group.split("[")[0]
+            listed = set(re.findall(r"[a-z_][a-z0-9_]*", mandatory_part))
+            missing = [p for p in required if p not in listed]
+            if missing:
+                problems.append(f"{family}({choice}) omits required args {missing}")
+
+    assert not problems, "arg_help drifted from the real schemas:\n  " + "\n  ".join(problems)
+
+
+def test_merged_tools_hoist_shared_properties_instead_of_repeating_them():
+    # Every branch used to repeat the whole property map (with descriptions and
+    # session), which made these the largest schemas advertised.
+    logging_tool = _tools()["logging"]
+
+    assert {"channel", "port", "baudrate", "limit"} <= set(logging_tool.inputSchema["properties"])
+    for branch in logging_tool.inputSchema["oneOf"]:
+        assert set(branch["properties"]) == {"action"}, "branch should carry only its discriminator"
+
+    # A property two actions genuinely mean differently stays in its branch, so
+    # "where to break" is not collapsed into "what to watch".
+    breakpoint_tool = _tools()["breakpoint"]
+    watch = _branch(breakpoint_tool, "action", "watch")
+    assert "watch" in watch["properties"]["location"]["description"].lower()
+    assert "break at" in breakpoint_tool.inputSchema["properties"]["location"]["description"].lower()
