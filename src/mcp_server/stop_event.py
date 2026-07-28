@@ -73,20 +73,3 @@ def parse_stop_event(records) -> dict:
     }
 
 
-def synthesized_stop_event(frame=None) -> dict:
-    """A stop event for a target found halted without a ``*stopped`` notification.
-
-    Windows pipe polling has been observed to miss the async notification of a
-    hit breakpoint (issue #22); the target is verifiably halted, but WHY is
-    unknown, so the reason is explicit about that instead of guessing.
-    """
-    return {
-        "stopped": True,
-        "reason": "stopped-no-notification",
-        "signal": None,
-        "breakpoint_id": None,
-        "frame": _parse_frame(frame),
-        "raw": None,
-        "note": "target is halted but GDB's *stopped notification was not observed; "
-                "check breakpoint(action=list) hit counts for the cause",
-    }

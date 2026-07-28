@@ -1,5 +1,47 @@
 # Changelog / 更新日志
 
+## [Unreleased] — part 3 (hardware-validated on STM32L151)
+
+Validating parts 1 and 2 on a real L151 found the root cause under issue #22 —
+and a regression part 1 had introduced. 在真实 L151 上验证第 1、2 部分时找到了
+issue #22 的根因,以及第 1 部分引入的一个回归。
+
+### MI async mode / MI 异步模式 (the root cause)
+
+- GDB now runs with `mi-async on`, set immediately after launch and before any
+  target is attached. In the default all-stop synchronous mode GDB accepts **no**
+  command while the target runs — not even `-exec-interrupt`, which simply never
+  answers (measured: 5 s, zero records) and wedges every command queued behind it.
+  So `halt_execution` could never actually stop a running target. /
+  GDB 现在以 `mi-async on` 运行,在启动后、attach 目标前设置。默认的 all-stop 同步模式下,
+  目标运行期间 GDB 不接受任何命令,连 `-exec-interrupt` 也永不应答,后续命令全部堵死,
+  因此 `halt_execution` 从来无法真正停下一个运行中的目标。
+- This is why the old spurious SIGINT existed at all: the only interrupt that ever
+  reached the target was the one leaked at connect time and queued by the stub,
+  which fired on the next resume. Removing the leak without enabling async would
+  have left no way to halt at all. / 这也解释了旧版幽灵 SIGINT 的由来:唯一真正送达
+  目标的中断,正是连接时泄漏、被 stub 排队、在下次恢复执行时触发的那个。只堵住泄漏而不
+  开启 async,就会彻底失去停止运行中目标的能力。
+- GDB rejects the setting once an inferior exists, so it must be the first command
+  after launch; an old GDB without `mi-async` degrades to halted-target flows.
+
+### Run-state tracking / 运行状态跟踪 (regression fix)
+
+- Part 1 established "is the target halted?" by probing it with an MI command.
+  On a **running** target that command is not answered until it halts, and the
+  late reply offsets every later response — after any `run_and_wait` timeout the
+  whole session was unusable. State now comes only from GDB's own
+  `*running`/`*stopped` records; no command is ever sent to find it out. /
+  第 1 部分用发送 MI 命令的方式判断目标是否停止;在运行中的目标上该命令要等到目标停下
+  才被应答,迟到的回复会让此后每条响应错位,导致任何 `run_and_wait` 超时后整个会话不可用。
+  现在状态只来自 GDB 自己的 `*running`/`*stopped` 记录,绝不为此发送命令。
+- Attaching emits no `*stopped`, so `connect` seeds the halted state — GDB servers
+  halt the target on attach, which is why identity reads work immediately. /
+  attach 不产生 `*stopped`,因此 `connect` 播种"已停止"状态。
+- A late `*stopped` (Windows pipe polling delivers it after the wait window) is
+  now caught by a patient final drain rather than by probing. /
+  迟到的 `*stopped` 改由末尾的耐心 drain 捕获。
+
 ## [Unreleased] — part 2
 
 Leaner family schemas, argument names that are actually real, and a read-only dispatcher
