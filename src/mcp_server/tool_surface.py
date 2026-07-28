@@ -38,7 +38,7 @@ CORE_TOOLS = {
     "read_memory", "write_memory", "read_variable", "read_call_stack",
     "reconstruct_fault_context", "analyze_stack",
     "logging", "read_peripheral_register",
-    "batch", "call", "run_scenario", "get_session", "report_issue",
+    "batch", "call", "call_read", "run_scenario", "get_session", "report_issue",
     "list_sessions", "close_session", "tool_help",
 }
 
@@ -136,6 +136,16 @@ READ_ONLY_TOOLS = {
     "detect_probe", "describe_board", "validate_board", "describe_acceptance",
     "acceptance_loop_status", "describe_framework", "disassemble", "verify_flash",
     "sample_pc", "suggest_server_args", "capture_state", "wait_for_stop",
+    "call_read",
+}
+
+# Read-only singles that no read-only family covers. Admission rule: the tool
+# changes neither target nor host state, and carries no option that would (so
+# get_logs, whose clear=true drops entries, and export_debug_report, which
+# writes a file, stay out).
+READ_ONLY_EXTRAS = {
+    "get_debug_profile", "get_timeouts", "get_write_audit_log", "list_breakpoints",
+    "get_gdb_events", "get_gdb_server_logs", "read_typed_memory",
 }
 
 HARDWARE_WRITE_TOOLS = {
@@ -145,6 +155,22 @@ HARDWARE_WRITE_TOOLS = {
 
 GENERIC_DISPATCH_TOOLS = {"call", "batch", "run_scenario"}
 OPEN_WORLD_TOOLS = {"report_issue", "build_firmware"}
+
+# call_read forwards only to these, so it can be annotated read-only and skip the
+# permission prompt that call's destructive+open-world annotation forces. Compact
+# mode hides ~78 tools, roughly a third of them read-only; reaching those through
+# call meant a prompt they would never have triggered as direct tools.
+READ_ONLY_DISPATCH_EXCLUDED = {"call", "call_read", "batch", "run_scenario"}
+
+
+def read_only_tool_names() -> set[str]:
+    """Every tool call_read may forward to: the read-only set, the actions of a
+    read-only family, and the standalone read-only tools listed above."""
+    names = set(READ_ONLY_TOOLS) | set(READ_ONLY_EXTRAS)
+    for family, (_discriminator, mapping, *_rest) in MERGED.items():
+        if family in READ_ONLY_TOOLS:
+            names.update(mapping.values())
+    return names - READ_ONLY_DISPATCH_EXCLUDED
 
 
 def _with_session(schema: dict) -> dict:

@@ -7,6 +7,7 @@
   "suggest_server_args",
   "batch",
   "call",
+  "call_read",
   "tool_help",
   "recover_session",
   "build_firmware",
@@ -281,6 +282,36 @@
     "type": "object"
    },
    "name": "call"
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Like call, but restricted to tools that only READ state \u2014 so it needs no approval prompt where call, which can reach anything, does. Prefer it for hidden read-only tools: call_read(tool='read_core_registers', args={}). Refuses anything that writes; use call for those.",
+   "inputSchema": {
+    "properties": {
+     "args": {
+      "description": "Arguments for that tool.",
+      "type": "object"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "tool": {
+      "description": "Name of the read-only tool to invoke.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "tool"
+    ],
+    "type": "object"
+   },
+   "name": "call_read"
   },
   {
    "annotations": {

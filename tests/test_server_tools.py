@@ -935,12 +935,62 @@ def test_compact_mode_exposes_small_core_with_call(monkeypatch):
     monkeypatch.setenv("STM32_GDB_MCP_COMPACT", "1")
     names = {t.name for t in asyncio.run(handle_list_tools())}
     assert "start_debug_session" in names and "call" in names and "batch" in names
-    assert len(names) < 35                     # small enough to never be truncated
+    assert "call_read" in names                # the prompt-free path to hidden read-only tools
+    assert len(names) < 40                     # small enough to never be truncated
     assert "read_freertos" not in names        # reachable via call, not listed in compact
     # Full mode exposes the complete consolidated surface without a brittle fixed count.
     monkeypatch.delenv("STM32_GDB_MCP_COMPACT")
     full_names = {tool.name for tool in asyncio.run(handle_list_tools())}
     assert names < full_names
+
+
+def test_call_read_forwards_to_a_read_only_tool():
+    payload = _payload(asyncio.run(handle_call_tool(
+        "call_read", {"tool": "suggest_server_args", "args": {"mcu": "STM32L431", "probe": "stlink"}})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["server_args"][0] == "-f"
+
+
+def test_call_read_refuses_tools_that_write_and_points_at_call():
+    # The whole point is that call_read can be annotated read-only, so it must
+    # not become a back door to flashing or writing memory.
+    for tool in ("flash_firmware", "write_memory", "reset_target", "build_firmware"):
+        payload = _payload(asyncio.run(handle_call_tool("call_read", {"tool": tool, "args": {}})))
+
+        assert payload["ok"] is False, f"call_read must refuse {tool}"
+        assert payload["error"]["code"] == "not_read_only"
+        assert "call" in payload["suggested_next_actions"]
+
+
+def test_call_read_refuses_the_dispatchers_including_itself():
+    for tool in ("call", "call_read", "batch", "run_scenario", None):
+        args = {"tool": tool} if tool else {}
+        payload = _payload(asyncio.run(handle_call_tool("call_read", args)))
+
+        assert payload["ok"] is False
+        assert payload["error"]["code"] == "not_read_only"
+
+
+def test_call_read_is_annotated_read_only_unlike_call():
+    tools = {t.name: t for t in asyncio.run(handle_list_tools())}
+
+    assert tools["call_read"].annotations.readOnlyHint is True
+    assert tools["call_read"].annotations.destructiveHint is False
+    assert tools["call_read"].annotations.openWorldHint is False
+    # call stays conservative: it can reach anything.
+    assert tools["call"].annotations.destructiveHint is True
+
+
+def test_call_read_reaches_read_only_tools_hidden_by_compact_mode(monkeypatch):
+    from mcp_server.tool_surface import read_only_tool_names
+
+    monkeypatch.setenv("STM32_GDB_MCP_COMPACT", "1")
+    advertised = {t.name for t in asyncio.run(handle_list_tools())}
+    hidden_read_only = read_only_tool_names() - advertised
+
+    # These are exactly the calls that used to cost a permission prompt.
+    assert {"read_core_registers", "read_freertos", "diagnose_fault"} <= hidden_read_only
 
 
 def test_batch_runs_steps_in_one_call_returning_full_results():

@@ -48,6 +48,9 @@ from .tool_surface import (
 from .tool_surface import (
     advertised_tools as _advertised_tools,
 )
+from .tool_surface import (
+    read_only_tool_names as _read_only_tool_names,
+)
 from .tools import REGISTRY as _TOOL_REGISTRY
 from .tools import TOOL_ORDER as _TOOL_ORDER
 from .tools import load_all as _load_tool_modules
@@ -220,6 +223,21 @@ async def handle_list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "tool": {"type": "string", "description": "Name of the tool to invoke."},
+                    "args": {"type": "object", "description": "Arguments for that tool."}
+                },
+                "required": ["tool"]
+            }
+        ),
+        Tool(
+            name="call_read",
+            description="Like call, but restricted to tools that only READ state — so it needs no "
+                        "approval prompt where call, which can reach anything, does. Prefer it for "
+                        "hidden read-only tools: call_read(tool='read_core_registers', args={}). "
+                        "Refuses anything that writes; use call for those.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "tool": {"type": "string", "description": "Name of the read-only tool to invoke."},
                     "args": {"type": "object", "description": "Arguments for that tool."}
                 },
                 "required": ["tool"]
@@ -408,6 +426,19 @@ async def handle_call_tool(name: str, arguments: dict | None) -> CallToolResult:
         if inner in (None, "call", "batch", "run_scenario"):
             return call_tool_result([content_error(
                 "call needs a 'tool' name (not call/batch/run_scenario).", code="invalid_call")])
+        return await handle_call_tool(inner, arguments.get("args", {}))
+
+    if name == "call_read":
+        inner = arguments.get("tool")
+        allowed = _read_only_tool_names()
+        if inner not in allowed:
+            detail = ("call_read needs a 'tool' name." if inner is None
+                      else f"'{inner}' is not a read-only tool.")
+            return call_tool_result([content_error(
+                f"{detail} call_read only forwards to tools that read state; "
+                f"use call(tool=..., args=...) for anything that writes.",
+                code="not_read_only",
+                suggested_next_actions=["call", "tool_help"])])
         return await handle_call_tool(inner, arguments.get("args", {}))
 
     sid = arguments.get("session") or "default"
