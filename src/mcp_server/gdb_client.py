@@ -6,7 +6,7 @@ from pygdbmi.gdbcontroller import GdbController
 from . import dwt
 from .fault_analysis import FAULT_REGISTER_ADDRESSES
 from .gdb_decode import decode_backtrace, decode_breakpoints, decode_registers, decode_variables
-from .mi_guard import GdbCommandError, ensure_ok
+from .mi_guard import GdbCommandError, ensure_ok, has_terminal_result
 from .stop_event import ALREADY_HALTED_RECORD, parse_stop_event
 from .timeouts import TimeoutConfig
 
@@ -160,6 +160,39 @@ class GdbClientManager:
             self._running = False
         return resp
 
+    def _execute_until_result(self, cmd: str, timeout_sec: float, poll_sec: float = 0.5):
+        """Issue ``cmd`` and keep reading until GDB sends a terminal result record.
+
+        ``pygdbmi.write()`` returns the first batch of records that happens to be
+        available, not the batch containing the terminating ``^done``. For a quick
+        command they are the same batch; for a long transfer they are not — the
+        first batch is the ``+download`` progress stream and ``^done`` lands in a
+        later read.
+
+        That mattered because ``ensure_ok(..., require_result=True)`` demands the
+        terminal record, so a perfectly healthy flash was reported as "did not
+        report completion — treat it as NOT done". Measured on an STM32L151 over
+        ST-Link: both the 24 KiB bootloader and the 31 KiB application were
+        written correctly (vector tables and the boot descriptor read back byte
+        exact) while the tool reported failure. Raising the ``download`` timeout
+        from 60 s to 300 s changed nothing, which is what ruled out a slow flash
+        and pointed at the read loop.
+
+        Reporting a successful flash as failed is the mirror image of issue #21:
+        it is safer than the reverse, but it still leaves the agent unable to tell
+        a real write-protect fault from a bookkeeping artefact.
+        """
+        # The first read gets the full budget: pygdbmi treats timeout_sec as a
+        # ceiling, not a dwell, so a command that finishes in one batch behaves
+        # exactly as it did before this helper existed.
+        deadline = time.monotonic() + timeout_sec
+        records = list(self.execute_command(cmd, timeout_sec=timeout_sec) or [])
+        while not has_terminal_result(records) and time.monotonic() < deadline:
+            extra = self._read_async(poll_sec)
+            if extra:
+                records.extend(self._note_state(extra))
+        return records
+
     def load_symbols(self, filepath: str):
         """Loads symbols/exec from an ELF/AXF without flashing the device.
 
@@ -167,8 +200,8 @@ class GdbClientManager:
         this is needed before symbol breakpoints resolve — unless load_firmware ran.
         """
         self._symbol_cache.clear()
-        resp = self.execute_command(
-            f"-file-exec-and-symbols {gdb_path(filepath)}", timeout_sec=self.timeouts.get("symbols")
+        resp = self._execute_until_result(
+            f"-file-exec-and-symbols {gdb_path(filepath)}", self.timeouts.get("symbols")
         )
         return ensure_ok(resp, f"load_symbols({filepath})", require_result=True)
 
@@ -182,7 +215,7 @@ class GdbClientManager:
         responses = []
         responses.extend(self.load_symbols(filepath))
         # Download (flash) the firmware to target memory
-        download = self.execute_command("-target-download", timeout_sec=self.timeouts.get("download"))
+        download = self._execute_until_result("-target-download", self.timeouts.get("download"))
         responses.extend(ensure_ok(download, f"flash download({filepath})", require_result=True))
         return responses
 

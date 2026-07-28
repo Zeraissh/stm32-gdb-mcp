@@ -545,3 +545,55 @@ def test_coredump_paths_are_quoted_too():
         'generate-core-file "C:/dumps/my run/core.bin"',
         'core-file "C:/dumps/my run/core.bin"',
     ], sent
+
+
+class SplitBatchGdb:
+    """pygdbmi stand-in whose terminal ^done arrives in a LATER read.
+
+    This is what a real flash looks like: write() returns the +download progress
+    stream, and the ^done that terminates the operation only shows up on a
+    subsequent get_gdb_response(). Observed against OpenOCD + ST-Link on an
+    STM32L151, where a fully successful 24 KiB flash was reported as
+    "did not report completion".
+    """
+
+    def __init__(self, batches_before_result=2):
+        self.commands = []
+        self._remaining = batches_before_result
+
+    def write(self, command, timeout_sec=1.0):
+        self.commands.append((command, timeout_sec))
+        # Progress records only - deliberately no terminal result yet.
+        return [{"type": "output", "message": "download", "payload": "+download,{section=\".text\"}"}]
+
+    def get_gdb_response(self, timeout_sec=0.1, raise_error_on_timeout=False):
+        if self._remaining > 0:
+            self._remaining -= 1
+            return [{"type": "output", "message": "download", "payload": "+download,{section=\".data\"}"}]
+        return [{"type": "result", "message": "done", "payload": None}]
+
+
+def test_flash_download_waits_for_terminal_result_across_reads():
+    """A flash whose ^done lands in a later batch must not be reported as failed."""
+    manager = GdbClientManager()
+    manager.gdb = SplitBatchGdb()
+
+    records = manager.load_firmware("fw.axf")
+
+    assert any(r.get("type") == "result" and r.get("message") == "done" for r in records)
+    assert any(cmd == "-target-download" for cmd, _ in manager.gdb.commands)
+
+
+def test_flash_download_still_fails_when_no_result_ever_arrives():
+    """The issue #21 guard must survive: a genuinely stalled flash still raises."""
+
+    class NeverCompletes(SplitBatchGdb):
+        def get_gdb_response(self, timeout_sec=0.1, raise_error_on_timeout=False):
+            return [{"type": "output", "message": "download", "payload": "+download,{}"}]
+
+    manager = GdbClientManager()
+    manager.gdb = NeverCompletes()
+    manager.timeouts.set({"symbols": 0.2, "download": 0.2})
+
+    with pytest.raises(GdbCommandError, match="did not report completion"):
+        manager.load_firmware("fw.axf")

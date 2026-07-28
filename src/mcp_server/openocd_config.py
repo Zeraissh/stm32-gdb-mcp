@@ -193,6 +193,27 @@ def _parse_macos_usb(payload: str) -> list[dict]:
     return _deduplicate_probes(probes)
 
 
+# Host USB enumeration is far slower than it looks. Every presence-aware method on
+# Windows walks the whole PnP device tree, and the cost scales with how many devices
+# the machine has ever seen, not with how many are plugged in. Measured on a normal
+# developer laptop with 21 present USB devices:
+#
+#   Get-PnpDevice -PresentOnly       8.5 - 9.0 s
+#   Get-PnpDevice -Class USB         8.3 s
+#   Get-CimInstance Win32_PnPEntity  8.5 s
+#   pnputil /enum-devices /connected 9.9 s
+#
+# The old 10 s budget therefore sat right on top of the typical case and failed
+# intermittently. Switching query style does not help - the cost is in the device
+# tree walk. The registry under HKLM\SYSTEM\CurrentControlSet\Enum\USB is ~90 ms but
+# lists devices that are merely known, not present, so it cannot answer "is a probe
+# plugged in right now" without extra work.
+#
+# 45 s gives roughly 4x headroom over the measured worst case. This is a ceiling on
+# a pathological hang, not an expected wait.
+PROBE_DETECTION_TIMEOUT_S = 45
+
+
 def detect_probe(platform_name: str | None = None, sysfs_root: str | Path = "/sys/bus/usb/devices", runner=None) -> dict:
     """Enumerate connected debug probes from OS USB device state."""
     system = platform_name or platform.system()
@@ -210,7 +231,7 @@ def detect_probe(platform_name: str | None = None, sysfs_root: str | Path = "/sy
                 ["powershell", "-NoProfile", "-Command", command],
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=PROBE_DETECTION_TIMEOUT_S,
             )
             method = "windows_pnp"
             if result.returncode:
@@ -225,7 +246,7 @@ def detect_probe(platform_name: str | None = None, sysfs_root: str | Path = "/sy
                 ["system_profiler", "SPUSBDataType", "-json"],
                 capture_output=True,
                 text=True,
-                timeout=15,
+                timeout=PROBE_DETECTION_TIMEOUT_S,
             )
             method = "macos_system_profiler"
             if result.returncode:
