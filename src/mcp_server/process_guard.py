@@ -48,6 +48,11 @@ def install() -> str:
 
 def _install_windows_job() -> str:
     global _job_handle
+    # The guard is a statement, not a caller-side condition, so mypy narrows
+    # sys.platform and skips the Windows-only ctypes attributes when checking
+    # for other platforms (same idiom as gdb_manager's creationflags).
+    if sys.platform != "win32":
+        return "unavailable (not windows)"
     try:
         import ctypes
         from ctypes import wintypes

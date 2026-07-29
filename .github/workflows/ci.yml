@@ -57,9 +57,15 @@ jobs:
       - name: Lint
         run: python -m ruff check .
 
+      # Both platforms are checked here because mypy only runs on the Linux
+      # runner, and sys.platform narrowing means the host pass skips every
+      # Windows-only branch -- so without --platform win32 that code (the job
+      # object, creationflags) is type-checked by nobody.
       - name: Type check
         if: runner.os != 'Windows'
-        run: python -m mypy
+        run: |
+          python -m mypy
+          python -m mypy --platform win32
 
       - name: Compile check
         run: python -m compileall src tests
