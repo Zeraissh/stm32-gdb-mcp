@@ -1,5 +1,71 @@
 # Changelog / 更新日志
 
+## [0.7.1] - 2026-07-29
+
+Four fixes found by using v0.7.0 against real hardware: two ways a correct
+operation was reported wrongly, one way spawned processes outlived the server, and
+the type check that never covered the Windows-only code.
+
+四项在真实硬件上使用 v0.7.0 时发现的修复:两处把正确操作报告错误,一处子进程比服务器
+活得更久,以及从未覆盖 Windows 专用代码的类型检查。
+
+### Flashing / 烧录
+
+- `flash_firmware` raised *"did not report completion"* for flashes that had in fact
+  succeeded — verified byte-exact by reading the written vector tables back. The cause was
+  not a slow flash: raising the download timeout from 60 s to 300 s changed nothing.
+  pygdbmi's `write()` returns the first batch of records that happens to be ready, which for
+  a long transfer is the `+download` progress stream; the terminating `^done` lands in a
+  later read that `ensure_ok(require_result=True)` never saw. `_execute_until_result()` now
+  keeps reading until the terminal record arrives or the deadline passes, and a command that
+  completes in one batch behaves exactly as before. /
+  `flash_firmware` 对**实际成功**的烧录报错(已通过回读向量表逐字节验证)。原因不是烧录慢:
+  把下载超时从 60 s 提到 300 s 毫无变化。pygdbmi 的 `write()` 只返回当时就绪的第一批记录,
+  长传输时那是 `+download` 进度流,终结的 `^done` 落在之后的读取里。现改为持续读取到终结
+  记录或超时为止。
+- This is the mirror image of issue #21 — the safer direction to be wrong in, but it still
+  left the agent unable to tell a real write-protect fault from a bookkeeping artefact. The
+  #21 guard is unchanged and still raises for a genuinely stalled flash. /
+  这是 issue #21 的镜像;#21 的守卫未改动,真正卡住的烧录仍会报错。
+- Paths handed to GDB are now quoted as well as normalized. GDB splits a command on
+  whitespace, so an unquoted `C:/Program Files/app/fw.elf` reached it as `C:/Program`.
+  Measured on an L151: the same ELF loaded from a path without spaces and failed from one
+  with spaces. Covers `load_symbols`, `flash_firmware`/`flash_and_run`, `verify_flash` and
+  both coredump paths. / 传给 GDB 的路径现在同时做规范化与加引号:GDB 按空白切分命令,
+  未加引号的 `C:/Program Files/...` 只会到达 `C:/Program`。
+
+### Process lifetime / 进程生命周期
+
+- The spawned GDB server and GDB no longer outlive the MCP server. Nothing ran on exit
+  before, so whenever the client killed the server — a restart, a quit, a crash — both were
+  orphaned, kept holding the probe, and the next session failed with "ST-Link in use" until
+  the probe was physically unplugged. / 派生的 GDB 服务器与 GDB 不再比 MCP 服务器活得更久:
+  此前退出时不做任何清理,客户端一杀服务器,两者就成为孤儿并continue占用探针,
+  下次会话报 "ST-Link in use",只能拔插探针恢复。
+- Two layers, because neither suffices alone: a Windows Job Object with
+  `KILL_ON_JOB_CLOSE` (which survives `TerminateProcess`, something no in-process handler
+  can intercept; `PR_SET_PDEATHSIG` on Linux), plus an `atexit`/`SIGTERM`/`SIGINT` teardown
+  so OpenOCD releases the SWD link cleanly instead of being killed mid-transaction. /
+  两层防护:Windows Job Object(`KILL_ON_JOB_CLOSE`,可抵御无法被进程内处理器拦截的
+  `TerminateProcess`;Linux 用 `PR_SET_PDEATHSIG`),外加 `atexit`/信号的优雅拆除。
+- `detect_probe`'s USB enumeration budget goes 10 s → 45 s. Measured on a laptop with 21
+  USB devices, every presence-aware query costs ~8.5–10 s because the cost is the device
+  tree walk, not the query style — the old budget sat right on top of that. The new value is
+  a hang ceiling, not an expected wait. / `detect_probe` 的 USB 枚举预算 10 s → 45 s:
+  实测所有"仅在线设备"查询都要约 8.5–10 s,瓶颈是设备树遍历而非查询方式。
+
+### Tooling / 工具链
+
+- CI type-checks `--platform win32` as well. mypy runs only on the Linux runner, where
+  `sys.platform` narrowing skips every Windows-only branch — so the job object and
+  `creationflags` were type-checked by nobody. /
+  CI 增加 `--platform win32` 类型检查:mypy 仅在 Linux runner 运行,而平台收窄会跳过所有
+  Windows 专用分支,导致这些代码此前无人做类型检查。
+- `docs/release.md` now puts the version bump **before** the quality gate, and lists all six
+  locations that must agree. Running the gate first proves nothing about what is about to
+  ship: during v0.7.0 it did run first, the bump then missed `src/mcp_server/__init__.py`,
+  and only CI caught it. / 发布文档改为"先改版本号、再跑门禁",并列出必须一致的全部六处位置。
+
 ## [0.7.0] - 2026-07-28
 
 Token diet, honest errors, and a much leaner tool surface — validated end to end on
