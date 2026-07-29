@@ -6,6 +6,36 @@ Use this checklist when cutting a versioned release.
 
 ## Before Tagging / 打标签前
 
+> **Bump every version FIRST, then run the gate.** The gate includes
+> `test_release_versions_are_consistent`, which pins all five version locations, so a
+> gate run that happens before the bump proves nothing about what you are about to
+> ship. This is not hypothetical: during v0.7.0 the gate was run first, the bump then
+> missed `src/mcp_server/__init__.py`, and only CI caught it.
+> / **先改完所有版本号,再跑门禁。** 门禁包含 `test_release_versions_are_consistent`,
+> 它锁定全部五处版本位置;在改版本号之前跑门禁,对即将发布的内容没有任何证明力。
+> v0.7.0 就踩过:先跑门禁、后改版本,结果漏掉 `src/mcp_server/__init__.py`,靠 CI 才拦下。
+
+### 1. Bump the versions / 先改版本号
+
+All five must agree, and `test_release_versions_are_consistent` enforces it —
+including its own hardcoded expectations. / 五处必须一致,且一致性测试自身的期望值也要改：
+
+- `pyproject.toml` → `version`
+- `src/mcp_server/__init__.py` → `__version__` (easy to miss / 最容易漏)
+- `.claude-plugin/plugin.json` → `version`
+- `.claude-plugin/marketplace.json` → the plugin entry's `version`
+- `CHANGELOG.md` → a `## [X.Y.Z] - YYYY-MM-DD` heading
+- `tests/test_release_readiness.py` → the pinned expectations above
+
+The plugin version tracks plugin packaging, bundled skills, hooks and marketplace
+metadata — **and it must also move whenever the bundled server source changes**, because
+`marketplace.json` ships the plugin from `source: "./"`. A server release without a
+plugin bump never reaches plugin users. / 插件版本除跟踪打包/skills/hooks/marketplace 外,
+**只要打包进去的服务器源码变了也必须升**:marketplace 以 `source: "./"` 分发,
+不升版本插件用户永远拿不到这次发布。
+
+### 2. Then run the gate / 再跑门禁
+
 - Confirm `main` is green in CI. / 确认 `main` 分支 CI 通过。
 - Run the local quality gate / 运行本地质量门禁：
 
@@ -34,11 +64,6 @@ cmake -G Ninja -S examples/firmware/stm32l431_blinky -B build/stm32l431_blinky -
 cmake --build build/stm32l431_blinky
 ```
 
-- Update `pyproject.toml` version. / 更新 `pyproject.toml` 中的版本号。
-- Review `.claude-plugin/plugin.json` version separately. The Python package version
-  tracks the PyPI server release; the plugin version tracks plugin packaging changes.
-  / 单独检查 `.claude-plugin/plugin.json` 版本：Python 包版本跟踪 PyPI 服务器发行，
-  插件版本只跟踪插件打包、skills、hooks 或 marketplace 元数据变化。
 - Update README examples when public behavior changed. / 当公开行为变化时更新 README 示例。
 - Review new MCP tools for schema clarity and backward compatibility. / 检查新增 MCP 工具的 schema 清晰度和向后兼容性。
 - Confirm generated distributions in `dist/` install in a clean environment. / 确认 `dist/` 中生成的包可以在干净环境安装。
