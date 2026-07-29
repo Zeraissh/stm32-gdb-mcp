@@ -17,7 +17,7 @@ def test_load_symbols_uses_file_exec_and_symbols_without_download():
 
     client.load_symbols("fw.axf")
 
-    assert client.gdb.commands == [("-file-exec-and-symbols fw.axf", 2.0)]
+    assert client.gdb.commands == [('-file-exec-and-symbols "fw.axf"', 2.0)]
 
 
 def test_symbolize_pc_reads_console_output_not_the_command_echo():
@@ -138,10 +138,10 @@ def test_formerly_hardcoded_timeouts_are_overridable():
     client.verify_flash("fw.axf")
 
     assert client.gdb.commands == [
-        ("-file-exec-and-symbols fw.axf", 7.0),
+        ('-file-exec-and-symbols "fw.axf"', 7.0),
         ("-exec-next", 3.5),
         ("-exec-until main.c:10", 42.0),
-        ("-file-exec-and-symbols fw.axf", 7.0),
+        ('-file-exec-and-symbols "fw.axf"', 7.0),
         ("compare-sections", 99.0),
     ]
 
@@ -281,7 +281,7 @@ def test_windows_backslash_paths_are_normalized_for_gdb():
 
     client.load_symbols(r"C:\proj\build\fw.elf")
 
-    assert client.gdb.commands[0][0] == "-file-exec-and-symbols C:/proj/build/fw.elf"
+    assert client.gdb.commands[0][0] == '-file-exec-and-symbols "C:/proj/build/fw.elf"'
 
 
 # --- issue #22: missed stops and leaked SIGINT --------------------------------
@@ -509,3 +509,39 @@ def test_step_raises_when_the_target_refuses_to_step():
 
     with pytest.raises(GdbCommandError, match="not being run"):
         client.step_over()
+
+
+def test_gdb_path_quotes_and_normalizes_windows_paths():
+    from mcp_server.gdb_client import gdb_path
+
+    # Backslashes are MI escapes; an unquoted space truncates the filename.
+    assert gdb_path(r"C:\proj\fw.elf") == '"C:/proj/fw.elf"'
+    assert gdb_path(r"C:\Program Files\app\fw.elf") == '"C:/Program Files/app/fw.elf"'
+    assert gdb_path("/home/dev/fw.elf") == '"/home/dev/fw.elf"'
+    assert gdb_path('weird"name.elf') == '"weird\\"name.elf"'
+
+
+def test_load_symbols_quotes_a_path_containing_spaces():
+    # Measured on hardware: a real ELF under a path with spaces failed to load
+    # because GDB truncated the filename at the first space.
+    client = GdbClientManager()
+    client.gdb = ScriptedGdb({})
+
+    client.load_symbols(r"C:\Program Files\fw.elf")
+
+    sent = [cmd for cmd, _ in client.gdb.commands]
+    assert sent == ['-file-exec-and-symbols "C:/Program Files/fw.elf"'], sent
+
+
+def test_coredump_paths_are_quoted_too():
+    client = GdbClientManager()
+    client.gdb = ScriptedGdb({})
+
+    client.capture_coredump(r"C:\dumps\my run\core.bin")
+    client.load_coredump(r"C:\dumps\my run\core.bin")
+
+    sent = [cmd for cmd, _ in client.gdb.commands]
+    assert sent == [
+        'generate-core-file "C:/dumps/my run/core.bin"',
+        'core-file "C:/dumps/my run/core.bin"',
+    ], sent
