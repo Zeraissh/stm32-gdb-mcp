@@ -7,6 +7,8 @@ import sys
 import threading
 import time
 
+from . import process_guard
+
 
 class GdbServerManager:
     def __init__(self):
@@ -74,6 +76,9 @@ class GdbServerManager:
         # stdin=DEVNULL is critical: the MCP server talks JSON-RPC over its own stdin,
         # so a spawned child must NEVER inherit it (it would steal protocol bytes and
         # hang the server with no output).
+        # On Linux the child asks the kernel to kill it if we die; on Windows the
+        # job object installed at startup covers this. Either way a killed MCP
+        # server must not leave a GDB server holding the probe.
         self.process = subprocess.Popen(
             cmd,
             stdin=subprocess.DEVNULL,
@@ -81,7 +86,8 @@ class GdbServerManager:
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
-            creationflags=creationflags
+            creationflags=creationflags,
+            preexec_fn=process_guard.child_preexec(),  # noqa: PLW1509 - None on win32
         )
 
         self._reader_thread = threading.Thread(target=self._read_output, daemon=True)

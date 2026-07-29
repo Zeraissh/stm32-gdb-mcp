@@ -255,6 +255,9 @@ def test_flash_raises_when_the_download_never_reports_completion():
     client.gdb = ScriptedGdb({
         "-target-download": [{"type": "console", "payload": "Loading section .text\n"}]
     })
+    # _execute_until_result waits out the download timeout for the terminal record
+    # that never comes; without a short deadline this one test costs 60 s.
+    client.timeouts.set({"download": 0.2})
 
     with pytest.raises(GdbCommandError, match="did not report completion"):
         client.load_firmware("fw.elf")

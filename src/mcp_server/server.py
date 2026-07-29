@@ -11,6 +11,8 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, TextContent, Tool
 
+from . import process_guard as _process_guard
+
 # Composites look statically unused once their handlers move to domain modules, but they
 # must stay module globals: _make_context reads them via globals() on every dispatch so
 # tests that monkeypatch mcp_server.server.<name> keep working (ctx.fns.<name>).
@@ -93,6 +95,32 @@ _SESSION_ATTRS = ("gdb_manager", "gdb_client", "svd_parser", "variable_tracker",
 _DEFAULT_SESSION_GLOBALS = {"last_session": "_last_session", "board": "_board",
                             "acceptance": "_acceptance", "loop": "_loop", "design": "_design",
                             "spec": "_spec"}
+
+
+def _shutdown_all_sessions():
+    """Tear down every session's GDB server and client.
+
+    Without this the spawned OpenOCD and GDB outlive the server whenever the
+    client kills it, keep holding the probe, and the next session fails with
+    "ST-Link in use" until the probe is physically unplugged.
+    """
+    for sid in list(session_manager.sessions):
+        try:
+            session_manager.close(sid)
+        except Exception:  # noqa: BLE001 - shutdown must not raise
+            pass
+    for obj, method in ((gdb_client, "stop_gdb"), (gdb_manager, "stop"),
+                        (variable_tracker, "stop"), (rtt_log_reader, "stop"),
+                        (swo_log_reader, "stop"), (swo_file_reader, "stop"),
+                        (uart_log_reader, "stop")):
+        try:
+            getattr(obj, method)()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+_process_guard.install()
+_process_guard.register_shutdown(_shutdown_all_sessions)
 
 
 def _resolve_session(arguments: dict):
