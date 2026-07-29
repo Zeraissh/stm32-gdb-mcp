@@ -168,16 +168,30 @@ def start_debug_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     ctx.last_session["server_type"] = server_type
     ctx.last_session["server_args"] = args
     symbols = autoload_symbols(ctx.sess)
+    adopted = bool(getattr(ctx.gdb_manager, "adopted", False))
+    data = {
+        "message": "Debug session started",
+        "server_type": server_type,
+        "port": port,
+        "symbols_loaded": symbols,
+        "server_args_source": server_args_source,
+        "detected_probe": detected_probe,
+        "adopted_server": adopted,
+    }
+    if adopted:
+        # Never let this pass silently: the server we attached to was configured by
+        # someone else and may be pointed at a different board, so the requested
+        # server_args had no effect. self_check is what proves which device is
+        # actually on the other end.
+        data["message"] = (
+            f"Attached to a GDB server already listening on port {port}; it was not started "
+            "by this session, so the requested server_args did not apply and it will not be "
+            "stopped by stop_debug_session. Run self_check to confirm which device it serves."
+        )
     return [content_success(
-        {
-            "message": "Debug session started",
-            "server_type": server_type,
-            "port": port,
-            "symbols_loaded": symbols,
-            "server_args_source": server_args_source,
-            "detected_probe": detected_probe,
-        },
+        data,
         raw_response=resp,
+        suggested_next_actions=["self_check"] if adopted else None,
     )]
 
 
