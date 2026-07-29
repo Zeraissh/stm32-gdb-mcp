@@ -10,6 +10,17 @@ import time
 from . import process_guard
 
 
+def _port_accepts(port: int | None, timeout: float = 0.2) -> bool:
+    """True when something is already listening on ``port``."""
+    if not port:
+        return False
+    try:
+        with socket.create_connection(("localhost", port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 class GdbServerManager:
     def __init__(self):
         self.process = None
@@ -17,6 +28,9 @@ class GdbServerManager:
         self.port = None
         self.log_buffer = []
         self._reader_thread = None
+        # True when the server on self.port was already running and we attached to
+        # it instead of spawning our own. We do not own it, so we never stop it.
+        self.adopted = False
 
     def _read_output(self):
         if not self.process or not self.process.stdout:
@@ -64,7 +78,19 @@ class GdbServerManager:
             raise ValueError(f"Unknown server type: {server_type}")
 
         self.log_buffer = []
-        
+        self.adopted = False
+
+        # A server already listening on our port is almost always a previous run
+        # that outlived its client, or one the user started by hand. Spawning a
+        # second one cannot work -- it fails to bind, and worse, the port probe
+        # below can see the OLD server answer and call the start a success.
+        # Adopt it instead; the probe is exclusive, so this is the only way to
+        # reach the target short of killing a process we do not own.
+        if _port_accepts(self.port):
+            self.adopted = True
+            self.process = None
+            return self.port
+
         # We create a new process group so we can send CTRL_BREAK_EVENT on Windows.
         # sys.platform in an if-statement (not os.name, not a ternary) so mypy skips the
         # Windows-only attribute when checking other platforms.
@@ -176,12 +202,19 @@ class GdbServerManager:
         return None
 
     def stop(self):
+        """Stop the GDB server we spawned. An adopted one is left running.
+
+        Killing a server we did not start would take down whatever else is using
+        it -- the user's own OpenOCD in a terminal, or another session's -- and a
+        hard kill has been observed to wedge the ST-Link endpoint until the probe
+        is physically unplugged.
+        """
         if self.process and self.process.poll() is None:
             if os.name == 'nt':
                 self.process.send_signal(signal.CTRL_BREAK_EVENT)
             else:
                 self.process.terminate()
-            
+
             try:
                 self.process.wait(timeout=3)
             except subprocess.TimeoutExpired:
@@ -189,9 +222,14 @@ class GdbServerManager:
         self.process = None
         self.port = None
         self._reader_thread = None
+        self.adopted = False
 
     def is_alive(self) -> bool:
-        return self.process is not None and self.process.poll() is None
+        if self.process is not None:
+            return self.process.poll() is None
+        # An adopted server has no process of ours; liveness is whether it still
+        # answers on its port.
+        return bool(self.adopted and self.port and _port_accepts(self.port))
 
     def get_logs(self):
         return "\n".join(self.log_buffer)
