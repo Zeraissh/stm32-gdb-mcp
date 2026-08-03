@@ -68,10 +68,11 @@ def content_success(data=None, raw_response=None, suggested_next_actions=None) -
     )
 
 
-def content_error(message: str, code: str | None = None, raw_response=None, suggested_next_actions=None) -> TextContent:
+def content_error(message: str, code: str | None = None, raw_response=None,
+                  suggested_next_actions=None, data=None) -> TextContent:
     return TextContent(
         type="text",
-        text=_dump(error_response(message, code, raw_response, suggested_next_actions)),
+        text=_dump(error_response(message, code, raw_response, suggested_next_actions, data)),
     )
 
 
@@ -93,10 +94,14 @@ def parse_content_text(content: TextContent) -> dict:
     return json.loads(content.text)
 
 
-def error_response(message: str, code: str | None = None, raw_response=None, suggested_next_actions=None):
+def error_response(message: str, code: str | None = None, raw_response=None,
+                   suggested_next_actions=None, data=None):
     # Errors always keep raw_response: it is the evidence needed to diagnose them.
+    # ``data`` lets a partial failure (a batch where some steps worked) report
+    # ok:false without throwing away the per-step results.
     return _envelope(
         False,
+        data=data,
         error={"message": message, "code": code},
         raw_response=raw_response,
         suggested_next_actions=suggested_next_actions,

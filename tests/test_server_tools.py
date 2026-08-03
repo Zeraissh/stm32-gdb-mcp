@@ -3207,6 +3207,163 @@ def test_capture_state_refuses_an_all_zero_register_set(monkeypatch):
     assert "halt_execution" in payload["suggested_next_actions"]
 
 
+# --- session routing: batch/call/call_read/run_scenario advertise `session` and must honour it ---
+
+def test_batch_runs_its_steps_against_the_session_it_was_given():
+    asyncio.run(handle_call_tool("set_debug_profile", {"mcu": "STM32F407"}))
+    asyncio.run(handle_call_tool("set_debug_profile", {"session": "bench1", "mcu": "STM32L151"}))
+
+    payload = _payload(asyncio.run(handle_call_tool("batch", {
+        "session": "bench1",
+        "steps": [{"tool": "get_debug_profile", "args": {}}],
+    })))
+
+    # Before the fix every step silently ran against "default" — which on a
+    # multi-board rig means reads, and flash writes, hitting the wrong board.
+    assert payload["data"]["results"][0]["data"]["mcu"] == "STM32L151"
+
+
+def test_batch_does_not_override_a_step_that_names_its_own_session():
+    asyncio.run(handle_call_tool("set_debug_profile", {"session": "bench2", "mcu": "STM32G071"}))
+    asyncio.run(handle_call_tool("set_debug_profile", {"session": "bench3", "mcu": "STM32H743"}))
+
+    payload = _payload(asyncio.run(handle_call_tool("batch", {
+        "session": "bench2",
+        "steps": [{"tool": "get_debug_profile", "args": {"session": "bench3"}}],
+    })))
+
+    assert payload["data"]["results"][0]["data"]["mcu"] == "STM32H743"
+
+
+def test_call_and_call_read_forward_the_session():
+    asyncio.run(handle_call_tool("set_debug_profile", {"session": "bench4", "mcu": "STM32WB55"}))
+
+    via_call = _payload(asyncio.run(handle_call_tool(
+        "call", {"session": "bench4", "tool": "get_debug_profile", "args": {}})))
+    via_call_read = _payload(asyncio.run(handle_call_tool(
+        "call_read", {"session": "bench4", "tool": "get_debug_profile", "args": {}})))
+
+    assert via_call["data"]["mcu"] == "STM32WB55"
+    assert via_call_read["data"]["mcu"] == "STM32WB55"
+
+
+def test_run_scenario_forwards_the_session_to_every_step():
+    # A write, not a read: the failure mode this guards is a scenario step landing
+    # on the default board instead of the one the caller selected.
+    asyncio.run(handle_call_tool("set_debug_profile", {"mcu": "STM32F407"}))
+
+    asyncio.run(handle_call_tool("run_scenario", {
+        "session": "bench5",
+        "steps": [{"tool": "set_debug_profile", "args": {"mcu": "STM32U575"}}],
+    }))
+
+    bench5 = _payload(asyncio.run(handle_call_tool("get_debug_profile", {"session": "bench5"})))
+    default = _payload(asyncio.run(handle_call_tool("get_debug_profile", {})))
+    assert bench5["data"]["mcu"] == "STM32U575"
+    assert default["data"]["mcu"] == "STM32F407"  # untouched
+
+
+def test_a_dispatcher_without_a_session_still_targets_the_default():
+    asyncio.run(handle_call_tool("set_debug_profile", {"mcu": "STM32F407"}))
+
+    payload = _payload(asyncio.run(handle_call_tool("batch", {
+        "steps": [{"tool": "get_debug_profile", "args": {}}],
+    })))
+
+    assert payload["data"]["results"][0]["data"]["mcu"] == "STM32F407"
+
+
+# --- issue #41: an all-failed batch must not look like a success ---
+
+def test_batch_reports_ok_false_when_every_step_failed():
+    steps = [
+        {"tool": "read_memory", "args": {"address": "0x08000000", "length": 4}},
+        {"tool": "read_variable", "args": {"name": "GTimer"}},
+        {"tool": "analyze_stack", "args": {}},
+    ]
+    payload = _payload(asyncio.run(handle_call_tool("batch", {"steps": steps})))
+
+    # The envelope is the level a caller reliably checks; it used to say ok:true
+    # while all three steps carried no_session errors.
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "batch_step_failed"
+    assert payload["data"]["failed"] == 3
+    assert payload["data"]["succeeded"] == 0
+    assert len(payload["data"]["results"]) == 3
+
+
+def test_batch_counts_distinguish_success_from_failure():
+    steps = [
+        {"tool": "get_debug_profile", "args": {}},
+        {"tool": "does_not_exist", "args": {}},
+    ]
+    payload = _payload(asyncio.run(handle_call_tool("batch", {"steps": steps})))
+
+    # count/total are both 2 either way — succeeded/failed are what discriminate.
+    assert payload["data"]["count"] == 2
+    assert payload["data"]["total"] == 2
+    assert payload["data"]["succeeded"] == 1
+    assert payload["data"]["failed"] == 1
+    assert payload["ok"] is False
+
+
+def test_batch_still_reports_ok_true_when_every_step_worked():
+    payload = _payload(asyncio.run(handle_call_tool("batch", {
+        "steps": [{"tool": "get_debug_profile", "args": {}}],
+    })))
+
+    assert payload["ok"] is True
+    assert payload["data"]["failed"] == 0
+    assert payload["data"]["succeeded"] == 1
+
+
+def test_batch_states_an_identical_remediation_once_instead_of_per_step():
+    steps = [
+        {"tool": "read_memory", "args": {"address": "0x08000000", "length": 4}},
+        {"tool": "read_variable", "args": {"name": "GTimer"}},
+        {"tool": "analyze_stack", "args": {}},
+    ]
+    payload = _payload(asyncio.run(handle_call_tool("batch", {"steps": steps})))
+
+    # ~250 chars of identical guidance x N steps was most of the payload.
+    assert "start_debug_session" in payload["error"]["message"]
+    for result in payload["data"]["results"]:
+        assert result["error"]["message"] == "(see the batch error above)"
+        assert result["error"]["code"] == "no_session"  # per-step code survives
+
+
+def test_batch_keeps_distinct_step_errors_verbatim():
+    steps = [
+        {"tool": "does_not_exist", "args": {}},
+        {"tool": "read_memory", "args": {"address": "0x0", "length": 4}},
+    ]
+    payload = _payload(asyncio.run(handle_call_tool("batch", {"steps": steps})))
+
+    messages = [r["error"]["message"] for r in payload["data"]["results"]]
+    assert len({m for m in messages}) == 2
+    assert all("(see the batch error above)" not in m for m in messages)
+
+
+def test_run_scenario_reports_ok_false_when_a_step_fails():
+    payload = _payload(asyncio.run(handle_call_tool("run_scenario", {
+        "steps": [{"tool": "does_not_exist", "args": {}}],
+    })))
+
+    # The same contract as batch — the sibling dispatcher had the identical bug.
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "scenario_step_failed"
+    assert payload["data"]["passed"] == 0
+
+
+def test_run_scenario_still_reports_ok_true_when_every_step_passes():
+    payload = _payload(asyncio.run(handle_call_tool("run_scenario", {
+        "steps": [{"tool": "get_debug_profile", "args": {}}],
+    })))
+
+    assert payload["ok"] is True
+    assert payload["data"]["passed"] == 1
+
+
 def test_resolve_address_advertises_the_alias_it_accepts():
     tools = {tool.name: tool for tool in asyncio.run(handle_list_tools())}
     schema = tools["inspect_symbol"].inputSchema

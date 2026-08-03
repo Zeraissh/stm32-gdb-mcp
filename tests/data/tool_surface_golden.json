@@ -216,7 +216,7 @@
     "openWorldHint": true,
     "readOnlyHint": false
    },
-   "description": "Runs several tool calls in ONE round trip and returns ALL their full results \u2014 the fastest way to do a sequence of operations (e.g. read registers + backtrace + several variables) without per-call latency.",
+   "description": "Runs several tool calls in ONE round trip and returns ALL their full results \u2014 the fastest way to do a sequence of operations (e.g. read registers + backtrace + several variables) without per-call latency. ok is false if ANY step failed; data.succeeded/data.failed count the outcomes (count/total only count steps run vs requested). Pass session to run every step against a named debug session.",
    "inputSchema": {
     "properties": {
      "session": {
