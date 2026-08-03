@@ -3018,3 +3018,41 @@ def test_run_pipeline_synthesize_false_stops_after_render():
     assert any(s["stage"] == "synthesize_acceptance" for s in data["skipped"])
     assert "acceptance" not in data
     assert data["files"]  # render still produced the skeleton
+
+
+# --- issue #38: GDB's own error must not be replaced by a target-state guess ---
+
+def test_read_variable_surfaces_the_gdb_error_it_was_given(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def read_variable(self, name):
+            return [{"type": "result", "message": "error", "payload": {
+                "msg": "-data-evaluate-expression: Usage: -data-evaluate-expression expression"}}]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool(
+        "read_variable", {"name": "*(unsigned long *)0x08006000"})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "gdb_error"
+    assert "Usage: -data-evaluate-expression" in payload["error"]["message"]
+    # The old wording sent agents to halt the core and reload symbols for a quoting bug.
+    assert "Target may be running" not in payload["error"]["message"]
+
+
+def test_missing_value_without_a_gdb_error_still_suggests_a_real_tool(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def read_variable(self, name):
+            return [{"type": "console", "payload": "noise"}]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool("read_variable", {"name": "g_state"})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "no_value_returned"
+    # "halt" is not a registered tool; the one hint that recovers the agent must resolve.
+    assert "halt_execution" in payload["suggested_next_actions"]
+    assert "halt" not in payload["suggested_next_actions"]

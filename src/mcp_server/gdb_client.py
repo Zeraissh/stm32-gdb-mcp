@@ -30,6 +30,25 @@ def gdb_path(path: str) -> str:
     return f'"{normalized}"'
 
 
+def gdb_expr(expr: str) -> str:
+    """Render a C expression as a single GDB/MI command argument.
+
+    GDB/MI splits a dash-command into argv on whitespace before dispatching it,
+    so ``-data-evaluate-expression *(unsigned long *)0x08006000`` arrives as four
+    arguments and GDB answers with a bare usage string instead of a value. Every
+    cast, every ``sizeof``, and every multi-argument call was affected, and the
+    resulting failure was reported to the agent as "target may be running or
+    symbols may be missing" — a hardware diagnosis for a quoting bug (issue #38).
+
+    Deliberately NOT ``gdb_path``: that helper rewrites backslashes to forward
+    slashes, which is right for a Windows path and wrong for an expression, where
+    a backslash is a C escape. Here backslashes are doubled so they survive GDB's
+    unquoting intact.
+    """
+    escaped = str(expr).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
 def build_break_insert_command(location, condition=None, temporary=False, ignore_count=None):
     """Construct a `-break-insert` MI command with optional condition/temporary/ignore.
 
@@ -324,7 +343,8 @@ class GdbClientManager:
         return ensure_ok(resp, f"run to {location}")
 
     def read_variable(self, name: str):
-        return self.execute_command(f"-data-evaluate-expression {name}")
+        return self.execute_command(f"-data-evaluate-expression {gdb_expr(name)}",
+                                    timeout_sec=self.timeouts.get("evaluate"))
 
     def read_call_stack(self):
         return self.execute_command("-stack-list-frames")
@@ -389,10 +409,12 @@ class GdbClientManager:
         return self.execute_cli_command(f"ptype {expr}", timeout_sec=self.timeouts.get("symbols"))
 
     def sizeof(self, expr: str):
-        return self.execute_command(f"-data-evaluate-expression sizeof({expr})", timeout_sec=self.timeouts.get("evaluate"))
+        return self.execute_command(f"-data-evaluate-expression {gdb_expr(f'sizeof({expr})')}",
+                                    timeout_sec=self.timeouts.get("evaluate"))
 
     def address_of(self, symbol: str):
-        return self.execute_command(f"-data-evaluate-expression &{symbol}", timeout_sec=self.timeouts.get("evaluate"))
+        return self.execute_command(f"-data-evaluate-expression {gdb_expr(f'&{symbol}')}",
+                                    timeout_sec=self.timeouts.get("evaluate"))
 
     def capture_coredump(self, path: str):
         return self.execute_cli_command(f"generate-core-file {gdb_path(path)}", timeout_sec=self.timeouts.get("coredump"))
@@ -478,7 +500,8 @@ class GdbClientManager:
 
     def read_register_value(self, expr: str) -> int:
         """Evaluate a register/convenience expression (e.g. '$lr', '$msp') to an int."""
-        response = self.execute_command(f"-data-evaluate-expression {expr}", timeout_sec=self.timeouts.get("evaluate"))
+        response = self.execute_command(f"-data-evaluate-expression {gdb_expr(expr)}",
+                                        timeout_sec=self.timeouts.get("evaluate"))
         for record in response:
             payload = record.get("payload")
             if isinstance(payload, dict) and payload.get("value") is not None:
@@ -510,8 +533,10 @@ class GdbClientManager:
         return ensure_ok(self.execute_command(cmd), f"watch {variable_or_address}")
 
     def read_memory(self, address: str, length: int):
+        # The address is an expression too ("&buf", "main + 4"), and
+        # -data-read-memory-bytes argv-splits exactly like -data-evaluate-expression.
         return self.execute_command(
-            f"-data-read-memory-bytes {address} {length}", timeout_sec=self.timeouts.get("memory")
+            f"-data-read-memory-bytes {gdb_expr(address)} {length}", timeout_sec=self.timeouts.get("memory")
         )
 
     def write_memory(self, address: str, value: str):

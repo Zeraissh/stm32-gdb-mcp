@@ -103,7 +103,7 @@ def test_reset_halt_primes_the_ap_with_a_throwaway_read():
     # the reset command runs first, then a throwaway read of the constant CPUID
     # register primes the memory-AP so the next real read is coherent.
     assert commands[0] == "monitor reset halt"
-    assert any("-data-read-memory-bytes 0xE000ED00 4" in c for c in commands)
+    assert any('-data-read-memory-bytes "0xE000ED00" 4' in c for c in commands)
 
 
 def test_read_core_registers_uses_gdb_cli_info_registers():
@@ -164,7 +164,7 @@ def test_read_typed_memory_reads_byte_count_for_width_and_count():
     client.read_typed_memory("0x20000000", width_bits=16, count=4)
 
     assert client.gdb.commands == [
-        ("-data-read-memory-bytes 0x20000000 8", 2.0)  # routed through the 'memory' timeout
+        ('-data-read-memory-bytes "0x20000000" 8', 2.0)  # routed through the 'memory' timeout
     ]
 
 
@@ -600,3 +600,87 @@ def test_flash_download_still_fails_when_no_result_ever_arrives():
 
     with pytest.raises(GdbCommandError, match="did not report completion"):
         manager.load_firmware("fw.axf")
+
+
+# --- issue #38: expressions must reach GDB/MI as ONE argument ---
+#
+# GDB/MI splits a dash-command into argv on whitespace, so an unquoted
+# "*(unsigned long *)0x08006000" arrived as four arguments and GDB answered
+# "-data-evaluate-expression: Usage: -data-evaluate-expression expression".
+# Every cast, sizeof, and multi-argument call was unusable, and nothing in the
+# suite asserted the emitted MI string — which is why it survived four releases.
+
+def _only_command(client):
+    assert len(client.gdb.commands) == 1, client.gdb.commands
+    return client.gdb.commands[0][0]
+
+
+def test_read_variable_quotes_an_expression_containing_spaces():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+
+    client.read_variable("*(unsigned long *)0x08006000")
+
+    assert _only_command(client) == (
+        '-data-evaluate-expression "*(unsigned long *)0x08006000"')
+
+
+def test_read_variable_quotes_a_multi_argument_call():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+
+    client.read_variable("Boot_IsAppVectorValid(0x08006000, backupSize)")
+
+    assert _only_command(client) == (
+        '-data-evaluate-expression "Boot_IsAppVectorValid(0x08006000, backupSize)"')
+
+
+def test_sizeof_and_address_of_quote_the_whole_expression():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+
+    client.sizeof("struct boot_record")
+    client.address_of("g_state")
+
+    assert client.gdb.commands[0][0] == '-data-evaluate-expression "sizeof(struct boot_record)"'
+    assert client.gdb.commands[1][0] == '-data-evaluate-expression "&g_state"'
+
+
+def test_read_register_value_quotes_its_expression():
+    client = GdbClientManager()
+    client.gdb = FakeGdb([{"type": "result", "message": "done", "payload": {"value": "0x20004fd0"}}])
+
+    assert client.read_register_value("$sp") == 0x20004FD0
+    assert _only_command(client) == '-data-evaluate-expression "$sp"'
+
+
+def test_read_memory_quotes_an_address_expression():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+
+    client.read_memory("&g_buffer[0]", 8)
+
+    assert _only_command(client) == '-data-read-memory-bytes "&g_buffer[0]" 8'
+
+
+def test_expression_quoting_preserves_backslashes_instead_of_pathifying_them():
+    # gdb_path rewrites \ -> / because a path needs it; an expression does not,
+    # where a backslash is a C escape. Sharing that helper would corrupt char literals.
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+
+    client.read_variable(r"c == '\n'")
+
+    # The backslash survives as a backslash, doubled so GDB's unquoting yields
+    # exactly one back — not rewritten to a forward slash the way a path would be.
+    assert _only_command(client) == r'''-data-evaluate-expression "c == '\\n'"'''
+    assert "/" not in _only_command(client)
+
+
+def test_expression_quoting_escapes_embedded_quotes():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+
+    client.read_variable('strcmp(name, "abc")')
+
+    assert _only_command(client) == '-data-evaluate-expression "strcmp(name, \\"abc\\")"'
