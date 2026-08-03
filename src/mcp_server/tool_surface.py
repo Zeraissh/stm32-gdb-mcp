@@ -87,7 +87,9 @@ MERGED = {
     "debug_profile": ("action",
         {"get": "get_debug_profile", "set": "set_debug_profile"},
         "Active debug profile (mcu/elf/svd/probe).",
-        "action=get | set([mcu,elf_path,svd_path,board,probe,server_type,server_args,project_root,notes])."),
+        "action=get | set([mcu,elf_path,svd_path,board,probe,server_type,server_args,project_root,notes]). "
+        "set MERGES — fields you omit keep their current value — and returns the full resulting profile. "
+        "The profile is in-memory only: it is empty again after the MCP server restarts."),
     "read_registers": ("what",
         {"core": "read_core_registers", "fault": "read_fault_registers", "cycle": "read_cycle_counter"},
         "Read CPU register groups.",

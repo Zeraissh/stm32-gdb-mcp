@@ -2828,7 +2828,7 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Active debug profile (mcu/elf/svd/probe). action=get | set([mcu,elf_path,svd_path,board,probe,server_type,server_args,project_root,notes]).",
+   "description": "Active debug profile (mcu/elf/svd/probe). action=get | set([mcu,elf_path,svd_path,board,probe,server_type,server_args,project_root,notes]). set MERGES \u2014 fields you omit keep their current value \u2014 and returns the full resulting profile. The profile is in-memory only: it is empty again after the MCP server restarts.",
    "inputSchema": {
     "oneOf": [
      {

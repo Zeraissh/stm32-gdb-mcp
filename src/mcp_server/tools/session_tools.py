@@ -56,8 +56,18 @@ def start_debug_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     profile = ctx.debug_profile.get()
     server_type = arguments.get("server_type") or profile.get("server_type")
     if not server_type:
+        # "the profile does not define it" reads as "you set the wrong field" when
+        # the truth is usually "there is no profile": it is in-memory only, so a
+        # restarted MCP server starts empty. Saying which one it is saves a
+        # teardown-and-retry cycle (issue #39).
+        detail = (
+            "the active debug profile is EMPTY — it lives in memory only and is lost when the "
+            "MCP server process restarts, so re-apply it"
+            if not profile else
+            f"the active debug profile does not define it (it holds: {sorted(profile)})"
+        )
         return [content_error(
-            "server_type is required when the active debug profile does not define it.",
+            f"server_type is required and {detail}.",
             code="missing_argument",
             suggested_next_actions=["load_debug_config", "set_debug_profile"],
         )]

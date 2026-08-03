@@ -3407,6 +3407,35 @@ def test_compact_surface_offers_a_resume_next_to_halt(monkeypatch):
     assert "continue_execution" in names
 
 
+# --- issue #39: an empty profile must not read as a wrongly-filled one ---
+
+def test_start_debug_session_says_the_profile_is_empty(monkeypatch):
+    from conftest import FakeProfile
+
+    import mcp_server.server as server_module
+
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile())
+    payload = _payload(asyncio.run(handle_call_tool("start_debug_session", {})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "missing_argument"
+    assert "EMPTY" in payload["error"]["message"]
+    assert "restarts" in payload["error"]["message"]
+
+
+def test_start_debug_session_lists_what_the_profile_does_hold(monkeypatch):
+    from conftest import FakeProfile
+
+    import mcp_server.server as server_module
+
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile({"mcu": "STM32L151", "elf_path": "fw.axf"}))
+    payload = _payload(asyncio.run(handle_call_tool("start_debug_session", {})))
+
+    assert payload["ok"] is False
+    assert "EMPTY" not in payload["error"]["message"]
+    assert "elf_path" in payload["error"]["message"] and "mcu" in payload["error"]["message"]
+
+
 # --- issue #42: flash erase, with guard rails ---
 
 class _EraseClient:
