@@ -95,7 +95,8 @@ MERGED = {
          "resolve": "resolve_address", "functions": "list_functions", "variables": "list_variables"},
         "Symbol / type introspection.",
         "what=size(expr) | type(expr) | address(symbol) | resolve(expr) | functions([regex]) | "
-        "variables([regex]). resolve maps an address back to source."),
+        "variables([regex]). resolve maps an address back to source, returning "
+        "{resolved,symbol,offset,section,file,line}; resolved=false means no symbol there."),
     "typed_memory": ("action",
         {"read": "read_typed_memory", "write": "write_typed_memory"},
         "Typed (struct-aware) memory access.",

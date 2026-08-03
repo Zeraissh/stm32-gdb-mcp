@@ -6,6 +6,8 @@ functions turn pygdbmi records into plain dicts/lists so tool handlers can retur
 ``data`` the model reads directly, with the raw transcript kept opt-in.
 """
 
+import re
+
 
 def _find_payload_value(records, key):
     for record in records or []:
@@ -110,6 +112,77 @@ def decode_evaluated_value(records) -> str | None:
             if value is not None and (not isinstance(value, str) or value.strip()):
                 return value
     return None
+
+
+def decode_console_text(records) -> str:
+    """Join GDB's console stream records into the text a human would have seen.
+
+    The answer to every ``info ...``/``list``/``ptype``/``x/i`` command arrives as
+    console records; ``log`` records are only the command echo. Handlers that
+    returned just ``{"message": "Source listed"}`` were throwing this away and
+    asserting success over an empty payload (issue #40).
+    """
+    parts = [
+        record["payload"]
+        for record in records or []
+        if record.get("type") == "console" and isinstance(record.get("payload"), str)
+    ]
+    return "".join(parts).strip()
+
+
+def decode_symbol_resolution(records) -> dict:
+    """Parse ``info line`` + ``info symbol`` output into a structured resolution.
+
+    Handles the shapes GDB actually emits:
+
+    * ``Line 412 of "boot.c" starts at address 0x8000c74 <Boot_ValidateStaging+148> ...``
+    * ``Boot_ValidateStaging + 148 in section .text`` (optionally ``of /path/fw.elf``)
+    * ``No line number information available for address 0x8000c74 <Boot_ValidateStaging+148>``
+      — no file/line, but the symbol is still in there and is worth keeping
+    * ``No symbol matches 0x08000c74.`` — genuinely unresolvable, and must be
+      reported as such rather than as a bare "Address resolved".
+    """
+    text = decode_console_text(records)
+    out: dict = {
+        "resolved": False,
+        "symbol": None,
+        "offset": None,
+        "section": None,
+        "file": None,
+        "line": None,
+        "text": text or None,
+    }
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        line_match = re.match(r'Line (\d+) of "([^"]+)"', line)
+        if line_match:
+            out["line"] = int(line_match.group(1))
+            out["file"] = line_match.group(2)
+
+        # "Boot_ValidateStaging + 148 in section .text [of /path/fw.elf]" — the
+        # authoritative answer, so it overwrites anything scraped from info line.
+        # Non-greedy .+? rather than \S+?: a C++ symbol has spaces in it
+        # ("Foo::bar(int, int)"), and dropping it would report resolved=false.
+        section_match = re.match(r"^(.+?)(?:\s+\+\s+(\d+))?\s+in section (\S+)", line)
+        if section_match:
+            out["symbol"] = section_match.group(1)
+            out["offset"] = int(section_match.group(2) or 0)
+            out["section"] = section_match.group(3)
+            continue
+
+        if out["symbol"] is None:
+            # "... <Boot_ValidateStaging+148>" appears in both info line forms,
+            # including the one that has no line table to offer.
+            angle_match = re.search(r"<([^+>\s]+)(?:\+(\d+))?>", line)
+            if angle_match:
+                out["symbol"] = angle_match.group(1)
+                out["offset"] = int(angle_match.group(2) or 0)
+
+    out["resolved"] = bool(out["symbol"] or out["file"])
+    return out
 
 
 def decode_memory_bytes(records) -> str | None:

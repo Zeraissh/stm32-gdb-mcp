@@ -5,7 +5,13 @@ from pygdbmi.gdbcontroller import GdbController
 
 from . import dwt
 from .fault_analysis import FAULT_REGISTER_ADDRESSES
-from .gdb_decode import decode_backtrace, decode_breakpoints, decode_registers, decode_variables
+from .gdb_decode import (
+    decode_backtrace,
+    decode_breakpoints,
+    decode_registers,
+    decode_symbol_resolution,
+    decode_variables,
+)
 from .mi_guard import GdbCommandError, ensure_ok, has_terminal_result
 from .stop_event import ALREADY_HALTED_RECORD, parse_stop_event
 from .timeouts import TimeoutConfig
@@ -367,10 +373,20 @@ class GdbClientManager:
         return self.execute_command("-stack-list-arguments --all-values", timeout_sec=self.timeouts.get("stack"))
 
     def list_source(self, location: str | None = None, count: int = 10):
-        """List source lines around a location (function, file:line, or *addr)."""
+        """List source lines around a location (function, file:line, or *addr).
+
+        Both listings are returned. ``list X`` prints the window around X and
+        ``list +N`` continues past it; returning only the second answered a
+        request for "source around main" with the lines AFTER main. That was
+        invisible while the handler discarded the text entirely (issue #40).
+        """
+        responses = []
         if location:
-            self.execute_cli_command(f"list {location}", timeout_sec=self.timeouts.get("source"))
-        return self.execute_cli_command(f"list +{int(count)}", timeout_sec=self.timeouts.get("source"))
+            responses.extend(
+                self.execute_cli_command(f"list {location}", timeout_sec=self.timeouts.get("source")))
+        responses.extend(
+            self.execute_cli_command(f"list +{int(count)}", timeout_sec=self.timeouts.get("source")))
+        return responses
 
     def resolve_address(self, expr: str):
         """Map an address/expression to source line and nearest symbol."""
@@ -378,6 +394,10 @@ class GdbClientManager:
         responses.extend(self.execute_cli_command(f"info line *({expr})", timeout_sec=self.timeouts.get("symbols")))
         responses.extend(self.execute_cli_command(f"info symbol {expr}", timeout_sec=self.timeouts.get("symbols")))
         return responses
+
+    def resolve_address_decoded(self, expr: str) -> dict:
+        """Structured {resolved, symbol, offset, section, file, line} for an address."""
+        return decode_symbol_resolution(self.resolve_address(expr))
 
     def read_core_registers(self):
         return self.execute_cli_command("info registers", timeout_sec=self.timeouts.get("registers"))

@@ -3020,6 +3020,132 @@ def test_run_pipeline_synthesize_false_stops_after_render():
     assert data["files"]  # render still produced the skeleton
 
 
+# --- issue #40: inspect/symbol handlers must return GDB's answer, not echo the input ---
+
+def _console_client(monkeypatch, **methods):
+    import mcp_server.server as server_module
+
+    client = type("FakeClient", (), methods)()
+    monkeypatch.setattr(server_module, "gdb_client", client)
+    return client
+
+
+def _console(*lines):
+    return [{"type": "console", "payload": line} for line in lines]
+
+
+def test_resolve_address_returns_symbol_offset_and_source(monkeypatch):
+    _console_client(monkeypatch, resolve_address=lambda self, expr: _console(
+        'Line 412 of "boot.c" starts at address 0x8000c74 <Boot_ValidateStaging+148>.\n',
+        "Boot_ValidateStaging + 148 in section .text\n",
+    ))
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "inspect_symbol", {"what": "resolve", "expr": "0x08000c74"})))
+
+    assert payload["ok"] is True
+    data = payload["data"]
+    assert data["resolved"] is True
+    assert data["symbol"] == "Boot_ValidateStaging"
+    assert data["offset"] == 148
+    assert data["section"] == ".text"
+    assert data["file"] == "boot.c"
+    assert data["line"] == 412
+    assert data["expr"] == "0x08000c74"
+
+
+def test_resolve_address_reports_an_unresolvable_address_as_an_error(monkeypatch):
+    # "Address resolved" over an empty payload is indistinguishable from a real hit.
+    _console_client(monkeypatch, resolve_address=lambda self, expr: _console(
+        "No line number information available for address 0x20000000\n",
+        "No symbol matches 0x20000000.\n",
+    ))
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "inspect_symbol", {"what": "resolve", "expr": "0x20000000"})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "symbol_not_found"
+    assert "No symbol matches" in payload["error"]["message"]
+
+
+def test_resolve_address_accepts_address_as_an_alias_for_expr(monkeypatch):
+    seen = {}
+
+    def resolve(self, expr):
+        seen["expr"] = expr
+        return _console("Boot_WriteState in section .text\n")
+
+    _console_client(monkeypatch, resolve_address=resolve)
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "inspect_symbol", {"what": "resolve", "address": "0x08000c78"})))
+
+    assert payload["ok"] is True
+    assert seen["expr"] == "0x08000c78"
+    assert payload["data"]["symbol"] == "Boot_WriteState"
+
+
+def test_address_of_returns_the_address_it_evaluated(monkeypatch):
+    _console_client(monkeypatch, address_of=lambda self, symbol: [
+        {"type": "result", "message": "done", "payload": {"value": "(int *) 0x20000010 <g_state>"}}])
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "inspect_symbol", {"what": "address", "symbol": "g_state"})))
+
+    assert payload["ok"] is True
+    assert "0x20000010" in payload["data"]["address"]
+    assert payload["data"]["symbol"] == "g_state"
+
+
+def test_address_of_surfaces_gdb_error_instead_of_claiming_resolution(monkeypatch):
+    _console_client(monkeypatch, address_of=lambda self, symbol: [
+        {"type": "result", "message": "error",
+         "payload": {"msg": 'No symbol "nope" in current context.'}}])
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "inspect_symbol", {"what": "address", "symbol": "nope"})))
+
+    assert payload["ok"] is False
+    assert "No symbol" in payload["error"]["message"]
+
+
+def test_sizeof_returns_the_size(monkeypatch):
+    _console_client(monkeypatch, sizeof=lambda self, expr: [
+        {"type": "result", "message": "done", "payload": {"value": "40960"}}])
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "inspect_symbol", {"what": "size", "expr": "boot_record_t"})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["size"] == "40960"
+
+
+def test_list_functions_returns_the_console_listing(monkeypatch):
+    _console_client(monkeypatch, list_functions=lambda self, regex: _console(
+        "All functions matching regular expression 'Boot_':\n",
+        "0x08000be0  Boot_ValidateStaging\n",
+    ))
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "inspect_symbol", {"what": "functions", "regex": "Boot_"})))
+
+    assert payload["ok"] is True
+    assert "Boot_ValidateStaging" in payload["data"]["text"]
+    assert payload["data"]["regex"] == "Boot_"
+
+
+def test_console_output_is_truncated_visibly_not_silently(monkeypatch):
+    _console_client(monkeypatch, list_variables=lambda self, regex: _console("x" * 20000))
+
+    payload = _payload(asyncio.run(handle_call_tool("inspect_symbol", {"what": "variables"})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["truncated"] is True
+    assert "truncated" in payload["data"]["note"]
+    assert len(payload["data"]["text"]) < 20000
+
+
 # --- issue #38: GDB's own error must not be replaced by a target-state guess ---
 
 def test_read_variable_surfaces_the_gdb_error_it_was_given(monkeypatch):
@@ -3056,3 +3182,49 @@ def test_missing_value_without_a_gdb_error_still_suggests_a_real_tool(monkeypatc
     # "halt" is not a registered tool; the one hint that recovers the agent must resolve.
     assert "halt_execution" in payload["suggested_next_actions"]
     assert "halt" not in payload["suggested_next_actions"]
+
+
+def test_resolve_address_advertises_the_alias_it_accepts():
+    tools = {tool.name: tool for tool in asyncio.run(handle_list_tools())}
+    schema = tools["inspect_symbol"].inputSchema
+
+    assert "address" in schema["properties"]
+    resolve = next(v for v in schema["oneOf"] if v.get("title") == "resolve")
+    # A schema that rejects the name the handler accepts is the same
+    # contract/behaviour gap as an empty payload that claims success.
+    assert resolve["required"] == ["what"]
+
+
+def test_resolve_address_without_either_name_says_which_to_use(monkeypatch):
+    import mcp_server.server as server_module
+
+    monkeypatch.setattr(server_module, "gdb_client", object())
+    payload = _payload(asyncio.run(handle_call_tool("inspect_symbol", {"what": "resolve"})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "missing_argument"
+    assert "expr" in payload["error"]["message"]
+
+
+def test_source_listing_containing_an_error_phrase_is_not_reported_as_an_error(monkeypatch):
+
+    # find_mi_error scans stream text for markers like "No such file or directory";
+    # once the payload is user source code that heuristic turns a successful
+    # listing into a reported failure.
+    _console_client(monkeypatch, list_source=lambda self, location, count: _console(
+        '42\t    log_error("open failed: No such file or directory");\n'))
+
+    payload = _payload(asyncio.run(handle_call_tool("list_source", {"location": "main"})))
+
+    assert payload["ok"] is True
+    assert "No such file or directory" in payload["data"]["text"]
+
+
+def test_a_real_gdb_error_record_still_fails_a_console_tool(monkeypatch):
+    _console_client(monkeypatch, list_source=lambda self, location, count: [
+        {"type": "result", "message": "error", "payload": {"msg": "No symbol table is loaded."}}])
+
+    payload = _payload(asyncio.run(handle_call_tool("list_source", {"location": "main"})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "gdb_error"

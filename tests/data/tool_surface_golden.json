@@ -2951,7 +2951,7 @@
     "openWorldHint": false,
     "readOnlyHint": true
    },
-   "description": "Symbol / type introspection. what=size(expr) | type(expr) | address(symbol) | resolve(expr) | functions([regex]) | variables([regex]). resolve maps an address back to source.",
+   "description": "Symbol / type introspection. what=size(expr) | type(expr) | address(symbol) | resolve(expr) | functions([regex]) | variables([regex]). resolve maps an address back to source, returning {resolved,symbol,offset,section,file,line}; resolved=false means no symbol there.",
    "inputSchema": {
     "oneOf": [
      {
@@ -2997,7 +2997,7 @@
      {
       "properties": {
        "expr": {
-        "description": "Address or expression to resolve, e.g. '$pc' or '0x08001234'.",
+        "description": "Address or expression to resolve, e.g. '$pc' or '0x08001234'. Required (or pass it as 'address').",
         "type": "string"
        },
        "what": {
@@ -3005,8 +3005,7 @@
        }
       },
       "required": [
-       "what",
-       "expr"
+       "what"
       ],
       "title": "resolve"
      },
@@ -3038,6 +3037,10 @@
      }
     ],
     "properties": {
+     "address": {
+      "description": "Alias for 'expr'.",
+      "type": "string"
+     },
      "expr": {
       "description": "Type or expression to size, e.g. 'struct foo'.",
       "type": "string"

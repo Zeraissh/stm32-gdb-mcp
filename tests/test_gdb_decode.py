@@ -1,9 +1,11 @@
 from mcp_server.gdb_decode import (
     decode_backtrace,
     decode_breakpoints,
+    decode_console_text,
     decode_evaluated_value,
     decode_memory_bytes,
     decode_registers,
+    decode_symbol_resolution,
     decode_variables,
     registers_summary,
 )
@@ -123,3 +125,84 @@ def test_decoded_values_ignore_empty_strings_and_continue_searching():
 
     assert decode_evaluated_value(values) == "42"
     assert decode_memory_bytes(memory) == "DEADBEEF"
+
+
+# --- issue #37: a register set that cannot have come from a halted Cortex-M ---
+
+def _console(*lines):
+    return [{"type": "log", "payload": "echo"}] + [
+        {"type": "console", "payload": line} for line in lines
+    ]
+
+
+# --- issue #40: info line / info symbol must be parsed, not discarded ---
+
+def test_decode_console_text_joins_console_records_and_skips_the_echo():
+    text = decode_console_text(_console("first\n", "second\n"))
+
+    assert text == "first\nsecond"
+
+
+def test_resolution_parses_line_file_symbol_offset_and_section():
+    records = _console(
+        'Line 412 of "boot.c" starts at address 0x8000c74 <Boot_ValidateStaging+148> '
+        "and ends at 0x8000c78 <Boot_WriteState>.\n",
+        "Boot_ValidateStaging + 148 in section .text\n",
+    )
+
+    out = decode_symbol_resolution(records)
+
+    assert out["resolved"] is True
+    assert out["symbol"] == "Boot_ValidateStaging"
+    assert out["offset"] == 148
+    assert out["section"] == ".text"
+    assert out["file"] == "boot.c"
+    assert out["line"] == 412
+
+
+def test_resolution_handles_a_symbol_with_no_offset():
+    out = decode_symbol_resolution(_console("Boot_WriteState in section .text\n"))
+
+    assert out["symbol"] == "Boot_WriteState"
+    assert out["offset"] == 0
+    assert out["section"] == ".text"
+
+
+def test_resolution_handles_section_qualified_by_object_file():
+    out = decode_symbol_resolution(
+        _console("Boot_WriteState + 4 in section .text of /tmp/fw.axf\n"))
+
+    assert out["symbol"] == "Boot_WriteState"
+    assert out["section"] == ".text"
+
+
+def test_resolution_keeps_the_symbol_when_there_is_no_line_information():
+    # ARMCC -O2 builds hit this constantly: no line table, but the symbol is right there.
+    out = decode_symbol_resolution(_console(
+        "No line number information available for address 0x8000c74 <Boot_ValidateStaging+148>\n"))
+
+    assert out["resolved"] is True
+    assert out["symbol"] == "Boot_ValidateStaging"
+    assert out["offset"] == 148
+    assert out["file"] is None and out["line"] is None
+
+
+def test_resolution_reports_an_unresolvable_address_as_unresolved():
+    out = decode_symbol_resolution(_console(
+        "No line number information available for address 0x20000000\n",
+        "No symbol matches 0x20000000.\n",
+    ))
+
+    assert out["resolved"] is False
+    assert out["symbol"] is None
+    assert "No symbol matches" in out["text"]
+
+
+def test_symbol_resolution_handles_a_symbol_name_containing_spaces():
+    records = [{"type": "console", "payload": "Foo::bar(int, int) + 8 in section .text\n"}]
+
+    out = decode_symbol_resolution(records)
+
+    assert out["resolved"] is True
+    assert out["symbol"] == "Foo::bar(int, int)"
+    assert out["offset"] == 8

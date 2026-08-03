@@ -684,3 +684,55 @@ def test_expression_quoting_escapes_embedded_quotes():
     client.read_variable('strcmp(name, "abc")')
 
     assert _only_command(client) == '-data-evaluate-expression "strcmp(name, \\"abc\\")"'
+
+
+# --- issue #40: resolve_address must return GDB's answer, not echo the input ---
+
+def test_resolve_address_decoded_returns_symbol_offset_and_source():
+    class SymGdb:
+        def write(self, command, timeout_sec=1.0):
+            if "info line" in command:
+                return [{"type": "console", "payload":
+                         'Line 412 of "boot.c" starts at address 0x8000c74 '
+                         "<Boot_ValidateStaging+148> and ends at 0x8000c78 <Boot_WriteState>.\n"}]
+            return [{"type": "console", "payload": "Boot_ValidateStaging + 148 in section .text\n"}]
+
+        def get_gdb_response(self, timeout_sec=0.1, raise_error_on_timeout=False):
+            return []
+
+    client = GdbClientManager()
+    client.gdb = SymGdb()
+
+    out = client.resolve_address_decoded("0x08000c74")
+
+    assert out["resolved"] is True
+    assert out["symbol"] == "Boot_ValidateStaging"
+    assert out["offset"] == 148
+    assert out["file"] == "boot.c"
+    assert out["line"] == 412
+
+
+def test_list_source_returns_the_window_around_the_location_not_only_after_it():
+    class ListGdb:
+        def __init__(self):
+            self.commands = []
+
+        def write(self, command, timeout_sec=1.0):
+            self.commands.append((command, timeout_sec))
+            if command.startswith("list main"):
+                return [{"type": "console", "payload": "40\tint main(void) {\n"}]
+            return [{"type": "console", "payload": "50\t  next_window();\n"}]
+
+        def get_gdb_response(self, timeout_sec=0.1, raise_error_on_timeout=False):
+            return []
+
+    client = GdbClientManager()
+    client.gdb = ListGdb()
+
+    records = client.list_source("main", 10)
+
+    # Returning only the second listing answered "source around main" with the
+    # lines AFTER main.
+    text = "".join(r["payload"] for r in records)
+    assert "int main(void)" in text
+    assert "next_window()" in text
