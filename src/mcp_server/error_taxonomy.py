@@ -15,6 +15,16 @@ clear "halt the target first" signal.
 # ELF path too, and routing that to "install a missing host tool" sent agents
 # chasing their toolchain instead of their path (issue #21/#22).
 _RULES = [
+    # Ahead of everything: this is a read that must not be reported as target
+    # state. Its own wording is unique, so ordering costs nothing (issue #37).
+    (("core register read is implausible", "core register read returned no registers"), {
+        "code": "register_read_implausible",
+        "retryable": True,
+        "suggested_next_actions": ["halt_execution", "self_check", "check_session_health"],
+        "hint": "The register read did not come back from a halted core — treat it as a failed "
+                "read, not as target state. Halt the target and re-read; if it persists, the "
+                "GDB/probe link is unhealthy (recover_session).",
+    }),
     (("load_symbols(",), {
         "code": "elf_load_failed",
         "retryable": False,

@@ -111,3 +111,20 @@ def test_flash_mismatch_tells_the_agent_the_device_runs_other_code():
     result = classify_error("verify_flash(fw.elf) failed: target flash does not match the ELF — MIS-MATCHED!")
 
     assert result["code"] == "flash_mismatch"
+
+
+def test_implausible_register_read_is_not_reported_as_target_state():
+    c = classify_error(
+        "core register read is implausible: xPSR=0x0 has the Thumb bit (bit 24) clear, "
+        "which cannot happen on a halted Cortex-M")
+
+    assert c["code"] == "register_read_implausible"
+    assert c["retryable"] is True
+    assert "halt_execution" in c["suggested_next_actions"]
+    assert "failed read" in c["hint"]
+
+
+def test_empty_register_read_shares_the_implausible_classification():
+    c = classify_error("core register read returned no registers at all")
+
+    assert c["code"] == "register_read_implausible"

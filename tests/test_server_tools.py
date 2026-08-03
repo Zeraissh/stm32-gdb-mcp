@@ -3184,6 +3184,29 @@ def test_missing_value_without_a_gdb_error_still_suggests_a_real_tool(monkeypatc
     assert "halt" not in payload["suggested_next_actions"]
 
 
+# --- issue #37: capture_state must not report an impossible core state as ok ---
+
+def test_capture_state_refuses_an_all_zero_register_set(monkeypatch):
+    import mcp_server.server as server_module
+    from mcp_server.mi_guard import GdbCommandError
+
+    class FakeClient:
+        def read_core_registers_decoded(self):
+            raise GdbCommandError(
+                "core register read is implausible: xPSR=0x0 has the Thumb bit (bit 24) clear, "
+                "which cannot happen on a halted Cortex-M")
+
+        def read_call_stack_decoded(self):  # must never be reached
+            raise AssertionError("backtrace synthesised from a failed register read")
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool("capture_state", {})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "register_read_implausible"
+    assert "halt_execution" in payload["suggested_next_actions"]
+
+
 def test_resolve_address_advertises_the_alias_it_accepts():
     tools = {tool.name: tool for tool in asyncio.run(handle_list_tools())}
     schema = tools["inspect_symbol"].inputSchema

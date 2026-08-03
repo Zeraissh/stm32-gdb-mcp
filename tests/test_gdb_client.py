@@ -686,6 +686,70 @@ def test_expression_quoting_escapes_embedded_quotes():
     assert _only_command(client) == '-data-evaluate-expression "strcmp(name, \\"abc\\")"'
 
 
+# --- issue #37: a failed register read must not be returned as target state ---
+
+def _register_gdb(values):
+    class RegGdb:
+        def __init__(self):
+            self.commands = []
+
+        def write(self, command, timeout_sec=1.0):
+            self.commands.append((command, timeout_sec))
+            if "register-names" in command:
+                return [{"type": "result", "message": "done",
+                         "payload": {"register-names": ["r0", "sp", "pc", "xpsr"]}}]
+            return [{"type": "result", "message": "done", "payload": {"register-values": values}}]
+
+        def get_gdb_response(self, timeout_sec=0.1, raise_error_on_timeout=False):
+            return []
+
+    return RegGdb()
+
+
+def test_read_core_registers_decoded_raises_on_an_all_zero_set():
+    client = GdbClientManager()
+    client.gdb = _register_gdb([
+        {"number": "0", "value": "0x0"}, {"number": "1", "value": "0x0"},
+        {"number": "2", "value": "0x0"}, {"number": "3", "value": "0x0"},
+    ])
+
+    with pytest.raises(GdbCommandError) as excinfo:
+        client.read_core_registers_decoded()
+
+    assert "implausible" in str(excinfo.value)
+    assert "Thumb" in str(excinfo.value)
+
+
+def test_read_core_registers_decoded_returns_a_real_halted_set():
+    client = GdbClientManager()
+    client.gdb = _register_gdb([
+        {"number": "0", "value": "0x10"}, {"number": "1", "value": "0x20004fd0"},
+        {"number": "2", "value": "0x8000456"}, {"number": "3", "value": "0x61000000"},
+    ])
+
+    assert client.read_core_registers_decoded() == {
+        "r0": "0x10", "sp": "0x20004fd0", "pc": "0x8000456", "xpsr": "0x61000000",
+    }
+
+
+def test_read_core_registers_decoded_raises_on_a_gdb_error_instead_of_decoding_to_empty():
+    class ErrGdb:
+        def write(self, command, timeout_sec=1.0):
+            return [{"type": "result", "message": "error",
+                     "payload": {"msg": "Could not read registers; remote failure reply '0E'"}}]
+
+        def get_gdb_response(self, timeout_sec=0.1, raise_error_on_timeout=False):
+            return []
+
+    client = GdbClientManager()
+    client.gdb = ErrGdb()
+
+    with pytest.raises(GdbCommandError) as excinfo:
+        client.read_core_registers_decoded()
+
+    assert "remote failure reply" in str(excinfo.value)
+
+
 # --- issue #40: resolve_address must return GDB's answer, not echo the input ---
 
 def test_resolve_address_decoded_returns_symbol_offset_and_source():

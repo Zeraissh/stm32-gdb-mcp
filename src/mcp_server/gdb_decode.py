@@ -41,6 +41,48 @@ def decode_registers(names_records, values_records) -> dict:
     return decoded
 
 
+def implausible_register_set(registers: dict) -> str | None:
+    """Return why ``registers`` cannot have come from a halted Cortex-M, or None.
+
+    A debug tool that answers "pc=0x0 lr=0x0 sp=0x0 xpsr=0x0" with ok:true is
+    worse than one that errors: the agent that hit this spent two analysis rounds
+    on a firmware fault that did not exist, steered by a backtrace synthesised
+    from those zeros (issue #37). These are architectural invariants, not
+    heuristics — on a halted Cortex-M the Thumb bit (xPSR bit 24) is always set,
+    because a core with T=0 would have taken a UsageFault rather than be sitting
+    there answering register reads.
+    """
+    if not registers:
+        return "core register read returned no registers at all"
+
+    # GDB names registers from -data-list-register-names, and the casing is not
+    # something to bet an invariant on ("xpsr" on arm-none-eabi, "xPSR" elsewhere).
+    lowered = {str(name).lower(): value for name, value in registers.items()}
+
+    def _as_int(name):
+        raw = lowered.get(name)
+        if raw is None:
+            return None
+        try:
+            return int(str(raw), 0)
+        except (TypeError, ValueError):
+            return None
+
+    xpsr = _as_int("xpsr")
+    if xpsr is not None and not xpsr & (1 << 24):
+        return (f"core register read is implausible: xPSR={lowered.get('xpsr')} has the Thumb bit "
+                "(bit 24) clear, which cannot happen on a halted Cortex-M")
+
+    # pc=0 alone is not proof: -data-list-register-values reads the SELECTED
+    # frame, and a failed unwind legitimately reports pc=0 for an outer frame.
+    # Paired with sp=0 it cannot be a real core — no Cortex-M runs on a null stack.
+    pc, sp = _as_int("pc"), _as_int("sp")
+    if pc == 0 and (sp is None or sp == 0):
+        return ("core register read is implausible: pc=0x0 with no stack pointer, which cannot be "
+                "the halt state of a running Cortex-M image")
+    return None
+
+
 def registers_summary(registers: dict) -> str:
     """One-line summary highlighting the registers that matter most at a glance."""
     parts = []

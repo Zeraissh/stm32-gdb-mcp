@@ -11,6 +11,7 @@ from .gdb_decode import (
     decode_registers,
     decode_symbol_resolution,
     decode_variables,
+    implausible_register_set,
 )
 from .mi_guard import GdbCommandError, ensure_ok, has_terminal_result
 from .stop_event import ALREADY_HALTED_RECORD, parse_stop_event
@@ -403,10 +404,24 @@ class GdbClientManager:
         return self.execute_cli_command("info registers", timeout_sec=self.timeouts.get("registers"))
 
     def read_core_registers_decoded(self):
-        """Return {name: hex} via the structured MI register queries."""
-        names = self.execute_command("-data-list-register-names", timeout_sec=self.timeouts.get("registers"))
-        values = self.execute_command("-data-list-register-values x", timeout_sec=self.timeouts.get("registers"))
-        return decode_registers(names, values)
+        """Return {name: hex} via the structured MI register queries.
+
+        Raises rather than returning a register map the architecture says cannot
+        exist: a failed read that decodes to zeros used to be handed back as
+        ok:true core state, complete with a synthesised pc=0x0 backtrace built on
+        top of it (issue #37).
+        """
+        names = ensure_ok(
+            self.execute_command("-data-list-register-names", timeout_sec=self.timeouts.get("registers")),
+            "read core register names")
+        values = ensure_ok(
+            self.execute_command("-data-list-register-values x", timeout_sec=self.timeouts.get("registers")),
+            "read core register values")
+        registers = decode_registers(names, values)
+        implausible = implausible_register_set(registers)
+        if implausible:
+            raise GdbCommandError(implausible)
+        return registers
 
     def read_call_stack_decoded(self):
         return decode_backtrace(self.read_call_stack())
