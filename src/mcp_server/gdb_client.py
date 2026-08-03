@@ -97,6 +97,7 @@ class GdbClientManager:
         # Use mi3 for latest GDB machine interface features
         self.gdb = GdbController(command=[gdb_path, "--interpreter=mi3"])
         self._enable_async()
+        self._pin_charset()
 
     def _enable_async(self):
         """Turn on MI async mode, which must happen BEFORE a target is attached.
@@ -112,6 +113,27 @@ class GdbClientManager:
             self.execute_command("-gdb-set mi-async on", timeout_sec=self.timeouts.get("default"))
         except Exception:
             # An old GDB without mi-async still works for halted-target flows.
+            pass
+
+    def _pin_charset(self):
+        """Take GDB's charset conversion out of the loop.
+
+        GDB renders a char as ``161 '\\241'`` — number, space, quoted character —
+        and produces the quoted part by converting the byte through iconv. On a
+        host whose locale iconv cannot serve (measured on a CJK Windows console)
+        that conversion fails for EVERY char, valid ASCII bytes included, and GDB
+        substitutes ``<error reading variable: Converting character sets: Invalid
+        argument.>`` where the character belongs — glued onto the value of every
+        u8/char read, which on bare-metal firmware is most of the interesting
+        state (issue #34). ``set charset`` pins both host and target sets, so GDB
+        emits an octal escape instead of calling iconv at all.
+
+        The cost is that a genuinely non-ASCII string renders as escapes rather
+        than glyphs. That is a fair trade for reads that never fail.
+        """
+        try:
+            self.execute_command("-gdb-set charset ASCII", timeout_sec=self.timeouts.get("default"))
+        except Exception:
             pass
 
     def stop_gdb(self):

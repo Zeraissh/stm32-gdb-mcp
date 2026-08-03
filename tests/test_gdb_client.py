@@ -776,6 +776,35 @@ def test_resolve_address_decoded_returns_symbol_offset_and_source():
     assert out["line"] == 412
 
 
+# --- issue #34: GDB's charset conversion must be out of the loop ---
+
+def test_start_gdb_pins_the_charset_so_char_reads_cannot_fail(monkeypatch):
+    # On a host whose iconv cannot serve the locale, EVERY char read came back as
+    # "0 '<error reading variable: Converting character sets: Invalid argument.>'".
+    client = GdbClientManager()
+    fake = FakeGdb()
+    monkeypatch.setattr(gdb_client_module, "GdbController", lambda command: fake)
+
+    client.start_gdb()
+
+    commands = [c[0] for c in fake.commands]
+    assert "-gdb-set charset ASCII" in commands
+
+
+def test_a_gdb_that_rejects_the_charset_setting_does_not_break_startup(monkeypatch):
+    class GrumpyGdb(FakeGdb):
+        def write(self, command, timeout_sec=1.0):
+            super().write(command, timeout_sec)
+            if "charset" in command:
+                raise RuntimeError("Undefined command")
+            return [{"type": "result", "message": "done", "payload": None}]
+
+    fake = GrumpyGdb()
+    monkeypatch.setattr(gdb_client_module, "GdbController", lambda command: fake)
+
+    GdbClientManager().start_gdb()  # must not raise
+
+
 def test_list_source_returns_the_window_around_the_location_not_only_after_it():
     class ListGdb:
         def __init__(self):
