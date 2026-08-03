@@ -1,4 +1,10 @@
-from mcp_server.error_taxonomy import classify_error
+import pytest
+
+from mcp_server.error_taxonomy import (
+    classify_error,
+    measured_target_voltage,
+    refine_target_unreachable,
+)
 
 
 def test_gdb_timeout_maps_to_unresponsive_with_halt_suggestion():
@@ -128,3 +134,73 @@ def test_empty_register_read_shares_the_implausible_classification():
     c = classify_error("core register read returned no registers at all")
 
     assert c["code"] == "register_read_implausible"
+
+
+# --- issue #36: a dead link during load_symbols is a session fault, not a bad ELF ---
+
+def test_remote_failure_reply_is_a_session_fault_even_under_a_load_symbols_label():
+    c = classify_error(
+        "load_symbols(D:/Obj/AGS_Normal_BL.axf) failed: Could not read registers; "
+        "remote failure reply '0E'")
+
+    assert c["code"] == "connection_lost"
+    assert c["retryable"] is True
+    assert c["suggested_next_actions"][0] == "recover_session"
+    # The cure was stop/start, not inspecting the path.
+    assert "inspect_project" not in c["suggested_next_actions"]
+
+
+def test_a_genuinely_bad_elf_path_is_still_an_elf_load_failure():
+    c = classify_error("load_symbols(fw.axf) failed: fw.axf: No such file or directory.")
+
+    assert c["code"] == "elf_load_failed"
+    assert c["retryable"] is False
+
+
+# --- issue #35: do not advise a power check the log already disproves ---
+
+_ATTACH_LOG = (
+    "Info : STLINK V2J37S7 (API v2) VID:PID 0483:3748\n"
+    "Info : Target voltage: 3.167938\n"
+    "Error: init mode failed (unable to connect to the target)\n"
+)
+
+
+def test_measured_voltage_is_read_off_the_server_log():
+    assert measured_target_voltage(_ATTACH_LOG) == pytest.approx(3.167938)
+    assert measured_target_voltage("no voltage here") is None
+
+
+def test_a_powered_board_is_not_told_to_check_its_power():
+    refined = refine_target_unreachable(classify_error(_ATTACH_LOG), _ATTACH_LOG)
+
+    assert refined["code"] == "target_unreachable"
+    assert "check target power/SWD wiring/reset state" not in refined["suggested_next_actions"]
+    assert refined["suggested_next_actions"]  # never left empty
+    assert "the board IS powered" in refined["hint"]
+    assert "3.17 V" in refined["hint"]
+    # The inference that cost the reporter two wrong statements to their user.
+    assert "says NOTHING about whether the CPU is executing" in refined["hint"]
+    assert "connect_assert_srst" in refined["hint"]
+    assert refined["measured_target_voltage"] == pytest.approx(3.167938)
+
+
+def test_an_unpowered_board_keeps_the_power_advice():
+    log = "Info : Target voltage: 0.041000\nError: init mode failed (unable to connect to the target)\n"
+
+    refined = refine_target_unreachable(classify_error(log), log)
+
+    assert "check target power/SWD wiring/reset state" in refined["suggested_next_actions"]
+
+
+def test_no_voltage_reading_leaves_the_classification_alone():
+    log = "Error: init mode failed (unable to connect to the target)\n"
+    original = classify_error(log)
+
+    assert refine_target_unreachable(original, log) == original
+
+
+def test_refinement_only_applies_to_target_unreachable():
+    original = classify_error("Did not get response from gdb after 1.0 seconds")
+
+    assert refine_target_unreachable(original, _ATTACH_LOG) == original
