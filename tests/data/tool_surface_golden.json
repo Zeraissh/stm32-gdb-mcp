@@ -1551,6 +1551,45 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
+   "description": "Erases a flash range on the target (OpenOCD 'flash erase_address pad'), rounding out to the driver's erase-sector boundaries. The recovery tool for a board that will not boot: clearing a corrupt OTA journal, a stale boot descriptor, or a half-written image. Requires an explicit address AND length \u2014 there is deliberately no mass-erase default.",
+   "inputSchema": {
+    "properties": {
+     "address": {
+      "description": "Start address, e.g. '0x08016000'. Rounded DOWN to the erase-sector boundary.",
+      "type": "string"
+     },
+     "length": {
+      "description": "Bytes to erase. Rounded UP to the erase-sector boundary.",
+      "type": "integer"
+     },
+     "sector_size_bytes": {
+      "description": "Erase-sector size of this part (e.g. 4096 on STM32L1, up to 131072 on F4). Give it and the write guard checks the padded range that is really erased; omit it and the guard can only check the range you asked for.",
+      "type": "integer"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "verify": {
+      "description": "Read back the first 64 bytes and confirm they are 0xFF (default true).",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "address",
+     "length"
+    ],
+    "type": "object"
+   },
+   "name": "flash_erase"
+  },
+  {
+   "annotations": {
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
    "description": "One-call SWO/ITM printf setup. Configures the target's TPIU+ITM from the debugger (no firmware ITM-init needed) for the given core clock (hclk_hz) and SWO baud, and returns the OpenOCD capture commands + the firmware printf retarget snippet. Then capture with logging(action=start, channel='swo', file=<output>). Requires the SWO pin (e.g. PB3) wired to the probe.",
    "inputSchema": {
     "properties": {

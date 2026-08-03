@@ -267,6 +267,25 @@ class GdbClientManager:
         responses.extend(ensure_ok(download, f"flash download({filepath})", require_result=True))
         return responses
 
+    def flash_erase(self, address: int, length: int):
+        """Erase a flash range through the GDB server's own flash driver.
+
+        ``pad`` is load-bearing: OpenOCD erases whole sectors and refuses a range
+        that is not sector-aligned ("address range ... is not sector-aligned"),
+        and the sector size is a property of the driver, not of the MCU's page
+        size — 4 KiB sectors over 256 B pages on an STM32L1. Letting OpenOCD pad
+        out to its own boundaries keeps a per-family table out of this server;
+        the caller learns what was really erased from the echoed console text.
+
+        Goes through _execute_until_result for the same reason load_firmware
+        does: an erase streams progress before its terminal record (issue #42).
+        """
+        if length < 1:
+            raise ValueError("length must be >= 1")
+        command = f"monitor flash erase_address pad {hex(address)} {length}"
+        resp = self._execute_until_result(command, self.timeouts.get("erase"))
+        return ensure_ok(resp, f"flash erase({hex(address)}, {length})", require_result=True)
+
     def reset_halt(self, command: str = "monitor reset halt"):
         """Resets the MCU and halts it. OpenOCD uses 'monitor reset halt'."""
         resp = self.execute_command(command, timeout_sec=self.timeouts.get("reset"))

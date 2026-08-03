@@ -1,3 +1,5 @@
+import pytest
+
 from mcp_server.memory_guard import MemoryWriteGuard
 
 
@@ -55,3 +57,60 @@ def test_width_spanning_into_protected_region_is_blocked():
     decision = guard.evaluate(0x40002FFC, width_bits=64)
 
     assert decision["action"] == "blocked"
+
+
+def test_evaluate_range_blocks_an_erase_that_clips_a_protected_region():
+    guard = MemoryWriteGuard()
+
+    # 0x1FFF0000 is option bytes / system memory; an erase that reaches it is at
+    # least as destructive as a write into it (issue #42).
+    decision = guard.evaluate_range(0x1FFEF000, 0x2000)
+
+    assert decision["action"] == "blocked"
+    assert decision["region"]["name"] == "option_bytes_system_memory"
+
+
+def test_evaluate_range_allows_an_ordinary_application_flash_range():
+    guard = MemoryWriteGuard()
+
+    assert guard.evaluate_range(0x08016000, 0x1000)["action"] == "write"
+
+
+def test_evaluate_range_rejects_a_non_positive_length():
+    guard = MemoryWriteGuard()
+
+    with pytest.raises(ValueError):
+        guard.evaluate_range(0x08016000, 0)
+
+
+def test_evaluate_range_honours_dry_run_like_evaluate():
+    guard = MemoryWriteGuard()
+    guard.set_policy(mode="dry_run")
+
+    assert guard.evaluate_range(0x1FFF0000, 0x1000)["action"] == "simulated"
+
+
+def test_an_allow_that_only_clips_a_range_does_not_unlock_a_protected_region_inside_it():
+    guard = MemoryWriteGuard()
+    guard.set_policy(add_allow=[{"name": "scratch", "start": 0x1FFEF000, "end": 0x1FFEFFFF}])
+
+    # The range touches the allowed scratch area AND the protected option bytes.
+    # Overlap-wins-first would return "write" and never consult the protected list.
+    decision = guard.evaluate_range(0x1FFEF800, 0x2000)
+
+    assert decision["action"] == "blocked"
+    assert decision["region"]["name"] == "option_bytes_system_memory"
+
+
+def test_an_allow_that_contains_the_whole_range_still_wins():
+    guard = MemoryWriteGuard()
+    guard.set_policy(add_allow=[{"name": "option_bytes_ok", "start": 0x1FFF0000, "end": 0x1FFFFFFF}])
+
+    assert guard.evaluate_range(0x1FFF0000, 0x100)["action"] == "write"
+
+
+def test_a_single_word_write_inside_an_allowed_region_is_unaffected():
+    guard = MemoryWriteGuard()
+    guard.set_policy(add_allow=[{"name": "iwdg_ok", "start": 0x40003000, "end": 0x400033FF}])
+
+    assert guard.evaluate(0x40003000, width_bits=32)["action"] == "write"

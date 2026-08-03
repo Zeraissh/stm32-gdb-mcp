@@ -3407,6 +3407,128 @@ def test_compact_surface_offers_a_resume_next_to_halt(monkeypatch):
     assert "continue_execution" in names
 
 
+# --- issue #42: flash erase, with guard rails ---
+
+class _EraseClient:
+    def __init__(self, readback="ffffffff"):
+        self.erased = []
+        self._readback = readback
+
+    def flash_erase(self, address, length):
+        self.erased.append((address, length))
+        return [{"type": "console", "payload": f"erased address 0x{address:08x} (length {length})\n"},
+                {"type": "result", "message": "done", "payload": None}]
+
+    def read_memory(self, address, length):
+        return [{"type": "result", "payload": {"memory": [{"contents": self._readback}]}}]
+
+
+def test_flash_erase_erases_the_requested_range_and_verifies_it(monkeypatch):
+    import mcp_server.server as server_module
+
+    client = _EraseClient()
+    monkeypatch.setattr(server_module, "gdb_client", client)
+    payload = _payload(asyncio.run(handle_call_tool(
+        "flash_erase", {"address": "0x08016000", "length": 4096})))
+
+    assert payload["ok"] is True
+    assert client.erased == [(0x08016000, 4096)]
+    assert payload["data"]["verify"]["erased"] is True
+    assert "erased address" in payload["data"]["server_output"]
+
+
+def test_flash_erase_fails_loudly_when_the_range_is_not_actually_erased(monkeypatch):
+    import mcp_server.server as server_module
+
+    monkeypatch.setattr(server_module, "gdb_client", _EraseClient(readback="a1bf0c00"))
+    payload = _payload(asyncio.run(handle_call_tool(
+        "flash_erase", {"address": "0x08016000", "length": 4096})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "flash_erase_failed"
+
+
+def test_flash_erase_refuses_a_range_overlapping_a_protected_region(monkeypatch):
+    import mcp_server.server as server_module
+
+    client = _EraseClient()
+    monkeypatch.setattr(server_module, "gdb_client", client)
+    # Option bytes / system memory: erasing these is how a board stops being a board.
+    payload = _payload(asyncio.run(handle_call_tool(
+        "flash_erase", {"address": "0x1FFF0000", "length": 4096})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "memory_write_blocked"
+    assert client.erased == []
+
+
+def test_flash_erase_needs_an_explicit_length_there_is_no_mass_erase():
+    tools = {tool.name: tool for tool in asyncio.run(handle_list_tools())}
+    schema = tools["flash_erase"].inputSchema
+
+    assert set(schema["required"]) == {"address", "length"}
+
+
+def test_flash_erase_is_annotated_destructive():
+    tools = {tool.name: tool for tool in asyncio.run(handle_list_tools())}
+
+    annotations = tools["flash_erase"].annotations
+    assert annotations.destructiveHint is True
+    assert annotations.readOnlyHint is False
+
+
+# --- review findings: second-pass corrections ---
+
+def test_flash_erase_reports_a_verification_it_could_not_run_as_a_failure(monkeypatch):
+    import mcp_server.server as server_module
+
+    class NoReadbackClient(_EraseClient):
+        def read_memory(self, address, length):
+            # The erase reported done, but the range cannot be read back:
+            # a dropped link, a bus fault, an inaccessible address.
+            return [{"type": "result", "message": "error",
+                     "payload": {"msg": "Cannot access memory at address 0x8016000"}}]
+
+    monkeypatch.setattr(server_module, "gdb_client", NoReadbackClient())
+    payload = _payload(asyncio.run(handle_call_tool(
+        "flash_erase", {"address": "0x08016000", "length": 4096})))
+
+    # ok:true here would be the false ok the verify step exists to prevent, with
+    # the evidence of its own failure buried in data.verify.
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "flash_erase_unverified"
+    assert "Cannot access memory" in payload["error"]["message"]
+
+
+def test_flash_erase_guards_the_padded_range_when_told_the_sector_size(monkeypatch):
+    import mcp_server.server as server_module
+
+    client = _EraseClient()
+    monkeypatch.setattr(server_module, "gdb_client", client)
+    # 256 bytes just past the protected option-byte region, but a 64 KiB sector
+    # pads back into it — OpenOCD would erase what the guard never saw.
+    payload = _payload(asyncio.run(handle_call_tool("flash_erase", {
+        "address": "0x20000000", "length": 256, "sector_size_bytes": 0x10000,
+    })))
+    assert payload["ok"] is True  # RAM address, nothing protected nearby
+
+    blocked = _payload(asyncio.run(handle_call_tool("flash_erase", {
+        "address": "0x1FFFF000", "length": 256, "sector_size_bytes": 0x10000,
+    })))
+    assert blocked["ok"] is False
+    assert blocked["error"]["code"] == "memory_write_blocked"
+
+
+def test_flash_erase_says_when_its_guard_only_saw_the_requested_range(monkeypatch):
+    import mcp_server.server as server_module
+
+    monkeypatch.setattr(server_module, "gdb_client", _EraseClient())
+    payload = _payload(asyncio.run(handle_call_tool(
+        "flash_erase", {"address": "0x08016000", "length": 4096})))
+
+    assert "requested range only" in payload["data"]["guard_scope"]
+
+
 def test_run_scenario_reports_ok_false_when_a_step_fails():
     payload = _payload(asyncio.run(handle_call_tool("run_scenario", {
         "steps": [{"tool": "does_not_exist", "args": {}}],

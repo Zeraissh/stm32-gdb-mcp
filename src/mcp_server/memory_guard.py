@@ -50,14 +50,29 @@ class MemoryWriteGuard:
         return None
 
     def evaluate(self, address: int, width_bits: int = 32) -> dict:
-        start = address
-        end = address + (width_bits // 8) - 1
+        return self._decide(address, address + (width_bits // 8) - 1)
 
+    def evaluate_range(self, address: int, length: int) -> dict:
+        """Same decision as ``evaluate``, for a byte range rather than one write.
+
+        Flash erase works on ranges, and an erase that clips a protected region
+        is at least as destructive as a write into it (issue #42).
+        """
+        if length < 1:
+            raise ValueError("length must be >= 1")
+        return self._decide(address, address + length - 1)
+
+    def _decide(self, start: int, end: int) -> dict:
         if self.mode == "dry_run":
             return {"action": "simulated", "reason": "dry_run mode is active", "region": None}
 
+        # An allow only wins when it CONTAINS the whole span. Merely touching one
+        # was safe while every caller was a 1-4 byte write, which cannot straddle
+        # two regions; a flash-erase range can, and overlap semantics would let a
+        # range that clips an allowed region unlock a protected region inside the
+        # very same span.
         allow = self._match(self.allowed, start, end)
-        if allow:
+        if allow and allow["start"] <= start and end <= allow["end"]:
             return {"action": "write", "reason": "explicitly allowed", "region": allow}
 
         protected = self._match(self.protected, start, end)

@@ -838,6 +838,51 @@ def test_continue_execution_still_resumes_when_the_state_is_unknown():
     assert [c[0] for c in client.gdb.commands] == ["-exec-continue"]
 
 
+# --- issue #42: erase a flash range through the server's own session ---
+
+def test_flash_erase_pads_to_the_drivers_sector_boundaries():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+
+    client.flash_erase(0x08016000, 0x1000)
+
+    # 'pad' is what stops "address range ... is not sector-aligned"; the sector
+    # size belongs to the OpenOCD driver, not to a table in this server.
+    assert client.gdb.commands == [("monitor flash erase_address pad 0x8016000 4096", 30.0)]
+
+
+def test_flash_erase_raises_when_the_erase_reports_an_error():
+    client = GdbClientManager()
+    client.gdb = FakeGdb([
+        {"type": "console", "payload": "Error: failed to erase memory\n"},
+        {"type": "result", "message": "done", "payload": None},
+    ])
+
+    with pytest.raises(GdbCommandError) as excinfo:
+        client.flash_erase(0x08016000, 4096)
+
+    assert "failed to erase memory" in str(excinfo.value)
+
+
+def test_flash_erase_raises_without_a_terminal_result_record():
+    # Same guard as the flash download: a transfer that never reported completion
+    # must not read as done.
+    client = GdbClientManager()
+    client.gdb = FakeGdb([{"type": "console", "payload": "erasing...\n"}])
+    client.timeouts.set({"erase": 0.2})  # the poll loop runs to the deadline
+
+    with pytest.raises(GdbCommandError):
+        client.flash_erase(0x08016000, 4096)
+
+
+def test_flash_erase_rejects_a_zero_length():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+
+    with pytest.raises(ValueError):
+        client.flash_erase(0x08016000, 0)
+
+
 # --- review findings: things the first pass of these fixes got wrong ---
 
 def test_continue_execution_resumes_a_target_that_stopped_on_its_own():

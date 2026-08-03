@@ -16,6 +16,9 @@ DEFAULTS = {
     "source": 2.0,
     "run": 10.0,
     "download": 60.0,
+    # A multi-sector erase is slow and runs on the target's own flash controller;
+    # the 2.0 s "monitor" default is not enough for it.
+    "erase": 30.0,
     "symbols": 2.0,
     "monitor": 2.0,
     "breakpoint": 2.0,

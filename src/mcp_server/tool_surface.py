@@ -153,7 +153,7 @@ READ_ONLY_EXTRAS = {
 }
 
 HARDWARE_WRITE_TOOLS = {
-    "flash_firmware", "flash_and_run", "reset_target", "write_memory", "typed_memory",
+    "flash_firmware", "flash_and_run", "flash_erase", "reset_target", "write_memory", "typed_memory",
     "set_adapter_speed", "setup_swo", "configure_debug_freeze",
 }
 
