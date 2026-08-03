@@ -15,6 +15,7 @@ from ..debug_experiments import (
 from ..gdb_decode import decode_evaluated_value, decode_memory_bytes
 from ..mi_guard import find_mi_error
 from ..tool_response import content_error, content_success
+from ._helpers import core_state
 from .context import ToolContext
 from .registry import register
 
@@ -50,10 +51,12 @@ def read_variable(ctx: ToolContext, arguments: dict) -> list[TextContent]:
             code="no_value_returned",
             raw_response=resp,
             suggested_next_actions=["halt_execution", "load_symbols", "expressions"],
+            core_state=core_state(ctx.gdb_client),
         )]
     return [content_success(
         {"message": "Variable read", "name": arguments["name"], "value": value},
         raw_response=resp,
+        core_state=core_state(ctx.gdb_client),
     )]
 
 
@@ -86,6 +89,7 @@ def read_memory(ctx: ToolContext, arguments: dict) -> list[TextContent]:
             code="no_value_returned",
             raw_response=resp,
             suggested_next_actions=["halt_execution", "self_check", "capture_state"],
+            core_state=core_state(ctx.gdb_client),
         )]
     return [content_success(
         {
@@ -95,6 +99,7 @@ def read_memory(ctx: ToolContext, arguments: dict) -> list[TextContent]:
             "bytes": contents,
         },
         raw_response=resp,
+        core_state=core_state(ctx.gdb_client),
     )]
 
 
@@ -307,6 +312,7 @@ def read_typed_memory(ctx: ToolContext, arguments: dict) -> list[TextContent]:
             "count": arguments["count"],
         },
         raw_response=resp,
+        core_state=core_state(ctx.gdb_client),
     )]
 
 

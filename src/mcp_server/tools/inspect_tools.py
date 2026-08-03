@@ -11,6 +11,7 @@ from ..gdb_decode import (
 from ..mi_guard import find_mi_error
 from ..stack_analysis import stack_report
 from ..tool_response import content_error, content_success
+from ._helpers import core_state
 from .context import ToolContext
 from .registry import register
 
@@ -123,6 +124,7 @@ def read_core_registers(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     return [content_success(
         {"registers": registers, "summary": registers_summary(registers)},
         raw_response=raw,
+        core_state=core_state(ctx.gdb_client),
     )]
 
 

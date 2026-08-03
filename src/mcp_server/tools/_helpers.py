@@ -8,6 +8,26 @@ from typing import Any
 from ..reliability import retry_call
 
 
+def core_state(gdb_client: Any) -> str | None:
+    """"running"/"halted" from the state GDB already reported, or None if unknown.
+
+    Costs no target traffic: GdbClientManager tracks this from GDB's own
+    *running/*stopped async records. Reads that carry it let an agent notice a
+    stopped core immediately, instead of inferring it hours later from some
+    unrelated instrument going quiet (issue #33).
+    """
+    getter = getattr(gdb_client, "is_running", None)
+    if getter is None:
+        return None
+    try:
+        running = getter()
+    except Exception:
+        return None
+    if running is None:
+        return None
+    return "running" if running else "halted"
+
+
 def autoload_symbols(sess: Any) -> bool:
     """Load symbols from the profile's elf_path after a connect, if configured."""
     elf_path = sess.debug_profile.get().get("elf_path")

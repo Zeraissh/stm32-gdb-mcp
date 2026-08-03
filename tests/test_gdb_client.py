@@ -7,7 +7,7 @@ from conftest import FakeGdb
 import mcp_server.gdb_client as gdb_client_module
 from mcp_server.gdb_client import GdbClientManager
 from mcp_server.mi_guard import GdbCommandError
-from mcp_server.stop_event import was_already_halted
+from mcp_server.stop_event import was_already_halted, was_already_running
 from mcp_server.timeouts import DEFAULTS
 
 
@@ -803,6 +803,76 @@ def test_a_gdb_that_rejects_the_charset_setting_does_not_break_startup(monkeypat
     monkeypatch.setattr(gdb_client_module, "GdbController", lambda command: fake)
 
     GdbClientManager().start_gdb()  # must not raise
+
+
+# --- issue #33: resume must be as idempotent as halt already is ---
+
+def test_continue_execution_is_a_no_op_when_the_target_is_already_running():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+    client._running = True
+
+    resp = client.continue_execution()
+
+    assert was_already_running(resp)
+    assert client.gdb.commands == []  # no -exec-continue, so no "not halted" error
+
+
+def test_continue_execution_resumes_a_halted_target():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+    client._running = False
+
+    client.continue_execution()
+
+    assert [c[0] for c in client.gdb.commands] == ["-exec-continue"]
+
+
+def test_continue_execution_still_resumes_when_the_state_is_unknown():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+    client._running = None
+
+    client.continue_execution()
+
+    assert [c[0] for c in client.gdb.commands] == ["-exec-continue"]
+
+
+# --- review findings: things the first pass of these fixes got wrong ---
+
+def test_continue_execution_resumes_a_target_that_stopped_on_its_own():
+    # _running only flips to False when a *stopped is READ off the pipe, so it is
+    # stale the instant the target hits a breakpoint. A guard that trusted it
+    # unread would skip the one resume that was actually needed.
+    class StoppedGdb(FakeGdb):
+        def __init__(self):
+            super().__init__()
+            self._async = [{"type": "notify", "message": "stopped",
+                            "payload": {"reason": "breakpoint-hit", "frame": {"addr": "0x8000456"}}}]
+
+        def get_gdb_response(self, timeout_sec=0.1, raise_error_on_timeout=False):
+            pending, self._async = self._async, []
+            return pending
+
+    client = GdbClientManager()
+    client.gdb = StoppedGdb()
+    client._running = True  # stale: the *stopped has not been read yet
+
+    resp = client.continue_execution()
+
+    assert [c[0] for c in client.gdb.commands] == ["-exec-continue"]
+    assert not was_already_running(resp)
+
+
+def test_continue_execution_still_short_circuits_a_genuinely_running_target():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+    client._running = True
+
+    resp = client.continue_execution()
+
+    assert was_already_running(resp)
+    assert client.gdb.commands == []
 
 
 def test_list_source_returns_the_window_around_the_location_not_only_after_it():

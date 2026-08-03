@@ -14,7 +14,7 @@ from .gdb_decode import (
     implausible_register_set,
 )
 from .mi_guard import GdbCommandError, ensure_ok, has_terminal_result
-from .stop_event import ALREADY_HALTED_RECORD, parse_stop_event
+from .stop_event import ALREADY_HALTED_RECORD, ALREADY_RUNNING_RECORD, parse_stop_event
 from .timeouts import TimeoutConfig
 
 
@@ -328,8 +328,26 @@ class GdbClientManager:
         return decode_breakpoints(self.execute_command("-break-list", timeout_sec=self.timeouts.get("breakpoint")))
 
     def continue_execution(self):
+        """Resume the target — a no-op if it is already running.
+
+        The mirror of halt_execution's already-halted guard. Without it "make
+        sure the target is running" could not be expressed safely: GDB answers a
+        redundant -exec-continue with "not halted" followed by "context restore
+        failed, aborting resume", so a caller had to track the state itself or
+        swallow a spurious error (issue #33).
+
+        Drain BEFORE deciding, exactly as halt_execution does. ``_running`` only
+        flips to False when a ``*stopped`` is actually read off the pipe, so it
+        goes stale the moment the target stops on its own — a breakpoint, a
+        watchpoint, a HardFault. Trusting it unread would make this guard skip
+        the one resume that was genuinely needed, which is the silent-halt
+        failure #33 is about, reintroduced from the other side.
+        """
+        pending = self._drain_collect()
+        if self._running is True and not parse_stop_event(pending)["stopped"]:
+            return pending + [ALREADY_RUNNING_RECORD.copy()]
         resp = self.execute_command("-exec-continue", timeout_sec=self.timeouts.get("default"))
-        return ensure_ok(resp, "continue")
+        return pending + list(ensure_ok(resp, "continue"))
 
     def halt_execution(self):
         """Interrupt the target — but only if it is actually running.

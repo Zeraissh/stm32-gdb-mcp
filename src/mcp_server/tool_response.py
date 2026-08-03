@@ -26,6 +26,11 @@ OUTPUT_SCHEMA = {
             "type": "array",
             "items": {"type": "string"},
         },
+        # Present on tools that read target state. The server already tracks this
+        # from GDB's own async records but never told the caller, so an agent had
+        # no way to notice the core was stopped until some unrelated instrument
+        # (a serial capture, a frozen tick counter) went quiet (issue #33).
+        "core_state": {"enum": ["running", "halted"]},
     },
     "required": ["ok"],
     "additionalProperties": False,
@@ -37,7 +42,8 @@ def verbose_raw_responses() -> bool:
     return bool(os.environ.get("STM32_GDB_MCP_VERBOSE"))
 
 
-def _envelope(ok: bool, data=None, error=None, raw_response=None, suggested_next_actions=None) -> dict:
+def _envelope(ok: bool, data=None, error=None, raw_response=None, suggested_next_actions=None,
+              core_state=None) -> dict:
     response: dict = {"ok": ok}
     if data is not None:
         response["data"] = data
@@ -47,6 +53,8 @@ def _envelope(ok: bool, data=None, error=None, raw_response=None, suggested_next
         response["raw_response"] = raw_response
     if suggested_next_actions:
         response["suggested_next_actions"] = list(suggested_next_actions)
+    if core_state is not None:
+        response["core_state"] = core_state
     return response
 
 
@@ -54,25 +62,27 @@ def _dump(response: dict) -> str:
     return json.dumps(response, separators=(",", ":"))
 
 
-def success_response(data=None, raw_response=None, suggested_next_actions=None):
+def success_response(data=None, raw_response=None, suggested_next_actions=None, core_state=None):
     if not verbose_raw_responses():
         raw_response = None
     return _envelope(True, data=data, raw_response=raw_response,
-                     suggested_next_actions=suggested_next_actions)
+                     suggested_next_actions=suggested_next_actions, core_state=core_state)
 
 
-def content_success(data=None, raw_response=None, suggested_next_actions=None) -> TextContent:
+def content_success(data=None, raw_response=None, suggested_next_actions=None,
+                    core_state=None) -> TextContent:
     return TextContent(
         type="text",
-        text=_dump(success_response(data, raw_response, suggested_next_actions)),
+        text=_dump(success_response(data, raw_response, suggested_next_actions, core_state)),
     )
 
 
 def content_error(message: str, code: str | None = None, raw_response=None,
-                  suggested_next_actions=None, data=None) -> TextContent:
+                  suggested_next_actions=None, data=None, core_state=None) -> TextContent:
     return TextContent(
         type="text",
-        text=_dump(error_response(message, code, raw_response, suggested_next_actions, data)),
+        text=_dump(error_response(message, code, raw_response, suggested_next_actions,
+                                  data, core_state)),
     )
 
 
@@ -95,14 +105,16 @@ def parse_content_text(content: TextContent) -> dict:
 
 
 def error_response(message: str, code: str | None = None, raw_response=None,
-                   suggested_next_actions=None, data=None):
+                   suggested_next_actions=None, data=None, core_state=None):
     # Errors always keep raw_response: it is the evidence needed to diagnose them.
     # ``data`` lets a partial failure (a batch where some steps worked) report
-    # ok:false without throwing away the per-step results.
+    # ok:false without throwing away the per-step results. ``core_state`` matters
+    # most here: the failure messages are the ones that GUESS at the run state.
     return _envelope(
         False,
         data=data,
         error={"message": message, "code": code},
         raw_response=raw_response,
         suggested_next_actions=suggested_next_actions,
+        core_state=core_state,
     )

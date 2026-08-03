@@ -14,6 +14,7 @@
   "load_symbols",
   "flash_firmware",
   "reset_target",
+  "continue_execution",
   "halt_execution",
   "run_and_wait",
   "debug_until",
@@ -528,7 +529,7 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Resumes execution of the target device until the next breakpoint.",
+   "description": "Resumes execution of the target device until the next breakpoint. Safe to call when the target is already running (reports already_running instead of erroring), so 'make sure it is running' is expressible.",
    "inputSchema": {
     "properties": {
      "session": {

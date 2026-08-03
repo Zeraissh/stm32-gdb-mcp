@@ -3,6 +3,7 @@
 from mcp.types import TextContent, Tool
 
 from ..tool_response import content_success
+from ._helpers import core_state
 from .context import ToolContext
 from .registry import register
 
@@ -46,6 +47,7 @@ def read_peripheral_register(ctx: ToolContext, arguments: dict) -> list[TextCont
             "address": hex(addr),
         },
         raw_response=resp,
+        core_state=core_state(ctx.gdb_client),
     )]
 
 

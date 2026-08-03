@@ -3,9 +3,9 @@
 from mcp.types import TextContent, Tool
 
 from ..reset_strategy import resolve_reset_command
-from ..stop_event import was_already_halted
+from ..stop_event import was_already_halted, was_already_running
 from ..tool_response import content_success
-from ._helpers import recover_current_session
+from ._helpers import core_state, recover_current_session
 from .context import ToolContext
 from .registry import register
 
@@ -54,12 +54,26 @@ def reset_target(ctx: ToolContext, arguments: dict) -> list[TextContent]:
 
 @register(Tool(
     name="continue_execution",
-    description="Resumes execution of the target device until the next breakpoint.",
+    description="Resumes execution of the target device until the next breakpoint. "
+                "Safe to call when the target is already running (reports already_running "
+                "instead of erroring), so 'make sure it is running' is expressible.",
     inputSchema={"type": "object", "properties": {}}
 ))
 def continue_execution(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     resp = ctx.gdb_client.continue_execution()
-    return [content_success({"message": "Execution continued"}, raw_response=resp)]
+    if was_already_running(resp):
+        # Saying "Execution continued" for a resume that was never sent is the
+        # same claim-without-the-action halt_execution already avoids below.
+        return [content_success(
+            {"message": "Target was already running; no resume sent", "already_running": True},
+            raw_response=resp,
+            core_state=core_state(ctx.gdb_client),
+        )]
+    return [content_success(
+        {"message": "Execution continued"},
+        raw_response=resp,
+        core_state=core_state(ctx.gdb_client),
+    )]
 
 
 @register(Tool(
@@ -135,7 +149,11 @@ def debug_until(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     inputSchema={"type": "object", "properties": {}}
 ))
 def capture_state(ctx: ToolContext, arguments: dict) -> list[TextContent]:
-    return [content_success(ctx.fns.capture_state(ctx.gdb_client), suggested_next_actions=["list_source", "disassemble"])]
+    return [content_success(
+        ctx.fns.capture_state(ctx.gdb_client),
+        suggested_next_actions=["list_source", "disassemble"],
+        core_state=core_state(ctx.gdb_client),
+    )]
 
 
 @register(Tool(

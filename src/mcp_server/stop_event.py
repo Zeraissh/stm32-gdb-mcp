@@ -21,8 +21,24 @@ ALREADY_HALTED_RECORD = {
 }
 
 
+# The mirror image, for continue_execution: resuming a target that is already
+# running is a no-op the caller should be able to express without eating a
+# spurious "not halted" error (issue #33).
+ALREADY_RUNNING_MESSAGE = "target-already-running"
+ALREADY_RUNNING_RECORD = {
+    "type": "notify",
+    "message": ALREADY_RUNNING_MESSAGE,
+    "payload": None,
+    "stream": "stdout",
+}
+
+
 def was_already_halted(records) -> bool:
     return any(record.get("message") == ALREADY_HALTED_MESSAGE for record in records or [])
+
+
+def was_already_running(records) -> bool:
+    return any(record.get("message") == ALREADY_RUNNING_MESSAGE for record in records or [])
 
 
 def _coerce_line(value):

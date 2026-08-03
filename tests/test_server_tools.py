@@ -3344,6 +3344,69 @@ def test_batch_keeps_distinct_step_errors_verbatim():
     assert all("(see the batch error above)" not in m for m in messages)
 
 
+# --- issue #33: a reader must say what state it found the core in ---
+
+def test_read_memory_reports_the_core_state_it_read_at(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def is_running(self):
+            return False
+
+        def read_memory(self, address, length):
+            return [{"type": "result", "payload": {"memory": [{"contents": "DEADBEEF"}]}}]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool(
+        "read_memory", {"address": "0x20000000", "length": 4})))
+
+    assert payload["ok"] is True
+    assert payload["core_state"] == "halted"
+
+
+def test_a_reader_on_a_running_core_says_running(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def is_running(self):
+            return True
+
+        def read_variable(self, name):
+            return [{"type": "result", "payload": {"value": "42"}}]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool("read_variable", {"name": "g_ticks"})))
+
+    assert payload["core_state"] == "running"
+
+
+def test_core_state_is_omitted_when_the_run_state_is_unknown(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def is_running(self):
+            return None  # nothing heard from GDB yet
+
+        def read_memory(self, address, length):
+            return [{"type": "result", "payload": {"memory": [{"contents": "00"}]}}]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool(
+        "read_memory", {"address": "0x20000000", "length": 1})))
+
+    # Guessing is worse than saying nothing.
+    assert "core_state" not in payload
+
+
+def test_compact_surface_offers_a_resume_next_to_halt(monkeypatch):
+    monkeypatch.setenv("STM32_GDB_MCP_COMPACT", "1")
+    names = {tool.name for tool in asyncio.run(handle_list_tools())}
+
+    # Without one, agents used run_for_duration purely for its resume side effect.
+    assert "halt_execution" in names
+    assert "continue_execution" in names
+
+
 def test_run_scenario_reports_ok_false_when_a_step_fails():
     payload = _payload(asyncio.run(handle_call_tool("run_scenario", {
         "steps": [{"tool": "does_not_exist", "args": {}}],
@@ -3362,6 +3425,63 @@ def test_run_scenario_still_reports_ok_true_when_every_step_passes():
 
     assert payload["ok"] is True
     assert payload["data"]["passed"] == 1
+
+
+def test_continue_execution_says_when_it_did_not_actually_resume(monkeypatch):
+    import mcp_server.server as server_module
+    from mcp_server.stop_event import ALREADY_RUNNING_RECORD
+
+    class FakeClient:
+        def is_running(self):
+            return True
+
+        def continue_execution(self):
+            return [ALREADY_RUNNING_RECORD.copy()]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool("continue_execution", {})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["already_running"] is True
+    assert "no resume sent" in payload["data"]["message"]
+    assert payload["core_state"] == "running"
+
+
+def test_continue_execution_reports_a_real_resume_as_one(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def is_running(self):
+            return True
+
+        def continue_execution(self):
+            return [{"type": "result", "message": "running", "payload": None}]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool("continue_execution", {})))
+
+    assert payload["data"]["message"] == "Execution continued"
+    assert "already_running" not in payload["data"]
+
+
+def test_a_reader_error_also_carries_the_core_state(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def is_running(self):
+            return True
+
+        def read_memory(self, address, length):
+            return [{"type": "console", "payload": "noise"}]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool(
+        "read_memory", {"address": "0x20000000", "length": 4})))
+
+    # The failure messages are the ones that GUESS at the run state, so this is
+    # where knowing it matters most.
+    assert payload["ok"] is False
+    assert payload["core_state"] == "running"
 
 
 def test_resolve_address_advertises_the_alias_it_accepts():

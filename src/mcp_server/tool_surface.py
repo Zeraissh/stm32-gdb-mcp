@@ -33,7 +33,10 @@ CORE_TOOLS = {
     "detect_probe", "suggest_server_args", "start_debug_session", "stop_debug_session", "recover_session",
     "self_check", "debug_profile", "load_symbols",
     "build_firmware", "flash_firmware", "flash_and_run",
-    "reset_target", "halt_execution", "run_and_wait", "run_for_duration", "breakpoint",
+    # halt_execution without a resume next to it taught agents to use
+    # run_for_duration as a resume primitive, which is not what it is for (#33).
+    "reset_target", "halt_execution", "continue_execution",
+    "run_and_wait", "run_for_duration", "breakpoint",
     "debug_until", "capture_state",
     "read_memory", "write_memory", "read_variable", "read_call_stack",
     "reconstruct_fault_context", "analyze_stack",
