@@ -306,6 +306,22 @@ def _family_key(mcu: str) -> str:
     raise ValueError(f"Unknown or unsupported STM32 family for MCU {mcu!r}. Known: {sorted(_TARGET_CFG)}")
 
 
+# Erased flash does NOT read 0xFF everywhere. The STM32L0/L1 flash technology
+# erases to 0x0000_0000; the rest of the STM32 line erases to 0xFF. Measured on an
+# STM32L151CCUx over CMSIS-DAP: OpenOCD reported "erased address 0x0803f000
+# (length 4096) in 0.248094s" and the range read back all 0x00. Assuming 0xFF made
+# every successful erase on those parts look like a failure.
+_ERASED_BYTE_BY_FAMILY = {"l0": 0x00, "l1": 0x00}
+
+
+def erased_byte_for(mcu: str | None) -> int | None:
+    """The byte erased flash reads back as on ``mcu``, or None if the part is unknown."""
+    try:
+        return _ERASED_BYTE_BY_FAMILY.get(_family_key(mcu or ""), 0xFF)
+    except ValueError:
+        return None
+
+
 def suggest_server_args(mcu: str, probe: str, scripts_dir: str | None = None, speed_khz: int = 4000) -> dict:
     """Return the OpenOCD ``server_args`` for an MCU + probe, optionally validated.
 

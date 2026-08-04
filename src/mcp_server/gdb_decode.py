@@ -156,18 +156,23 @@ def decode_evaluated_value(records) -> str | None:
     return None
 
 
-def decode_console_text(records) -> str:
-    """Join GDB's console stream records into the text a human would have seen.
+def decode_console_text(records, types=("console",)) -> str:
+    """Join GDB's stream records into the text a human would have seen.
 
     The answer to every ``info ...``/``list``/``ptype``/``x/i`` command arrives as
     console records; ``log`` records are only the command echo. Handlers that
     returned just ``{"message": "Source listed"}`` were throwing this away and
     asserting success over an empty payload (issue #40).
+
+    A ``monitor`` command is answered by the GDB *server*, not GDB, so its reply
+    arrives on the ``target`` stream instead — measured on hardware, an erase
+    reports "erased address 0x0803f000 (length 4096) in 0.248094s" as a target
+    record. Callers that want that pass ``types=("console", "target")``.
     """
     parts = [
         record["payload"]
         for record in records or []
-        if record.get("type") == "console" and isinstance(record.get("payload"), str)
+        if record.get("type") in types and isinstance(record.get("payload"), str)
     ]
     return "".join(parts).strip()
 

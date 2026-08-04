@@ -131,3 +131,16 @@ def test_two_identical_unserialised_probes_are_not_collapsed():
     # No unambiguous parent serial to borrow, so they stay apart on hub path.
     assert len(probes) == 2
     assert len({p["location"] for p in probes}) == 2
+
+
+def test_erased_byte_is_zero_on_the_stm32l1_family():
+    from mcp_server.openocd_config import erased_byte_for
+
+    # Measured on an STM32L151CCUx: OpenOCD confirmed the erase and the range
+    # read back 0x00. L0 shares the flash technology.
+    assert erased_byte_for("STM32L151CCUx") == 0x00
+    assert erased_byte_for("STM32L071") == 0x00
+    assert erased_byte_for("STM32L431") == 0xFF
+    assert erased_byte_for("STM32F407") == 0xFF
+    assert erased_byte_for("not-an-mcu") is None
+    assert erased_byte_for(None) is None

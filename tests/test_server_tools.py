@@ -3679,3 +3679,105 @@ def test_a_real_gdb_error_record_still_fails_a_console_tool(monkeypatch):
 
     assert payload["ok"] is False
     assert payload["error"]["code"] == "gdb_error"
+
+
+# --- measured on hardware: STM32L1 erases flash to 0x00, not 0xFF ---
+
+def _erase_session(monkeypatch, mcu, readback):
+    from conftest import FakeProfile
+
+    import mcp_server.server as server_module
+
+    client = _EraseClient(readback=readback)
+    monkeypatch.setattr(server_module, "gdb_client", client)
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile({"mcu": mcu} if mcu else {}))
+    return client
+
+
+def test_an_l1_erase_that_reads_back_zeros_is_a_success(monkeypatch):
+    # OpenOCD confirmed "erased address 0x0803f000 (length 4096) in 0.248094s" and
+    # the range read back all 0x00. Demanding 0xFF called that a failure.
+    _erase_session(monkeypatch, "STM32L151", "00000000")
+    payload = _payload(asyncio.run(handle_call_tool(
+        "flash_erase", {"address": "0x0803F000", "length": 4096})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["verify"]["erased"] is True
+    assert payload["data"]["verify"]["expected_erased_byte"] == "0x00"
+    assert payload["data"]["verify"]["observed_byte"] == "0x00"
+
+
+def test_an_l1_range_reading_back_0xff_is_not_erased(monkeypatch):
+    _erase_session(monkeypatch, "STM32L151", "ffffffff")
+    payload = _payload(asyncio.run(handle_call_tool(
+        "flash_erase", {"address": "0x0803F000", "length": 4096})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "flash_erase_failed"
+    assert "0x00" in payload["error"]["message"]
+
+
+def test_an_l4_erase_still_expects_0xff(monkeypatch):
+    _erase_session(monkeypatch, "STM32L431", "ffffffff")
+    payload = _payload(asyncio.run(handle_call_tool(
+        "flash_erase", {"address": "0x08010000", "length": 4096})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["verify"]["expected_erased_byte"] == "0xff"
+
+
+def test_zeros_on_a_part_that_erases_to_0xff_are_data_not_a_blank_sector(monkeypatch):
+    # The check must not simply accept both conventions when the part is known:
+    # on an L4, 0x00 is real content.
+    _erase_session(monkeypatch, "STM32L431", "00000000")
+    payload = _payload(asyncio.run(handle_call_tool(
+        "flash_erase", {"address": "0x08010000", "length": 4096})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "flash_erase_failed"
+
+
+def test_without_an_mcu_either_convention_is_accepted_and_said_so(monkeypatch):
+    _erase_session(monkeypatch, None, "00000000")
+    payload = _payload(asyncio.run(handle_call_tool(
+        "flash_erase", {"address": "0x0803F000", "length": 4096})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["verify"]["expected_erased_byte"] is None
+    assert "either erase convention" in payload["data"]["verify_note"]
+
+
+def test_a_mixed_readback_is_never_called_erased(monkeypatch):
+    _erase_session(monkeypatch, None, "a1bf0c00")
+    payload = _payload(asyncio.run(handle_call_tool(
+        "flash_erase", {"address": "0x0803F000", "length": 4096})))
+
+    assert payload["ok"] is False
+    # A failure keeps its evidence in raw_response, not data.
+    assert payload["raw_response"]["verify"]["observed_byte"] is None
+
+
+def test_flash_erase_reports_what_the_gdb_server_said(monkeypatch):
+    from conftest import FakeProfile
+
+    import mcp_server.server as server_module
+
+    class TargetStreamClient(_EraseClient):
+        def flash_erase(self, address, length):
+            self.erased.append((address, length))
+            # A monitor command is answered by the GDB server, so its reply is a
+            # 'target' record -- collecting only 'console' left server_output null.
+            return [
+                {"type": "log", "payload": "monitor flash erase_address pad 0x803f000 4096\n"},
+                {"type": "target", "payload":
+                 "erased address 0x0803f000 (length 4096) in 0.248094s (16.123 KiB/s)\n"},
+                {"type": "result", "message": "done", "payload": None},
+            ]
+
+    monkeypatch.setattr(server_module, "gdb_client", TargetStreamClient(readback="00000000"))
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile({"mcu": "STM32L151"}))
+    payload = _payload(asyncio.run(handle_call_tool(
+        "flash_erase", {"address": "0x0803F000", "length": 4096})))
+
+    assert payload["ok"] is True
+    assert "erased address 0x0803f000 (length 4096)" in payload["data"]["server_output"]

@@ -8,10 +8,19 @@ from mcp.types import TextContent, Tool
 from .. import build as build_mod
 from ..gdb_decode import decode_console_text, decode_memory_bytes
 from ..mi_guard import find_mi_error
+from ..openocd_config import erased_byte_for
 from ..reset_strategy import resolve_reset_command
 from ..tool_response import content_error, content_success
 from .context import ToolContext
 from .registry import register
+
+
+def _uniform_byte(hex_contents: str | None) -> int | None:
+    """The single byte value ``hex_contents`` consists of, or None if it varies."""
+    if not hex_contents or len(hex_contents) % 2:
+        return None
+    values = {hex_contents[i:i + 2].lower() for i in range(0, len(hex_contents), 2)}
+    return int(values.pop(), 16) if len(values) == 1 else None
 
 
 @register(Tool(
@@ -222,7 +231,9 @@ def flash_erase(ctx: ToolContext, arguments: dict) -> list[TextContent]:
         ),
         # OpenOCD reports the range it actually erased after padding; keep its
         # own words rather than reimplementing per-family sector arithmetic.
-        "server_output": decode_console_text(resp) or None,
+        # A monitor command is answered by the GDB server, so its reply lands on
+        # the target stream, not the console one.
+        "server_output": decode_console_text(resp, types=("console", "target")) or None,
     }
     if arguments.get("verify", True):
         # An erase that "succeeded" without erasing is the same false ok this
@@ -230,9 +241,26 @@ def flash_erase(ctx: ToolContext, arguments: dict) -> list[TextContent]:
         checked = min(length, 64)
         readback = ctx.gdb_client.read_memory(hex(start), checked)
         contents = decode_memory_bytes(readback)
-        # Erased STM32 flash reads back as 0xFF.
-        erased = set(contents.lower()) <= {"f"} if contents else False
-        data["verify"] = {"checked_bytes": checked, "bytes": contents, "erased": erased}
+        # Erased flash is NOT 0xFF everywhere: STM32L0/L1 erase to 0x00. Assuming
+        # 0xFF called every successful erase on those parts a failure — measured on
+        # an L151, where OpenOCD confirmed the erase and the range read back 0x00.
+        expected = erased_byte_for(ctx.debug_profile.get().get("mcu"))
+        observed = _uniform_byte(contents)
+        if expected is None:
+            # No MCU in the profile, so accept either erased convention rather than
+            # guess — and say that is what happened.
+            erased = observed in (0x00, 0xFF)
+            data["verify_note"] = ("no mcu in the debug profile, so either erase convention "
+                                   "(0x00 on STM32L0/L1, 0xFF elsewhere) was accepted")
+        else:
+            erased = observed == expected
+        data["verify"] = {
+            "checked_bytes": checked,
+            "bytes": contents,
+            "expected_erased_byte": None if expected is None else f"0x{expected:02x}",
+            "observed_byte": None if observed is None else f"0x{observed:02x}",
+            "erased": erased,
+        }
         if not contents:
             # A verification that could not run is not a verification that passed.
             # Falling through to ok:true here would be the same false ok the erase
@@ -250,7 +278,9 @@ def flash_erase(ctx: ToolContext, arguments: dict) -> list[TextContent]:
             )]
         if not erased:
             return [content_error(
-                f"Flash at {address} still holds data after erase (first bytes: {contents[:32]}).",
+                f"Flash at {address} still holds data after erase "
+                f"(expected every byte {data['verify']['expected_erased_byte']}, "
+                f"first bytes: {contents[:32]}).",
                 code="flash_erase_failed",
                 raw_response=data,
                 suggested_next_actions=["read_memory", "self_check", "reset_target"],
