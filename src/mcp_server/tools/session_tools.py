@@ -3,7 +3,7 @@
 from mcp.types import TextContent, Tool
 
 from ..debug_session import teardown_debug_session
-from ..error_taxonomy import classify_error
+from ..error_taxonomy import classify_error, refine_target_unreachable
 from ..reliability import retry_call
 from ..self_check import evaluate_self_check
 from ..tool_response import content_error, content_success
@@ -56,8 +56,18 @@ def start_debug_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     profile = ctx.debug_profile.get()
     server_type = arguments.get("server_type") or profile.get("server_type")
     if not server_type:
+        # "the profile does not define it" reads as "you set the wrong field" when
+        # the truth is usually "there is no profile": it is in-memory only, so a
+        # restarted MCP server starts empty. Saying which one it is saves a
+        # teardown-and-retry cycle (issue #39).
+        detail = (
+            "the active debug profile is EMPTY — it lives in memory only and is lost when the "
+            "MCP server process restarts, so re-apply it"
+            if not profile else
+            f"the active debug profile does not define it (it holds: {sorted(profile)})"
+        )
         return [content_error(
-            "server_type is required when the active debug profile does not define it.",
+            f"server_type is required and {detail}.",
             code="missing_argument",
             suggested_next_actions=["load_debug_config", "set_debug_profile"],
         )]
@@ -143,6 +153,9 @@ def start_debug_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     except Exception as exc:
         server_log = ctx.gdb_manager.get_logs() if hasattr(ctx.gdb_manager, "get_logs") else ""
         classification = classify_error(f"{exc}\n{server_log}")
+        # The probe's measured VTREF is right there in the log — use it instead of
+        # advising a power check the same payload disproves (issue #35).
+        classification = refine_target_unreachable(classification, str(server_log))
         for teardown in (ctx.gdb_client.stop_gdb, ctx.gdb_manager.stop):
             try:
                 teardown()

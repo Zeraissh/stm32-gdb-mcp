@@ -14,6 +14,7 @@
   "load_symbols",
   "flash_firmware",
   "reset_target",
+  "continue_execution",
   "halt_execution",
   "run_and_wait",
   "debug_until",
@@ -216,7 +217,7 @@
     "openWorldHint": true,
     "readOnlyHint": false
    },
-   "description": "Runs several tool calls in ONE round trip and returns ALL their full results \u2014 the fastest way to do a sequence of operations (e.g. read registers + backtrace + several variables) without per-call latency.",
+   "description": "Runs several tool calls in ONE round trip and returns ALL their full results \u2014 the fastest way to do a sequence of operations (e.g. read registers + backtrace + several variables) without per-call latency. ok is false if ANY step failed; data.succeeded/data.failed count the outcomes (count/total only count steps run vs requested). Pass session to run every step against a named debug session.",
    "inputSchema": {
     "properties": {
      "session": {
@@ -528,7 +529,7 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Resumes execution of the target device until the next breakpoint.",
+   "description": "Resumes execution of the target device until the next breakpoint. Safe to call when the target is already running (reports already_running instead of erroring), so 'make sure it is running' is expressible.",
    "inputSchema": {
     "properties": {
      "session": {
@@ -1542,6 +1543,45 @@
     "type": "object"
    },
    "name": "verify_flash"
+  },
+  {
+   "annotations": {
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Erases a flash range on the target (OpenOCD 'flash erase_address pad'), rounding out to the driver's erase-sector boundaries. The recovery tool for a board that will not boot: clearing a corrupt OTA journal, a stale boot descriptor, or a half-written image. Requires an explicit address AND length \u2014 there is deliberately no mass-erase default.",
+   "inputSchema": {
+    "properties": {
+     "address": {
+      "description": "Start address, e.g. '0x08016000'. Rounded DOWN to the erase-sector boundary.",
+      "type": "string"
+     },
+     "length": {
+      "description": "Bytes to erase. Rounded UP to the erase-sector boundary.",
+      "type": "integer"
+     },
+     "sector_size_bytes": {
+      "description": "Erase-sector size of this part (e.g. 4096 on STM32L1, up to 131072 on F4). Give it and the write guard checks the padded range that is really erased; omit it and the guard can only check the range you asked for.",
+      "type": "integer"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "verify": {
+      "description": "Read back the first 64 bytes and confirm they are 0xFF (default true).",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "address",
+     "length"
+    ],
+    "type": "object"
+   },
+   "name": "flash_erase"
   },
   {
    "annotations": {
@@ -2788,7 +2828,7 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Active debug profile (mcu/elf/svd/probe). action=get | set([mcu,elf_path,svd_path,board,probe,server_type,server_args,project_root,notes]).",
+   "description": "Active debug profile (mcu/elf/svd/probe). action=get | set([mcu,elf_path,svd_path,board,probe,server_type,server_args,project_root,notes]). set MERGES \u2014 fields you omit keep their current value \u2014 and returns the full resulting profile. The profile is in-memory only: it is empty again after the MCP server restarts.",
    "inputSchema": {
     "oneOf": [
      {
@@ -2951,7 +2991,7 @@
     "openWorldHint": false,
     "readOnlyHint": true
    },
-   "description": "Symbol / type introspection. what=size(expr) | type(expr) | address(symbol) | resolve(expr) | functions([regex]) | variables([regex]). resolve maps an address back to source.",
+   "description": "Symbol / type introspection. what=size(expr) | type(expr) | address(symbol) | resolve(expr) | functions([regex]) | variables([regex]). resolve maps an address back to source, returning {resolved,symbol,offset,section,file,line}; resolved=false means no symbol there.",
    "inputSchema": {
     "oneOf": [
      {
@@ -2997,7 +3037,7 @@
      {
       "properties": {
        "expr": {
-        "description": "Address or expression to resolve, e.g. '$pc' or '0x08001234'.",
+        "description": "Address or expression to resolve, e.g. '$pc' or '0x08001234'. Required (or pass it as 'address').",
         "type": "string"
        },
        "what": {
@@ -3005,8 +3045,7 @@
        }
       },
       "required": [
-       "what",
-       "expr"
+       "what"
       ],
       "title": "resolve"
      },
@@ -3038,6 +3077,10 @@
      }
     ],
     "properties": {
+     "address": {
+      "description": "Alias for 'expr'.",
+      "type": "string"
+     },
      "expr": {
       "description": "Type or expression to size, e.g. 'struct foo'.",
       "type": "string"

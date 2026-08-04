@@ -6,10 +6,21 @@ import tempfile
 from mcp.types import TextContent, Tool
 
 from .. import build as build_mod
+from ..gdb_decode import decode_console_text, decode_memory_bytes
+from ..mi_guard import find_mi_error
+from ..openocd_config import erased_byte_for
 from ..reset_strategy import resolve_reset_command
 from ..tool_response import content_error, content_success
 from .context import ToolContext
 from .registry import register
+
+
+def _uniform_byte(hex_contents: str | None) -> int | None:
+    """The single byte value ``hex_contents`` consists of, or None if it varies."""
+    if not hex_contents or len(hex_contents) % 2:
+        return None
+    values = {hex_contents[i:i + 2].lower() for i in range(0, len(hex_contents), 2)}
+    return int(values.pop(), 16) if len(values) == 1 else None
 
 
 @register(Tool(
@@ -149,6 +160,131 @@ def flash_firmware(ctx: ToolContext, arguments: dict) -> list[TextContent]:
         resp = (resp or []) + ctx.gdb_client.reset_run(command=resolved["command"])
         data["reset_run"] = True
         data["message"] = "Firmware flashed; target reset and running"
+    return [content_success(data, raw_response=resp)]
+
+
+@register(Tool(
+    name="flash_erase",
+    description="Erases a flash range on the target (OpenOCD 'flash erase_address pad'), "
+                "rounding out to the driver's erase-sector boundaries. The recovery tool for "
+                "a board that will not boot: clearing a corrupt OTA journal, a stale boot "
+                "descriptor, or a half-written image. Requires an explicit address AND length "
+                "— there is deliberately no mass-erase default.",
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "address": {"type": "string", "description": "Start address, e.g. '0x08016000'. Rounded DOWN to the erase-sector boundary."},
+            "length": {"type": "integer", "description": "Bytes to erase. Rounded UP to the erase-sector boundary."},
+            "sector_size_bytes": {"type": "integer", "description": "Erase-sector size of this part (e.g. 4096 on STM32L1, up to 131072 on F4). Give it and the write guard checks the padded range that is really erased; omit it and the guard can only check the range you asked for."},
+            "verify": {"type": "boolean", "description": "Read back the first 64 bytes and confirm they are 0xFF (default true)."}
+        },
+        "required": ["address", "length"]
+    }
+))
+def flash_erase(ctx: ToolContext, arguments: dict) -> list[TextContent]:
+    address = arguments["address"]
+    length = int(arguments["length"])
+    if length < 1:
+        return [content_error("flash_erase needs a positive 'length'.", code="invalid_argument")]
+
+    start = int(str(address), 0)
+    # OpenOCD pads out to its own sector boundaries, so the range it erases can
+    # be strictly larger than the one asked for — on an F4 a 256-byte request can
+    # take a 128 KiB sector with it. Guarding the unpadded range would check a
+    # different operation than the one that runs, so when the caller knows the
+    # sector size, guard what will really be erased.
+    sector = int(arguments.get("sector_size_bytes") or 0)
+    if sector > 0:
+        guard_start = start - (start % sector)
+        guard_end = start + length - 1
+        guard_end += (sector - 1) - (guard_end % sector)
+        guard_length = guard_end - guard_start + 1
+    else:
+        guard_start, guard_length = start, length
+
+    decision = ctx.memory_guard.evaluate_range(guard_start, guard_length)
+    ctx.memory_guard.audit("flash_erase", hex(guard_start), f"{guard_length} bytes", decision)
+    if decision["action"] == "blocked":
+        return [content_error(
+            f"Erase of {guard_length} bytes at {hex(guard_start)} blocked: {decision['reason']}",
+            code="memory_write_blocked",
+            raw_response=decision,
+            suggested_next_actions=["set_write_policy", "get_write_audit_log"],
+        )]
+    if decision["action"] == "simulated":
+        return [content_success(
+            {"message": "Flash erase simulated (dry_run)", "address": address,
+             "length": length, "guard": decision},
+        )]
+
+    resp = ctx.gdb_client.flash_erase(start, length)
+    data = {
+        "message": "Flash erased",
+        "address": address,
+        "length": length,
+        "guard": decision,
+        "guard_scope": (
+            {"address": hex(guard_start), "length": guard_length, "sector_size_bytes": sector}
+            if sector > 0 else
+            "requested range only — OpenOCD pads to its own erase sectors, which may be larger; "
+            "pass sector_size_bytes for a guard check of what is actually erased"
+        ),
+        # OpenOCD reports the range it actually erased after padding; keep its
+        # own words rather than reimplementing per-family sector arithmetic.
+        # A monitor command is answered by the GDB server, so its reply lands on
+        # the target stream, not the console one.
+        "server_output": decode_console_text(resp, types=("console", "target")) or None,
+    }
+    if arguments.get("verify", True):
+        # An erase that "succeeded" without erasing is the same false ok this
+        # server has been bitten by before, and it is cheap to check.
+        checked = min(length, 64)
+        readback = ctx.gdb_client.read_memory(hex(start), checked)
+        contents = decode_memory_bytes(readback)
+        # Erased flash is NOT 0xFF everywhere: STM32L0/L1 erase to 0x00. Assuming
+        # 0xFF called every successful erase on those parts a failure — measured on
+        # an L151, where OpenOCD confirmed the erase and the range read back 0x00.
+        expected = erased_byte_for(ctx.debug_profile.get().get("mcu"))
+        observed = _uniform_byte(contents)
+        if expected is None:
+            # No MCU in the profile, so accept either erased convention rather than
+            # guess — and say that is what happened.
+            erased = observed in (0x00, 0xFF)
+            data["verify_note"] = ("no mcu in the debug profile, so either erase convention "
+                                   "(0x00 on STM32L0/L1, 0xFF elsewhere) was accepted")
+        else:
+            erased = observed == expected
+        data["verify"] = {
+            "checked_bytes": checked,
+            "bytes": contents,
+            "expected_erased_byte": None if expected is None else f"0x{expected:02x}",
+            "observed_byte": None if observed is None else f"0x{observed:02x}",
+            "erased": erased,
+        }
+        if not contents:
+            # A verification that could not run is not a verification that passed.
+            # Falling through to ok:true here would be the same false ok the erase
+            # check exists to prevent, with the evidence of its own failure buried
+            # in the payload.
+            gdb_error = find_mi_error(readback)
+            return [content_error(
+                f"Erase of {address} could not be verified: the read-back returned no bytes"
+                + (f" ({gdb_error})" if gdb_error else "")
+                + ". The erase command itself reported completion — re-read the range before "
+                  "trusting it either way.",
+                code="flash_erase_unverified",
+                raw_response=data,
+                suggested_next_actions=["read_memory", "self_check", "check_session_health"],
+            )]
+        if not erased:
+            return [content_error(
+                f"Flash at {address} still holds data after erase "
+                f"(expected every byte {data['verify']['expected_erased_byte']}, "
+                f"first bytes: {contents[:32]}).",
+                code="flash_erase_failed",
+                raw_response=data,
+                suggested_next_actions=["read_memory", "self_check", "reset_target"],
+            )]
     return [content_success(data, raw_response=resp)]
 
 

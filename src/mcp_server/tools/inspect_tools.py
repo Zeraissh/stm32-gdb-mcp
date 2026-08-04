@@ -2,11 +2,82 @@
 
 from mcp.types import TextContent, Tool
 
-from ..gdb_decode import registers_summary
+from ..gdb_decode import (
+    decode_console_text,
+    decode_evaluated_value,
+    decode_symbol_resolution,
+    registers_summary,
+)
+from ..mi_guard import find_mi_error
 from ..stack_analysis import stack_report
-from ..tool_response import content_success
+from ..tool_response import content_error, content_success
+from ._helpers import core_state
 from .context import ToolContext
 from .registry import register
+
+# GDB's answer to `info functions` on a full firmware ELF runs to tens of
+# thousands of characters. Cap it, but never silently: a truncated payload that
+# reads as complete is the same class of lie as an empty one that reads as
+# success (issue #40).
+_MAX_CONSOLE_CHARS = 8000
+
+
+def _terminal_mi_error(resp) -> str | None:
+    """The message from a terminal ``^error`` record only, ignoring stream text."""
+    for record in resp or []:
+        if record.get("type") == "result" and record.get("message") == "error":
+            payload = record.get("payload")
+            msg = payload.get("msg") if isinstance(payload, dict) else None
+            return str(msg) if msg else "GDB reported an error"
+    return None
+
+
+def _console_payload(resp, **extra) -> dict:
+    """Payload carrying GDB's actual console answer, truncation flagged in-band."""
+    text = decode_console_text(resp)
+    payload = {k: v for k, v in extra.items() if v is not None}
+    if len(text) > _MAX_CONSOLE_CHARS:
+        payload["text"] = text[:_MAX_CONSOLE_CHARS]
+        payload["truncated"] = True
+        payload["note"] = (f"output truncated at {_MAX_CONSOLE_CHARS} of {len(text)} chars — "
+                           "narrow the query (regex / smaller count) to see the rest")
+    else:
+        payload["text"] = text
+    return payload
+
+
+def _evaluated_result(resp, key: str, what: str, **extra) -> list[TextContent]:
+    """Return the value GDB evaluated under ``key``, or its error.
+
+    ``address_of`` used to answer "Address resolved" and never include an
+    address; ``sizeof`` answered "Size evaluated" and never include a size.
+    """
+    value = decode_evaluated_value(resp)
+    if value is None:
+        error = find_mi_error(resp)
+        return [content_error(
+            f"GDB could not evaluate {what}" + (f": {error}" if error else " (no value returned)"),
+            code="gdb_error" if error else "no_value_returned",
+            raw_response=resp,
+            suggested_next_actions=["load_symbols", "inspect_symbol"],
+        )]
+    return [content_success({key: value, **extra}, raw_response=resp)]
+
+
+def _console_result(resp, **extra) -> list[TextContent]:
+    """Return GDB's console answer, or its error — never a bare 'done' message.
+
+    Only the terminal ``^error`` counts here. find_mi_error also scans stream
+    text for markers like "no such file or directory", which is right for GDB's
+    own output but wrong once the payload is arbitrary user source code: a
+    firmware log line quoting that phrase would turn a successful listing into a
+    reported failure.
+    """
+    error = _terminal_mi_error(resp)
+    if error:
+        return [content_error(error, code="gdb_error", raw_response=resp,
+                              suggested_next_actions=["load_symbols", "inspect_project"])]
+    return [content_success(_console_payload(resp, **extra), raw_response=resp)]
 
 
 @register(Tool(
@@ -53,6 +124,7 @@ def read_core_registers(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     return [content_success(
         {"registers": registers, "summary": registers_summary(registers)},
         raw_response=raw,
+        core_state=core_state(ctx.gdb_client),
     )]
 
 
@@ -111,28 +183,50 @@ def read_frame_variables(ctx: ToolContext, arguments: dict) -> list[TextContent]
 ))
 def list_source(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     resp = ctx.gdb_client.list_source(arguments.get("location"), arguments.get("count", 10))
-    return [content_success(
-        {"message": "Source listed", "location": arguments.get("location")},
-        raw_response=resp,
-    )]
+    return _console_result(resp, location=arguments.get("location"))
 
 
 @register(Tool(
     name="resolve_address",
     description="Maps an address or expression (e.g. '$pc', '0x08001234') to its source "
-                "file:line and nearest symbol.",
+                "file:line and nearest symbol, returning {resolved, symbol, offset, "
+                "section, file, line}. resolved=false means GDB found no symbol there.",
     inputSchema={
         "type": "object",
         "properties": {
-            "expr": {"type": "string", "description": "Address or expression to resolve, e.g. '$pc' or '0x08001234'."}
-        },
-        "required": ["expr"]
+            # Advertise the alias rather than only tolerating it: a schema that
+            # rejects the name callers reach for, while the handler accepts it,
+            # is the same contract/behaviour gap this batch is about.
+            "expr": {"type": "string", "description": "Address or expression to resolve, e.g. '$pc' or '0x08001234'. Required (or pass it as 'address')."},
+            "address": {"type": "string", "description": "Alias for 'expr'."}
+        }
     }
 ))
 def resolve_address(ctx: ToolContext, arguments: dict) -> list[TextContent]:
-    resp = ctx.gdb_client.resolve_address(arguments["expr"])
+    # 'address' is the name callers reach for first; accept it rather than
+    # answering "Missing required argument: 'expr'" to an otherwise correct call.
+    expr = arguments.get("expr") or arguments.get("address")
+    if not expr:
+        return [content_error(
+            "resolve_address needs 'expr' — the address or expression to resolve, "
+            "e.g. inspect_symbol(what='resolve', expr='0x08001234').",
+            code="missing_argument",
+        )]
+    resp = ctx.gdb_client.resolve_address(expr)
+    resolution = decode_symbol_resolution(resp)
+    resolution["expr"] = expr
+    if not resolution["resolved"]:
+        # "Address resolved" over an empty payload is the same lie as ok:true over
+        # a failed read: the caller cannot tell it from a real hit (issue #40).
+        return [content_error(
+            f"No symbol or line information for {expr} — "
+            f"{resolution.get('text') or 'GDB returned nothing'}",
+            code="symbol_not_found",
+            raw_response=resp,
+            suggested_next_actions=["load_symbols", "list_functions"],
+        )]
     return [content_success(
-        {"message": "Address resolved", "expr": arguments["expr"]},
+        resolution,
         raw_response=resp,
         suggested_next_actions=["list_source", "read_frame_variables"],
     )]
@@ -186,7 +280,7 @@ def analyze_stack(ctx: ToolContext, arguments: dict) -> list[TextContent]:
 ))
 def disassemble(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     resp = ctx.gdb_client.disassemble(arguments.get("location", "$pc"), arguments.get("instructions", 8))
-    return [content_success({"message": "Disassembled"}, raw_response=resp)]
+    return _console_result(resp, location=arguments.get("location", "$pc"))
 
 
 @register(Tool(
@@ -201,7 +295,7 @@ def disassemble(ctx: ToolContext, arguments: dict) -> list[TextContent]:
 ))
 def list_functions(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     resp = ctx.gdb_client.list_functions(arguments.get("regex"))
-    return [content_success({"message": "Functions listed"}, raw_response=resp)]
+    return _console_result(resp, regex=arguments.get("regex"))
 
 
 @register(Tool(
@@ -216,7 +310,7 @@ def list_functions(ctx: ToolContext, arguments: dict) -> list[TextContent]:
 ))
 def list_variables(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     resp = ctx.gdb_client.list_variables(arguments.get("regex"))
-    return [content_success({"message": "Variables listed"}, raw_response=resp)]
+    return _console_result(resp, regex=arguments.get("regex"))
 
 
 @register(Tool(
@@ -232,7 +326,7 @@ def list_variables(ctx: ToolContext, arguments: dict) -> list[TextContent]:
 ))
 def lookup_type(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     resp = ctx.gdb_client.lookup_type(arguments["expr"])
-    return [content_success({"message": "Type looked up", "expr": arguments["expr"]}, raw_response=resp)]
+    return _console_result(resp, expr=arguments["expr"])
 
 
 @register(Tool(
@@ -248,7 +342,7 @@ def lookup_type(ctx: ToolContext, arguments: dict) -> list[TextContent]:
 ))
 def sizeof(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     resp = ctx.gdb_client.sizeof(arguments["expr"])
-    return [content_success({"message": "Size evaluated", "expr": arguments["expr"]}, raw_response=resp)]
+    return _evaluated_result(resp, "size", f"sizeof({arguments['expr']})", expr=arguments["expr"])
 
 
 @register(Tool(
@@ -264,4 +358,4 @@ def sizeof(ctx: ToolContext, arguments: dict) -> list[TextContent]:
 ))
 def address_of(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     resp = ctx.gdb_client.address_of(arguments["symbol"])
-    return [content_success({"message": "Address resolved", "symbol": arguments["symbol"]}, raw_response=resp)]
+    return _evaluated_result(resp, "address", f"&{arguments['symbol']}", symbol=arguments["symbol"])

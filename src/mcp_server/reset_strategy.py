@@ -38,8 +38,26 @@ def resolve_reset_command(
     if not strategies or normalized_strategy not in strategies:
         raise ValueError(f"Unsupported reset strategy '{normalized_strategy}' for server type '{normalized_server}'")
 
-    return {
+    resolved = {
         "server_type": normalized_server,
         "strategy": normalized_strategy,
         "command": strategies[normalized_strategy][bool(halt)],
     }
+    # Say so when a strategy resolves to the same command as another: 'under_reset'
+    # is currently an alias of 'default' for every backend, and silently doing
+    # nothing different is exactly the false-success shape this server keeps
+    # getting bitten by. Real connect-under-reset is a server_args/reset_config
+    # concern at server start, not a runtime monitor command.
+    # Only when the caller asked for something OTHER than the default and got the
+    # default's command anyway — asking for "default" and getting it is no surprise.
+    aliases = sorted(
+        name for name, commands in strategies.items()
+        if name != normalized_strategy and commands[bool(halt)] == resolved["command"]
+    ) if normalized_strategy != DEFAULT_STRATEGY else []
+    if aliases:
+        resolved["note"] = (
+            f"'{normalized_strategy}' resolves to the same command as {aliases} for "
+            f"{normalized_server}. For true connect-under-reset, start the server with "
+            "server_args containing -c \"reset_config srst_only srst_nogate connect_assert_srst\"."
+        )
+    return resolved

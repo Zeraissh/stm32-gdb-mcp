@@ -1,4 +1,5 @@
 from mcp_server.debug_experiments import (
+    _parse_value,
     assert_expressions,
     capture_expressions,
     compare_expressions_after_action,
@@ -114,3 +115,30 @@ def test_compare_expressions_after_action_reports_changes():
             "changed": False,
         },
     ]
+
+
+def test_a_char_value_is_read_as_a_number_not_a_decorated_string():
+    # GDB prints a char as "161 '\241'"; when its charset conversion fails the
+    # quoted half becomes an error string glued onto the value (issue #34).
+    broken = "161 '<error reading variable: Converting character sets: Invalid argument.>"
+
+    assert _parse_value(broken) == (161, "int")
+    assert _parse_value("0 '<error reading variable: Converting character sets: Invalid argument.>") == (0, "int")
+    assert _parse_value(r"65 'A'") == (65, "int")
+
+
+def test_a_decorated_pointer_is_read_as_a_number():
+    assert _parse_value("0x20000010 <g_state>") == (0x20000010, "int")
+
+
+def test_plain_numbers_and_strings_are_unchanged():
+    assert _parse_value("57") == (57, "int")
+    assert _parse_value("0x1f") == (0x1F, "int")
+    assert _parse_value('"hello"') == ("hello", "string")
+
+
+def test_struct_dumps_and_enum_names_stay_strings():
+    # The space-then-quote/angle requirement is what keeps these off the int path.
+    assert _parse_value("{a = 1, b = 2}") == ("{a = 1, b = 2}", "string")
+    assert _parse_value("OTA_STATE_CONFIRMED") == ("OTA_STATE_CONFIRMED", "string")
+    assert _parse_value("1 2 3") == ("1 2 3", "string")

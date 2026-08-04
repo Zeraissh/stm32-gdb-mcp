@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 # STM32 family key (letter+digit) -> OpenOCD target config.
 _TARGET_CFG = {
@@ -106,28 +107,58 @@ def _parse_windows_pnp(payload: str) -> list[dict]:
     if isinstance(devices, dict):
         devices = [devices]
 
-    probes = []
+    records: list[dict[str, Any]] = []
     for device in devices:
         instance_id = str(device.get("InstanceId") or "")
         upper = instance_id.upper()
-        if "&MI_" in upper:
-            continue
+        if not upper.startswith("USB\\"):
+            continue  # HID\... re-enumerations of the same interface
         vid_match = re.search(r"VID_([0-9A-F]{4})", upper)
         pid_match = re.search(r"PID_([0-9A-F]{4})", upper)
         if not vid_match or not pid_match:
             continue
-        serial = instance_id.rsplit("\\", 1)[-1] if "\\" in instance_id else ""
-        if "&" in serial:
-            serial = ""
+        tail = instance_id.rsplit("\\", 1)[-1] if "\\" in instance_id else ""
+        records.append({
+            "instance_id": instance_id,
+            "vid": vid_match.group(1),
+            "pid": pid_match.group(1),
+            "name": str(device.get("FriendlyName") or ""),
+            "manufacturer": str(device.get("Manufacturer") or ""),
+            # A composite parent's tail is the device serial; an interface's tail is
+            # a hub path like "6&39E7DCD8&1&0000" whose last field is the interface.
+            "serial": "" if "&" in tail else tail,
+            "hub": tail.rsplit("&", 1)[0] if "&" in tail else "",
+            "is_interface": "&MI_" in upper,
+        })
+
+    # A CMSIS-DAP v2 probe is a USB composite device, and only its MI_00 interface
+    # carries the name that identifies it ("Horco CMSIS-DAP v2") — the parent is
+    # just "USB Composite Device". Skipping every &MI_ node to avoid counting one
+    # probe several times therefore made such a probe invisible, and with an
+    # ST-Link also plugged in, detect_probe reported a single ST-Link and
+    # start_debug_session auto-selected it. Measured on hardware.
+    serials: dict[tuple[str, str], list[str]] = {}
+    for record in records:
+        if record["serial"] and not record["is_interface"]:
+            serials.setdefault((record["vid"], record["pid"]), []).append(record["serial"])
+
+    probes = []
+    for record in records:
+        serial = record["serial"]
+        if not serial and record["is_interface"]:
+            # Borrow the parent's serial, but only when it is unambiguous — two
+            # identical probes must never collapse into one entry.
+            candidates = serials.get((record["vid"], record["pid"]), [])
+            if len(candidates) == 1:
+                serial = candidates[0]
         probe = _classify_usb_probe(
-            vid_match.group(1),
-            pid_match.group(1),
-            str(device.get("FriendlyName") or ""),
-            str(device.get("Manufacturer") or ""),
-            serial,
+            record["vid"], record["pid"], record["name"], record["manufacturer"], serial,
         )
         if probe:
-            probe["instance_id"] = instance_id
+            probe["instance_id"] = record["instance_id"]
+            if not serial and record["hub"]:
+                # Distinguishes two unserialised probes on different ports.
+                probe["location"] = record["hub"]
             probes.append(probe)
     return _deduplicate_probes(probes)
 
@@ -273,6 +304,22 @@ def _family_key(mcu: str) -> str:
         if key in _TARGET_CFG:
             return key
     raise ValueError(f"Unknown or unsupported STM32 family for MCU {mcu!r}. Known: {sorted(_TARGET_CFG)}")
+
+
+# Erased flash does NOT read 0xFF everywhere. The STM32L0/L1 flash technology
+# erases to 0x0000_0000; the rest of the STM32 line erases to 0xFF. Measured on an
+# STM32L151CCUx over CMSIS-DAP: OpenOCD reported "erased address 0x0803f000
+# (length 4096) in 0.248094s" and the range read back all 0x00. Assuming 0xFF made
+# every successful erase on those parts look like a failure.
+_ERASED_BYTE_BY_FAMILY = {"l0": 0x00, "l1": 0x00}
+
+
+def erased_byte_for(mcu: str | None) -> int | None:
+    """The byte erased flash reads back as on ``mcu``, or None if the part is unknown."""
+    try:
+        return _ERASED_BYTE_BY_FAMILY.get(_family_key(mcu or ""), 0xFF)
+    except ValueError:
+        return None
 
 
 def suggest_server_args(mcu: str, probe: str, scripts_dir: str | None = None, speed_khz: int = 4000) -> dict:

@@ -33,7 +33,10 @@ CORE_TOOLS = {
     "detect_probe", "suggest_server_args", "start_debug_session", "stop_debug_session", "recover_session",
     "self_check", "debug_profile", "load_symbols",
     "build_firmware", "flash_firmware", "flash_and_run",
-    "reset_target", "halt_execution", "run_and_wait", "run_for_duration", "breakpoint",
+    # halt_execution without a resume next to it taught agents to use
+    # run_for_duration as a resume primitive, which is not what it is for (#33).
+    "reset_target", "halt_execution", "continue_execution",
+    "run_and_wait", "run_for_duration", "breakpoint",
     "debug_until", "capture_state",
     "read_memory", "write_memory", "read_variable", "read_call_stack",
     "reconstruct_fault_context", "analyze_stack",
@@ -84,7 +87,9 @@ MERGED = {
     "debug_profile": ("action",
         {"get": "get_debug_profile", "set": "set_debug_profile"},
         "Active debug profile (mcu/elf/svd/probe).",
-        "action=get | set([mcu,elf_path,svd_path,board,probe,server_type,server_args,project_root,notes])."),
+        "action=get | set([mcu,elf_path,svd_path,board,probe,server_type,server_args,project_root,notes]). "
+        "set MERGES — fields you omit keep their current value — and returns the full resulting profile. "
+        "The profile is in-memory only: it is empty again after the MCP server restarts."),
     "read_registers": ("what",
         {"core": "read_core_registers", "fault": "read_fault_registers", "cycle": "read_cycle_counter"},
         "Read CPU register groups.",
@@ -95,7 +100,8 @@ MERGED = {
          "resolve": "resolve_address", "functions": "list_functions", "variables": "list_variables"},
         "Symbol / type introspection.",
         "what=size(expr) | type(expr) | address(symbol) | resolve(expr) | functions([regex]) | "
-        "variables([regex]). resolve maps an address back to source."),
+        "variables([regex]). resolve maps an address back to source, returning "
+        "{resolved,symbol,offset,section,file,line}; resolved=false means no symbol there."),
     "typed_memory": ("action",
         {"read": "read_typed_memory", "write": "write_typed_memory"},
         "Typed (struct-aware) memory access.",
@@ -149,7 +155,7 @@ READ_ONLY_EXTRAS = {
 }
 
 HARDWARE_WRITE_TOOLS = {
-    "flash_firmware", "flash_and_run", "reset_target", "write_memory", "typed_memory",
+    "flash_firmware", "flash_and_run", "flash_erase", "reset_target", "write_memory", "typed_memory",
     "set_adapter_speed", "setup_swo", "configure_debug_freeze",
 }
 

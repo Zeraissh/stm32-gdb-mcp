@@ -7,7 +7,7 @@ from conftest import FakeGdb
 import mcp_server.gdb_client as gdb_client_module
 from mcp_server.gdb_client import GdbClientManager
 from mcp_server.mi_guard import GdbCommandError
-from mcp_server.stop_event import was_already_halted
+from mcp_server.stop_event import was_already_halted, was_already_running
 from mcp_server.timeouts import DEFAULTS
 
 
@@ -103,7 +103,7 @@ def test_reset_halt_primes_the_ap_with_a_throwaway_read():
     # the reset command runs first, then a throwaway read of the constant CPUID
     # register primes the memory-AP so the next real read is coherent.
     assert commands[0] == "monitor reset halt"
-    assert any("-data-read-memory-bytes 0xE000ED00 4" in c for c in commands)
+    assert any('-data-read-memory-bytes "0xE000ED00" 4' in c for c in commands)
 
 
 def test_read_core_registers_uses_gdb_cli_info_registers():
@@ -164,7 +164,7 @@ def test_read_typed_memory_reads_byte_count_for_width_and_count():
     client.read_typed_memory("0x20000000", width_bits=16, count=4)
 
     assert client.gdb.commands == [
-        ("-data-read-memory-bytes 0x20000000 8", 2.0)  # routed through the 'memory' timeout
+        ('-data-read-memory-bytes "0x20000000" 8', 2.0)  # routed through the 'memory' timeout
     ]
 
 
@@ -600,3 +600,347 @@ def test_flash_download_still_fails_when_no_result_ever_arrives():
 
     with pytest.raises(GdbCommandError, match="did not report completion"):
         manager.load_firmware("fw.axf")
+
+
+# --- issue #38: expressions must reach GDB/MI as ONE argument ---
+#
+# GDB/MI splits a dash-command into argv on whitespace, so an unquoted
+# "*(unsigned long *)0x08006000" arrived as four arguments and GDB answered
+# "-data-evaluate-expression: Usage: -data-evaluate-expression expression".
+# Every cast, sizeof, and multi-argument call was unusable, and nothing in the
+# suite asserted the emitted MI string — which is why it survived four releases.
+
+def _only_command(client):
+    assert len(client.gdb.commands) == 1, client.gdb.commands
+    return client.gdb.commands[0][0]
+
+
+def test_read_variable_quotes_an_expression_containing_spaces():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+
+    client.read_variable("*(unsigned long *)0x08006000")
+
+    assert _only_command(client) == (
+        '-data-evaluate-expression "*(unsigned long *)0x08006000"')
+
+
+def test_read_variable_quotes_a_multi_argument_call():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+
+    client.read_variable("Boot_IsAppVectorValid(0x08006000, backupSize)")
+
+    assert _only_command(client) == (
+        '-data-evaluate-expression "Boot_IsAppVectorValid(0x08006000, backupSize)"')
+
+
+def test_sizeof_and_address_of_quote_the_whole_expression():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+
+    client.sizeof("struct boot_record")
+    client.address_of("g_state")
+
+    assert client.gdb.commands[0][0] == '-data-evaluate-expression "sizeof(struct boot_record)"'
+    assert client.gdb.commands[1][0] == '-data-evaluate-expression "&g_state"'
+
+
+def test_read_register_value_quotes_its_expression():
+    client = GdbClientManager()
+    client.gdb = FakeGdb([{"type": "result", "message": "done", "payload": {"value": "0x20004fd0"}}])
+
+    assert client.read_register_value("$sp") == 0x20004FD0
+    assert _only_command(client) == '-data-evaluate-expression "$sp"'
+
+
+def test_read_memory_quotes_an_address_expression():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+
+    client.read_memory("&g_buffer[0]", 8)
+
+    assert _only_command(client) == '-data-read-memory-bytes "&g_buffer[0]" 8'
+
+
+def test_expression_quoting_preserves_backslashes_instead_of_pathifying_them():
+    # gdb_path rewrites \ -> / because a path needs it; an expression does not,
+    # where a backslash is a C escape. Sharing that helper would corrupt char literals.
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+
+    client.read_variable(r"c == '\n'")
+
+    # The backslash survives as a backslash, doubled so GDB's unquoting yields
+    # exactly one back — not rewritten to a forward slash the way a path would be.
+    assert _only_command(client) == r'''-data-evaluate-expression "c == '\\n'"'''
+    assert "/" not in _only_command(client)
+
+
+def test_expression_quoting_escapes_embedded_quotes():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+
+    client.read_variable('strcmp(name, "abc")')
+
+    assert _only_command(client) == '-data-evaluate-expression "strcmp(name, \\"abc\\")"'
+
+
+# --- issue #37: a failed register read must not be returned as target state ---
+
+def _register_gdb(values):
+    class RegGdb:
+        def __init__(self):
+            self.commands = []
+
+        def write(self, command, timeout_sec=1.0):
+            self.commands.append((command, timeout_sec))
+            if "register-names" in command:
+                return [{"type": "result", "message": "done",
+                         "payload": {"register-names": ["r0", "sp", "pc", "xpsr"]}}]
+            return [{"type": "result", "message": "done", "payload": {"register-values": values}}]
+
+        def get_gdb_response(self, timeout_sec=0.1, raise_error_on_timeout=False):
+            return []
+
+    return RegGdb()
+
+
+def test_read_core_registers_decoded_raises_on_an_all_zero_set():
+    client = GdbClientManager()
+    client.gdb = _register_gdb([
+        {"number": "0", "value": "0x0"}, {"number": "1", "value": "0x0"},
+        {"number": "2", "value": "0x0"}, {"number": "3", "value": "0x0"},
+    ])
+
+    with pytest.raises(GdbCommandError) as excinfo:
+        client.read_core_registers_decoded()
+
+    assert "implausible" in str(excinfo.value)
+    assert "Thumb" in str(excinfo.value)
+
+
+def test_read_core_registers_decoded_returns_a_real_halted_set():
+    client = GdbClientManager()
+    client.gdb = _register_gdb([
+        {"number": "0", "value": "0x10"}, {"number": "1", "value": "0x20004fd0"},
+        {"number": "2", "value": "0x8000456"}, {"number": "3", "value": "0x61000000"},
+    ])
+
+    assert client.read_core_registers_decoded() == {
+        "r0": "0x10", "sp": "0x20004fd0", "pc": "0x8000456", "xpsr": "0x61000000",
+    }
+
+
+def test_read_core_registers_decoded_raises_on_a_gdb_error_instead_of_decoding_to_empty():
+    class ErrGdb:
+        def write(self, command, timeout_sec=1.0):
+            return [{"type": "result", "message": "error",
+                     "payload": {"msg": "Could not read registers; remote failure reply '0E'"}}]
+
+        def get_gdb_response(self, timeout_sec=0.1, raise_error_on_timeout=False):
+            return []
+
+    client = GdbClientManager()
+    client.gdb = ErrGdb()
+
+    with pytest.raises(GdbCommandError) as excinfo:
+        client.read_core_registers_decoded()
+
+    assert "remote failure reply" in str(excinfo.value)
+
+
+# --- issue #40: resolve_address must return GDB's answer, not echo the input ---
+
+def test_resolve_address_decoded_returns_symbol_offset_and_source():
+    class SymGdb:
+        def write(self, command, timeout_sec=1.0):
+            if "info line" in command:
+                return [{"type": "console", "payload":
+                         'Line 412 of "boot.c" starts at address 0x8000c74 '
+                         "<Boot_ValidateStaging+148> and ends at 0x8000c78 <Boot_WriteState>.\n"}]
+            return [{"type": "console", "payload": "Boot_ValidateStaging + 148 in section .text\n"}]
+
+        def get_gdb_response(self, timeout_sec=0.1, raise_error_on_timeout=False):
+            return []
+
+    client = GdbClientManager()
+    client.gdb = SymGdb()
+
+    out = client.resolve_address_decoded("0x08000c74")
+
+    assert out["resolved"] is True
+    assert out["symbol"] == "Boot_ValidateStaging"
+    assert out["offset"] == 148
+    assert out["file"] == "boot.c"
+    assert out["line"] == 412
+
+
+# --- issue #34: GDB's charset conversion must be out of the loop ---
+
+def test_start_gdb_pins_the_charset_so_char_reads_cannot_fail(monkeypatch):
+    # On a host whose iconv cannot serve the locale, EVERY char read came back as
+    # "0 '<error reading variable: Converting character sets: Invalid argument.>'".
+    client = GdbClientManager()
+    fake = FakeGdb()
+    monkeypatch.setattr(gdb_client_module, "GdbController", lambda command: fake)
+
+    client.start_gdb()
+
+    commands = [c[0] for c in fake.commands]
+    assert "-gdb-set charset ASCII" in commands
+
+
+def test_a_gdb_that_rejects_the_charset_setting_does_not_break_startup(monkeypatch):
+    class GrumpyGdb(FakeGdb):
+        def write(self, command, timeout_sec=1.0):
+            super().write(command, timeout_sec)
+            if "charset" in command:
+                raise RuntimeError("Undefined command")
+            return [{"type": "result", "message": "done", "payload": None}]
+
+    fake = GrumpyGdb()
+    monkeypatch.setattr(gdb_client_module, "GdbController", lambda command: fake)
+
+    GdbClientManager().start_gdb()  # must not raise
+
+
+# --- issue #33: resume must be as idempotent as halt already is ---
+
+def test_continue_execution_is_a_no_op_when_the_target_is_already_running():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+    client._running = True
+
+    resp = client.continue_execution()
+
+    assert was_already_running(resp)
+    assert client.gdb.commands == []  # no -exec-continue, so no "not halted" error
+
+
+def test_continue_execution_resumes_a_halted_target():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+    client._running = False
+
+    client.continue_execution()
+
+    assert [c[0] for c in client.gdb.commands] == ["-exec-continue"]
+
+
+def test_continue_execution_still_resumes_when_the_state_is_unknown():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+    client._running = None
+
+    client.continue_execution()
+
+    assert [c[0] for c in client.gdb.commands] == ["-exec-continue"]
+
+
+# --- issue #42: erase a flash range through the server's own session ---
+
+def test_flash_erase_pads_to_the_drivers_sector_boundaries():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+
+    client.flash_erase(0x08016000, 0x1000)
+
+    # 'pad' is what stops "address range ... is not sector-aligned"; the sector
+    # size belongs to the OpenOCD driver, not to a table in this server.
+    assert client.gdb.commands == [("monitor flash erase_address pad 0x8016000 4096", 30.0)]
+
+
+def test_flash_erase_raises_when_the_erase_reports_an_error():
+    client = GdbClientManager()
+    client.gdb = FakeGdb([
+        {"type": "console", "payload": "Error: failed to erase memory\n"},
+        {"type": "result", "message": "done", "payload": None},
+    ])
+
+    with pytest.raises(GdbCommandError) as excinfo:
+        client.flash_erase(0x08016000, 4096)
+
+    assert "failed to erase memory" in str(excinfo.value)
+
+
+def test_flash_erase_raises_without_a_terminal_result_record():
+    # Same guard as the flash download: a transfer that never reported completion
+    # must not read as done.
+    client = GdbClientManager()
+    client.gdb = FakeGdb([{"type": "console", "payload": "erasing...\n"}])
+    client.timeouts.set({"erase": 0.2})  # the poll loop runs to the deadline
+
+    with pytest.raises(GdbCommandError):
+        client.flash_erase(0x08016000, 4096)
+
+
+def test_flash_erase_rejects_a_zero_length():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+
+    with pytest.raises(ValueError):
+        client.flash_erase(0x08016000, 0)
+
+
+# --- review findings: things the first pass of these fixes got wrong ---
+
+def test_continue_execution_resumes_a_target_that_stopped_on_its_own():
+    # _running only flips to False when a *stopped is READ off the pipe, so it is
+    # stale the instant the target hits a breakpoint. A guard that trusted it
+    # unread would skip the one resume that was actually needed.
+    class StoppedGdb(FakeGdb):
+        def __init__(self):
+            super().__init__()
+            self._async = [{"type": "notify", "message": "stopped",
+                            "payload": {"reason": "breakpoint-hit", "frame": {"addr": "0x8000456"}}}]
+
+        def get_gdb_response(self, timeout_sec=0.1, raise_error_on_timeout=False):
+            pending, self._async = self._async, []
+            return pending
+
+    client = GdbClientManager()
+    client.gdb = StoppedGdb()
+    client._running = True  # stale: the *stopped has not been read yet
+
+    resp = client.continue_execution()
+
+    assert [c[0] for c in client.gdb.commands] == ["-exec-continue"]
+    assert not was_already_running(resp)
+
+
+def test_continue_execution_still_short_circuits_a_genuinely_running_target():
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+    client._running = True
+
+    resp = client.continue_execution()
+
+    assert was_already_running(resp)
+    assert client.gdb.commands == []
+
+
+def test_list_source_returns_the_window_around_the_location_not_only_after_it():
+    class ListGdb:
+        def __init__(self):
+            self.commands = []
+
+        def write(self, command, timeout_sec=1.0):
+            self.commands.append((command, timeout_sec))
+            if command.startswith("list main"):
+                return [{"type": "console", "payload": "40\tint main(void) {\n"}]
+            return [{"type": "console", "payload": "50\t  next_window();\n"}]
+
+        def get_gdb_response(self, timeout_sec=0.1, raise_error_on_timeout=False):
+            return []
+
+    client = GdbClientManager()
+    client.gdb = ListGdb()
+
+    records = client.list_source("main", 10)
+
+    # Returning only the second listing answered "source around main" with the
+    # lines AFTER main.
+    text = "".join(r["payload"] for r in records)
+    assert "int main(void)" in text
+    assert "next_window()" in text

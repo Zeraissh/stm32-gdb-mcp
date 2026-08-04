@@ -119,6 +119,16 @@ def _parse_value(value):
         return text[1:-1], "string"
     if re.fullmatch(r"[-+]?0x[0-9a-fA-F]+", text) or re.fullmatch(r"[-+]?\d+", text):
         return int(text, 0), "int"
+    # GDB decorates a number it can also render another way: a char prints as
+    # "161 '\241'" and a pointer as "0x20000010 <g_state>". The leading token is
+    # the value; the decoration is presentation — and when GDB's charset
+    # conversion fails it is an error string, which made every u8 read come back
+    # typed "string" with an error glued to it (issue #34). ``raw`` keeps the
+    # full text either way. Requiring the space-then-quote/angle keeps struct
+    # dumps ("{a = 1}") and enum names on the string path.
+    decorated = re.match(r"([-+]?(?:0x[0-9a-fA-F]+|\d+))\s+(?:'|<)", text)
+    if decorated:
+        return int(decorated.group(1), 0), "int"
     return text, "string"
 
 

@@ -5,9 +5,16 @@ from pygdbmi.gdbcontroller import GdbController
 
 from . import dwt
 from .fault_analysis import FAULT_REGISTER_ADDRESSES
-from .gdb_decode import decode_backtrace, decode_breakpoints, decode_registers, decode_variables
+from .gdb_decode import (
+    decode_backtrace,
+    decode_breakpoints,
+    decode_registers,
+    decode_symbol_resolution,
+    decode_variables,
+    implausible_register_set,
+)
 from .mi_guard import GdbCommandError, ensure_ok, has_terminal_result
-from .stop_event import ALREADY_HALTED_RECORD, parse_stop_event
+from .stop_event import ALREADY_HALTED_RECORD, ALREADY_RUNNING_RECORD, parse_stop_event
 from .timeouts import TimeoutConfig
 
 
@@ -28,6 +35,25 @@ def gdb_path(path: str) -> str:
     """
     normalized = str(path).replace("\\", "/").replace('"', '\\"')
     return f'"{normalized}"'
+
+
+def gdb_expr(expr: str) -> str:
+    """Render a C expression as a single GDB/MI command argument.
+
+    GDB/MI splits a dash-command into argv on whitespace before dispatching it,
+    so ``-data-evaluate-expression *(unsigned long *)0x08006000`` arrives as four
+    arguments and GDB answers with a bare usage string instead of a value. Every
+    cast, every ``sizeof``, and every multi-argument call was affected, and the
+    resulting failure was reported to the agent as "target may be running or
+    symbols may be missing" — a hardware diagnosis for a quoting bug (issue #38).
+
+    Deliberately NOT ``gdb_path``: that helper rewrites backslashes to forward
+    slashes, which is right for a Windows path and wrong for an expression, where
+    a backslash is a C escape. Here backslashes are doubled so they survive GDB's
+    unquoting intact.
+    """
+    escaped = str(expr).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
 
 
 def build_break_insert_command(location, condition=None, temporary=False, ignore_count=None):
@@ -71,6 +97,7 @@ class GdbClientManager:
         # Use mi3 for latest GDB machine interface features
         self.gdb = GdbController(command=[gdb_path, "--interpreter=mi3"])
         self._enable_async()
+        self._pin_charset()
 
     def _enable_async(self):
         """Turn on MI async mode, which must happen BEFORE a target is attached.
@@ -86,6 +113,27 @@ class GdbClientManager:
             self.execute_command("-gdb-set mi-async on", timeout_sec=self.timeouts.get("default"))
         except Exception:
             # An old GDB without mi-async still works for halted-target flows.
+            pass
+
+    def _pin_charset(self):
+        """Take GDB's charset conversion out of the loop.
+
+        GDB renders a char as ``161 '\\241'`` — number, space, quoted character —
+        and produces the quoted part by converting the byte through iconv. On a
+        host whose locale iconv cannot serve (measured on a CJK Windows console)
+        that conversion fails for EVERY char, valid ASCII bytes included, and GDB
+        substitutes ``<error reading variable: Converting character sets: Invalid
+        argument.>`` where the character belongs — glued onto the value of every
+        u8/char read, which on bare-metal firmware is most of the interesting
+        state (issue #34). ``set charset`` pins both host and target sets, so GDB
+        emits an octal escape instead of calling iconv at all.
+
+        The cost is that a genuinely non-ASCII string renders as escapes rather
+        than glyphs. That is a fair trade for reads that never fail.
+        """
+        try:
+            self.execute_command("-gdb-set charset ASCII", timeout_sec=self.timeouts.get("default"))
+        except Exception:
             pass
 
     def stop_gdb(self):
@@ -219,6 +267,25 @@ class GdbClientManager:
         responses.extend(ensure_ok(download, f"flash download({filepath})", require_result=True))
         return responses
 
+    def flash_erase(self, address: int, length: int):
+        """Erase a flash range through the GDB server's own flash driver.
+
+        ``pad`` is load-bearing: OpenOCD erases whole sectors and refuses a range
+        that is not sector-aligned ("address range ... is not sector-aligned"),
+        and the sector size is a property of the driver, not of the MCU's page
+        size — 4 KiB sectors over 256 B pages on an STM32L1. Letting OpenOCD pad
+        out to its own boundaries keeps a per-family table out of this server;
+        the caller learns what was really erased from the echoed console text.
+
+        Goes through _execute_until_result for the same reason load_firmware
+        does: an erase streams progress before its terminal record (issue #42).
+        """
+        if length < 1:
+            raise ValueError("length must be >= 1")
+        command = f"monitor flash erase_address pad {hex(address)} {length}"
+        resp = self._execute_until_result(command, self.timeouts.get("erase"))
+        return ensure_ok(resp, f"flash erase({hex(address)}, {length})", require_result=True)
+
     def reset_halt(self, command: str = "monitor reset halt"):
         """Resets the MCU and halts it. OpenOCD uses 'monitor reset halt'."""
         resp = self.execute_command(command, timeout_sec=self.timeouts.get("reset"))
@@ -280,8 +347,26 @@ class GdbClientManager:
         return decode_breakpoints(self.execute_command("-break-list", timeout_sec=self.timeouts.get("breakpoint")))
 
     def continue_execution(self):
+        """Resume the target — a no-op if it is already running.
+
+        The mirror of halt_execution's already-halted guard. Without it "make
+        sure the target is running" could not be expressed safely: GDB answers a
+        redundant -exec-continue with "not halted" followed by "context restore
+        failed, aborting resume", so a caller had to track the state itself or
+        swallow a spurious error (issue #33).
+
+        Drain BEFORE deciding, exactly as halt_execution does. ``_running`` only
+        flips to False when a ``*stopped`` is actually read off the pipe, so it
+        goes stale the moment the target stops on its own — a breakpoint, a
+        watchpoint, a HardFault. Trusting it unread would make this guard skip
+        the one resume that was genuinely needed, which is the silent-halt
+        failure #33 is about, reintroduced from the other side.
+        """
+        pending = self._drain_collect()
+        if self._running is True and not parse_stop_event(pending)["stopped"]:
+            return pending + [ALREADY_RUNNING_RECORD.copy()]
         resp = self.execute_command("-exec-continue", timeout_sec=self.timeouts.get("default"))
-        return ensure_ok(resp, "continue")
+        return pending + list(ensure_ok(resp, "continue"))
 
     def halt_execution(self):
         """Interrupt the target — but only if it is actually running.
@@ -324,7 +409,8 @@ class GdbClientManager:
         return ensure_ok(resp, f"run to {location}")
 
     def read_variable(self, name: str):
-        return self.execute_command(f"-data-evaluate-expression {name}")
+        return self.execute_command(f"-data-evaluate-expression {gdb_expr(name)}",
+                                    timeout_sec=self.timeouts.get("evaluate"))
 
     def read_call_stack(self):
         return self.execute_command("-stack-list-frames")
@@ -347,10 +433,20 @@ class GdbClientManager:
         return self.execute_command("-stack-list-arguments --all-values", timeout_sec=self.timeouts.get("stack"))
 
     def list_source(self, location: str | None = None, count: int = 10):
-        """List source lines around a location (function, file:line, or *addr)."""
+        """List source lines around a location (function, file:line, or *addr).
+
+        Both listings are returned. ``list X`` prints the window around X and
+        ``list +N`` continues past it; returning only the second answered a
+        request for "source around main" with the lines AFTER main. That was
+        invisible while the handler discarded the text entirely (issue #40).
+        """
+        responses = []
         if location:
-            self.execute_cli_command(f"list {location}", timeout_sec=self.timeouts.get("source"))
-        return self.execute_cli_command(f"list +{int(count)}", timeout_sec=self.timeouts.get("source"))
+            responses.extend(
+                self.execute_cli_command(f"list {location}", timeout_sec=self.timeouts.get("source")))
+        responses.extend(
+            self.execute_cli_command(f"list +{int(count)}", timeout_sec=self.timeouts.get("source")))
+        return responses
 
     def resolve_address(self, expr: str):
         """Map an address/expression to source line and nearest symbol."""
@@ -359,14 +455,32 @@ class GdbClientManager:
         responses.extend(self.execute_cli_command(f"info symbol {expr}", timeout_sec=self.timeouts.get("symbols")))
         return responses
 
+    def resolve_address_decoded(self, expr: str) -> dict:
+        """Structured {resolved, symbol, offset, section, file, line} for an address."""
+        return decode_symbol_resolution(self.resolve_address(expr))
+
     def read_core_registers(self):
         return self.execute_cli_command("info registers", timeout_sec=self.timeouts.get("registers"))
 
     def read_core_registers_decoded(self):
-        """Return {name: hex} via the structured MI register queries."""
-        names = self.execute_command("-data-list-register-names", timeout_sec=self.timeouts.get("registers"))
-        values = self.execute_command("-data-list-register-values x", timeout_sec=self.timeouts.get("registers"))
-        return decode_registers(names, values)
+        """Return {name: hex} via the structured MI register queries.
+
+        Raises rather than returning a register map the architecture says cannot
+        exist: a failed read that decodes to zeros used to be handed back as
+        ok:true core state, complete with a synthesised pc=0x0 backtrace built on
+        top of it (issue #37).
+        """
+        names = ensure_ok(
+            self.execute_command("-data-list-register-names", timeout_sec=self.timeouts.get("registers")),
+            "read core register names")
+        values = ensure_ok(
+            self.execute_command("-data-list-register-values x", timeout_sec=self.timeouts.get("registers")),
+            "read core register values")
+        registers = decode_registers(names, values)
+        implausible = implausible_register_set(registers)
+        if implausible:
+            raise GdbCommandError(implausible)
+        return registers
 
     def read_call_stack_decoded(self):
         return decode_backtrace(self.read_call_stack())
@@ -389,10 +503,12 @@ class GdbClientManager:
         return self.execute_cli_command(f"ptype {expr}", timeout_sec=self.timeouts.get("symbols"))
 
     def sizeof(self, expr: str):
-        return self.execute_command(f"-data-evaluate-expression sizeof({expr})", timeout_sec=self.timeouts.get("evaluate"))
+        return self.execute_command(f"-data-evaluate-expression {gdb_expr(f'sizeof({expr})')}",
+                                    timeout_sec=self.timeouts.get("evaluate"))
 
     def address_of(self, symbol: str):
-        return self.execute_command(f"-data-evaluate-expression &{symbol}", timeout_sec=self.timeouts.get("evaluate"))
+        return self.execute_command(f"-data-evaluate-expression {gdb_expr(f'&{symbol}')}",
+                                    timeout_sec=self.timeouts.get("evaluate"))
 
     def capture_coredump(self, path: str):
         return self.execute_cli_command(f"generate-core-file {gdb_path(path)}", timeout_sec=self.timeouts.get("coredump"))
@@ -478,7 +594,8 @@ class GdbClientManager:
 
     def read_register_value(self, expr: str) -> int:
         """Evaluate a register/convenience expression (e.g. '$lr', '$msp') to an int."""
-        response = self.execute_command(f"-data-evaluate-expression {expr}", timeout_sec=self.timeouts.get("evaluate"))
+        response = self.execute_command(f"-data-evaluate-expression {gdb_expr(expr)}",
+                                        timeout_sec=self.timeouts.get("evaluate"))
         for record in response:
             payload = record.get("payload")
             if isinstance(payload, dict) and payload.get("value") is not None:
@@ -510,8 +627,10 @@ class GdbClientManager:
         return ensure_ok(self.execute_command(cmd), f"watch {variable_or_address}")
 
     def read_memory(self, address: str, length: int):
+        # The address is an expression too ("&buf", "main + 4"), and
+        # -data-read-memory-bytes argv-splits exactly like -data-evaluate-expression.
         return self.execute_command(
-            f"-data-read-memory-bytes {address} {length}", timeout_sec=self.timeouts.get("memory")
+            f"-data-read-memory-bytes {gdb_expr(address)} {length}", timeout_sec=self.timeouts.get("memory")
         )
 
     def write_memory(self, address: str, value: str):

@@ -3018,3 +3018,766 @@ def test_run_pipeline_synthesize_false_stops_after_render():
     assert any(s["stage"] == "synthesize_acceptance" for s in data["skipped"])
     assert "acceptance" not in data
     assert data["files"]  # render still produced the skeleton
+
+
+# --- issue #40: inspect/symbol handlers must return GDB's answer, not echo the input ---
+
+def _console_client(monkeypatch, **methods):
+    import mcp_server.server as server_module
+
+    client = type("FakeClient", (), methods)()
+    monkeypatch.setattr(server_module, "gdb_client", client)
+    return client
+
+
+def _console(*lines):
+    return [{"type": "console", "payload": line} for line in lines]
+
+
+def test_resolve_address_returns_symbol_offset_and_source(monkeypatch):
+    _console_client(monkeypatch, resolve_address=lambda self, expr: _console(
+        'Line 412 of "boot.c" starts at address 0x8000c74 <Boot_ValidateStaging+148>.\n',
+        "Boot_ValidateStaging + 148 in section .text\n",
+    ))
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "inspect_symbol", {"what": "resolve", "expr": "0x08000c74"})))
+
+    assert payload["ok"] is True
+    data = payload["data"]
+    assert data["resolved"] is True
+    assert data["symbol"] == "Boot_ValidateStaging"
+    assert data["offset"] == 148
+    assert data["section"] == ".text"
+    assert data["file"] == "boot.c"
+    assert data["line"] == 412
+    assert data["expr"] == "0x08000c74"
+
+
+def test_resolve_address_reports_an_unresolvable_address_as_an_error(monkeypatch):
+    # "Address resolved" over an empty payload is indistinguishable from a real hit.
+    _console_client(monkeypatch, resolve_address=lambda self, expr: _console(
+        "No line number information available for address 0x20000000\n",
+        "No symbol matches 0x20000000.\n",
+    ))
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "inspect_symbol", {"what": "resolve", "expr": "0x20000000"})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "symbol_not_found"
+    assert "No symbol matches" in payload["error"]["message"]
+
+
+def test_resolve_address_accepts_address_as_an_alias_for_expr(monkeypatch):
+    seen = {}
+
+    def resolve(self, expr):
+        seen["expr"] = expr
+        return _console("Boot_WriteState in section .text\n")
+
+    _console_client(monkeypatch, resolve_address=resolve)
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "inspect_symbol", {"what": "resolve", "address": "0x08000c78"})))
+
+    assert payload["ok"] is True
+    assert seen["expr"] == "0x08000c78"
+    assert payload["data"]["symbol"] == "Boot_WriteState"
+
+
+def test_address_of_returns_the_address_it_evaluated(monkeypatch):
+    _console_client(monkeypatch, address_of=lambda self, symbol: [
+        {"type": "result", "message": "done", "payload": {"value": "(int *) 0x20000010 <g_state>"}}])
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "inspect_symbol", {"what": "address", "symbol": "g_state"})))
+
+    assert payload["ok"] is True
+    assert "0x20000010" in payload["data"]["address"]
+    assert payload["data"]["symbol"] == "g_state"
+
+
+def test_address_of_surfaces_gdb_error_instead_of_claiming_resolution(monkeypatch):
+    _console_client(monkeypatch, address_of=lambda self, symbol: [
+        {"type": "result", "message": "error",
+         "payload": {"msg": 'No symbol "nope" in current context.'}}])
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "inspect_symbol", {"what": "address", "symbol": "nope"})))
+
+    assert payload["ok"] is False
+    assert "No symbol" in payload["error"]["message"]
+
+
+def test_sizeof_returns_the_size(monkeypatch):
+    _console_client(monkeypatch, sizeof=lambda self, expr: [
+        {"type": "result", "message": "done", "payload": {"value": "40960"}}])
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "inspect_symbol", {"what": "size", "expr": "boot_record_t"})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["size"] == "40960"
+
+
+def test_list_functions_returns_the_console_listing(monkeypatch):
+    _console_client(monkeypatch, list_functions=lambda self, regex: _console(
+        "All functions matching regular expression 'Boot_':\n",
+        "0x08000be0  Boot_ValidateStaging\n",
+    ))
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "inspect_symbol", {"what": "functions", "regex": "Boot_"})))
+
+    assert payload["ok"] is True
+    assert "Boot_ValidateStaging" in payload["data"]["text"]
+    assert payload["data"]["regex"] == "Boot_"
+
+
+def test_console_output_is_truncated_visibly_not_silently(monkeypatch):
+    _console_client(monkeypatch, list_variables=lambda self, regex: _console("x" * 20000))
+
+    payload = _payload(asyncio.run(handle_call_tool("inspect_symbol", {"what": "variables"})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["truncated"] is True
+    assert "truncated" in payload["data"]["note"]
+    assert len(payload["data"]["text"]) < 20000
+
+
+# --- issue #38: GDB's own error must not be replaced by a target-state guess ---
+
+def test_read_variable_surfaces_the_gdb_error_it_was_given(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def read_variable(self, name):
+            return [{"type": "result", "message": "error", "payload": {
+                "msg": "-data-evaluate-expression: Usage: -data-evaluate-expression expression"}}]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool(
+        "read_variable", {"name": "*(unsigned long *)0x08006000"})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "gdb_error"
+    assert "Usage: -data-evaluate-expression" in payload["error"]["message"]
+    # The old wording sent agents to halt the core and reload symbols for a quoting bug.
+    assert "Target may be running" not in payload["error"]["message"]
+
+
+def test_missing_value_without_a_gdb_error_still_suggests_a_real_tool(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def read_variable(self, name):
+            return [{"type": "console", "payload": "noise"}]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool("read_variable", {"name": "g_state"})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "no_value_returned"
+    # "halt" is not a registered tool; the one hint that recovers the agent must resolve.
+    assert "halt_execution" in payload["suggested_next_actions"]
+    assert "halt" not in payload["suggested_next_actions"]
+
+
+# --- issue #37: capture_state must not report an impossible core state as ok ---
+
+def test_capture_state_refuses_an_all_zero_register_set(monkeypatch):
+    import mcp_server.server as server_module
+    from mcp_server.mi_guard import GdbCommandError
+
+    class FakeClient:
+        def read_core_registers_decoded(self):
+            raise GdbCommandError(
+                "core register read is implausible: xPSR=0x0 has the Thumb bit (bit 24) clear, "
+                "which cannot happen on a halted Cortex-M")
+
+        def read_call_stack_decoded(self):  # must never be reached
+            raise AssertionError("backtrace synthesised from a failed register read")
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool("capture_state", {})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "register_read_implausible"
+    assert "halt_execution" in payload["suggested_next_actions"]
+
+
+# --- session routing: batch/call/call_read/run_scenario advertise `session` and must honour it ---
+
+def test_batch_runs_its_steps_against_the_session_it_was_given():
+    asyncio.run(handle_call_tool("set_debug_profile", {"mcu": "STM32F407"}))
+    asyncio.run(handle_call_tool("set_debug_profile", {"session": "bench1", "mcu": "STM32L151"}))
+
+    payload = _payload(asyncio.run(handle_call_tool("batch", {
+        "session": "bench1",
+        "steps": [{"tool": "get_debug_profile", "args": {}}],
+    })))
+
+    # Before the fix every step silently ran against "default" — which on a
+    # multi-board rig means reads, and flash writes, hitting the wrong board.
+    assert payload["data"]["results"][0]["data"]["mcu"] == "STM32L151"
+
+
+def test_batch_does_not_override_a_step_that_names_its_own_session():
+    asyncio.run(handle_call_tool("set_debug_profile", {"session": "bench2", "mcu": "STM32G071"}))
+    asyncio.run(handle_call_tool("set_debug_profile", {"session": "bench3", "mcu": "STM32H743"}))
+
+    payload = _payload(asyncio.run(handle_call_tool("batch", {
+        "session": "bench2",
+        "steps": [{"tool": "get_debug_profile", "args": {"session": "bench3"}}],
+    })))
+
+    assert payload["data"]["results"][0]["data"]["mcu"] == "STM32H743"
+
+
+def test_call_and_call_read_forward_the_session():
+    asyncio.run(handle_call_tool("set_debug_profile", {"session": "bench4", "mcu": "STM32WB55"}))
+
+    via_call = _payload(asyncio.run(handle_call_tool(
+        "call", {"session": "bench4", "tool": "get_debug_profile", "args": {}})))
+    via_call_read = _payload(asyncio.run(handle_call_tool(
+        "call_read", {"session": "bench4", "tool": "get_debug_profile", "args": {}})))
+
+    assert via_call["data"]["mcu"] == "STM32WB55"
+    assert via_call_read["data"]["mcu"] == "STM32WB55"
+
+
+def test_run_scenario_forwards_the_session_to_every_step():
+    # A write, not a read: the failure mode this guards is a scenario step landing
+    # on the default board instead of the one the caller selected.
+    asyncio.run(handle_call_tool("set_debug_profile", {"mcu": "STM32F407"}))
+
+    asyncio.run(handle_call_tool("run_scenario", {
+        "session": "bench5",
+        "steps": [{"tool": "set_debug_profile", "args": {"mcu": "STM32U575"}}],
+    }))
+
+    bench5 = _payload(asyncio.run(handle_call_tool("get_debug_profile", {"session": "bench5"})))
+    default = _payload(asyncio.run(handle_call_tool("get_debug_profile", {})))
+    assert bench5["data"]["mcu"] == "STM32U575"
+    assert default["data"]["mcu"] == "STM32F407"  # untouched
+
+
+def test_a_dispatcher_without_a_session_still_targets_the_default():
+    asyncio.run(handle_call_tool("set_debug_profile", {"mcu": "STM32F407"}))
+
+    payload = _payload(asyncio.run(handle_call_tool("batch", {
+        "steps": [{"tool": "get_debug_profile", "args": {}}],
+    })))
+
+    assert payload["data"]["results"][0]["data"]["mcu"] == "STM32F407"
+
+
+# --- issue #41: an all-failed batch must not look like a success ---
+
+def test_batch_reports_ok_false_when_every_step_failed():
+    steps = [
+        {"tool": "read_memory", "args": {"address": "0x08000000", "length": 4}},
+        {"tool": "read_variable", "args": {"name": "GTimer"}},
+        {"tool": "analyze_stack", "args": {}},
+    ]
+    payload = _payload(asyncio.run(handle_call_tool("batch", {"steps": steps})))
+
+    # The envelope is the level a caller reliably checks; it used to say ok:true
+    # while all three steps carried no_session errors.
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "batch_step_failed"
+    assert payload["data"]["failed"] == 3
+    assert payload["data"]["succeeded"] == 0
+    assert len(payload["data"]["results"]) == 3
+
+
+def test_batch_counts_distinguish_success_from_failure():
+    steps = [
+        {"tool": "get_debug_profile", "args": {}},
+        {"tool": "does_not_exist", "args": {}},
+    ]
+    payload = _payload(asyncio.run(handle_call_tool("batch", {"steps": steps})))
+
+    # count/total are both 2 either way — succeeded/failed are what discriminate.
+    assert payload["data"]["count"] == 2
+    assert payload["data"]["total"] == 2
+    assert payload["data"]["succeeded"] == 1
+    assert payload["data"]["failed"] == 1
+    assert payload["ok"] is False
+
+
+def test_batch_still_reports_ok_true_when_every_step_worked():
+    payload = _payload(asyncio.run(handle_call_tool("batch", {
+        "steps": [{"tool": "get_debug_profile", "args": {}}],
+    })))
+
+    assert payload["ok"] is True
+    assert payload["data"]["failed"] == 0
+    assert payload["data"]["succeeded"] == 1
+
+
+def test_batch_states_an_identical_remediation_once_instead_of_per_step():
+    steps = [
+        {"tool": "read_memory", "args": {"address": "0x08000000", "length": 4}},
+        {"tool": "read_variable", "args": {"name": "GTimer"}},
+        {"tool": "analyze_stack", "args": {}},
+    ]
+    payload = _payload(asyncio.run(handle_call_tool("batch", {"steps": steps})))
+
+    # ~250 chars of identical guidance x N steps was most of the payload.
+    assert "start_debug_session" in payload["error"]["message"]
+    for result in payload["data"]["results"]:
+        assert result["error"]["message"] == "(see the batch error above)"
+        assert result["error"]["code"] == "no_session"  # per-step code survives
+
+
+def test_batch_keeps_distinct_step_errors_verbatim():
+    steps = [
+        {"tool": "does_not_exist", "args": {}},
+        {"tool": "read_memory", "args": {"address": "0x0", "length": 4}},
+    ]
+    payload = _payload(asyncio.run(handle_call_tool("batch", {"steps": steps})))
+
+    messages = [r["error"]["message"] for r in payload["data"]["results"]]
+    assert len({m for m in messages}) == 2
+    assert all("(see the batch error above)" not in m for m in messages)
+
+
+# --- issue #33: a reader must say what state it found the core in ---
+
+def test_read_memory_reports_the_core_state_it_read_at(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def is_running(self):
+            return False
+
+        def read_memory(self, address, length):
+            return [{"type": "result", "payload": {"memory": [{"contents": "DEADBEEF"}]}}]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool(
+        "read_memory", {"address": "0x20000000", "length": 4})))
+
+    assert payload["ok"] is True
+    assert payload["core_state"] == "halted"
+
+
+def test_a_reader_on_a_running_core_says_running(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def is_running(self):
+            return True
+
+        def read_variable(self, name):
+            return [{"type": "result", "payload": {"value": "42"}}]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool("read_variable", {"name": "g_ticks"})))
+
+    assert payload["core_state"] == "running"
+
+
+def test_core_state_is_omitted_when_the_run_state_is_unknown(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def is_running(self):
+            return None  # nothing heard from GDB yet
+
+        def read_memory(self, address, length):
+            return [{"type": "result", "payload": {"memory": [{"contents": "00"}]}}]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool(
+        "read_memory", {"address": "0x20000000", "length": 1})))
+
+    # Guessing is worse than saying nothing.
+    assert "core_state" not in payload
+
+
+def test_compact_surface_offers_a_resume_next_to_halt(monkeypatch):
+    monkeypatch.setenv("STM32_GDB_MCP_COMPACT", "1")
+    names = {tool.name for tool in asyncio.run(handle_list_tools())}
+
+    # Without one, agents used run_for_duration purely for its resume side effect.
+    assert "halt_execution" in names
+    assert "continue_execution" in names
+
+
+# --- issue #39: an empty profile must not read as a wrongly-filled one ---
+
+def test_start_debug_session_says_the_profile_is_empty(monkeypatch):
+    from conftest import FakeProfile
+
+    import mcp_server.server as server_module
+
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile())
+    payload = _payload(asyncio.run(handle_call_tool("start_debug_session", {})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "missing_argument"
+    assert "EMPTY" in payload["error"]["message"]
+    assert "restarts" in payload["error"]["message"]
+
+
+def test_start_debug_session_lists_what_the_profile_does_hold(monkeypatch):
+    from conftest import FakeProfile
+
+    import mcp_server.server as server_module
+
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile({"mcu": "STM32L151", "elf_path": "fw.axf"}))
+    payload = _payload(asyncio.run(handle_call_tool("start_debug_session", {})))
+
+    assert payload["ok"] is False
+    assert "EMPTY" not in payload["error"]["message"]
+    assert "elf_path" in payload["error"]["message"] and "mcu" in payload["error"]["message"]
+
+
+# --- issue #42: flash erase, with guard rails ---
+
+class _EraseClient:
+    def __init__(self, readback="ffffffff"):
+        self.erased = []
+        self._readback = readback
+
+    def flash_erase(self, address, length):
+        self.erased.append((address, length))
+        return [{"type": "console", "payload": f"erased address 0x{address:08x} (length {length})\n"},
+                {"type": "result", "message": "done", "payload": None}]
+
+    def read_memory(self, address, length):
+        return [{"type": "result", "payload": {"memory": [{"contents": self._readback}]}}]
+
+
+def test_flash_erase_erases_the_requested_range_and_verifies_it(monkeypatch):
+    import mcp_server.server as server_module
+
+    client = _EraseClient()
+    monkeypatch.setattr(server_module, "gdb_client", client)
+    payload = _payload(asyncio.run(handle_call_tool(
+        "flash_erase", {"address": "0x08016000", "length": 4096})))
+
+    assert payload["ok"] is True
+    assert client.erased == [(0x08016000, 4096)]
+    assert payload["data"]["verify"]["erased"] is True
+    assert "erased address" in payload["data"]["server_output"]
+
+
+def test_flash_erase_fails_loudly_when_the_range_is_not_actually_erased(monkeypatch):
+    import mcp_server.server as server_module
+
+    monkeypatch.setattr(server_module, "gdb_client", _EraseClient(readback="a1bf0c00"))
+    payload = _payload(asyncio.run(handle_call_tool(
+        "flash_erase", {"address": "0x08016000", "length": 4096})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "flash_erase_failed"
+
+
+def test_flash_erase_refuses_a_range_overlapping_a_protected_region(monkeypatch):
+    import mcp_server.server as server_module
+
+    client = _EraseClient()
+    monkeypatch.setattr(server_module, "gdb_client", client)
+    # Option bytes / system memory: erasing these is how a board stops being a board.
+    payload = _payload(asyncio.run(handle_call_tool(
+        "flash_erase", {"address": "0x1FFF0000", "length": 4096})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "memory_write_blocked"
+    assert client.erased == []
+
+
+def test_flash_erase_needs_an_explicit_length_there_is_no_mass_erase():
+    tools = {tool.name: tool for tool in asyncio.run(handle_list_tools())}
+    schema = tools["flash_erase"].inputSchema
+
+    assert set(schema["required"]) == {"address", "length"}
+
+
+def test_flash_erase_is_annotated_destructive():
+    tools = {tool.name: tool for tool in asyncio.run(handle_list_tools())}
+
+    annotations = tools["flash_erase"].annotations
+    assert annotations.destructiveHint is True
+    assert annotations.readOnlyHint is False
+
+
+# --- review findings: second-pass corrections ---
+
+def test_flash_erase_reports_a_verification_it_could_not_run_as_a_failure(monkeypatch):
+    import mcp_server.server as server_module
+
+    class NoReadbackClient(_EraseClient):
+        def read_memory(self, address, length):
+            # The erase reported done, but the range cannot be read back:
+            # a dropped link, a bus fault, an inaccessible address.
+            return [{"type": "result", "message": "error",
+                     "payload": {"msg": "Cannot access memory at address 0x8016000"}}]
+
+    monkeypatch.setattr(server_module, "gdb_client", NoReadbackClient())
+    payload = _payload(asyncio.run(handle_call_tool(
+        "flash_erase", {"address": "0x08016000", "length": 4096})))
+
+    # ok:true here would be the false ok the verify step exists to prevent, with
+    # the evidence of its own failure buried in data.verify.
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "flash_erase_unverified"
+    assert "Cannot access memory" in payload["error"]["message"]
+
+
+def test_flash_erase_guards_the_padded_range_when_told_the_sector_size(monkeypatch):
+    import mcp_server.server as server_module
+
+    client = _EraseClient()
+    monkeypatch.setattr(server_module, "gdb_client", client)
+    # 256 bytes just past the protected option-byte region, but a 64 KiB sector
+    # pads back into it — OpenOCD would erase what the guard never saw.
+    payload = _payload(asyncio.run(handle_call_tool("flash_erase", {
+        "address": "0x20000000", "length": 256, "sector_size_bytes": 0x10000,
+    })))
+    assert payload["ok"] is True  # RAM address, nothing protected nearby
+
+    blocked = _payload(asyncio.run(handle_call_tool("flash_erase", {
+        "address": "0x1FFFF000", "length": 256, "sector_size_bytes": 0x10000,
+    })))
+    assert blocked["ok"] is False
+    assert blocked["error"]["code"] == "memory_write_blocked"
+
+
+def test_flash_erase_says_when_its_guard_only_saw_the_requested_range(monkeypatch):
+    import mcp_server.server as server_module
+
+    monkeypatch.setattr(server_module, "gdb_client", _EraseClient())
+    payload = _payload(asyncio.run(handle_call_tool(
+        "flash_erase", {"address": "0x08016000", "length": 4096})))
+
+    assert "requested range only" in payload["data"]["guard_scope"]
+
+
+def test_run_scenario_reports_ok_false_when_a_step_fails():
+    payload = _payload(asyncio.run(handle_call_tool("run_scenario", {
+        "steps": [{"tool": "does_not_exist", "args": {}}],
+    })))
+
+    # The same contract as batch — the sibling dispatcher had the identical bug.
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "scenario_step_failed"
+    assert payload["data"]["passed"] == 0
+
+
+def test_run_scenario_still_reports_ok_true_when_every_step_passes():
+    payload = _payload(asyncio.run(handle_call_tool("run_scenario", {
+        "steps": [{"tool": "get_debug_profile", "args": {}}],
+    })))
+
+    assert payload["ok"] is True
+    assert payload["data"]["passed"] == 1
+
+
+def test_continue_execution_says_when_it_did_not_actually_resume(monkeypatch):
+    import mcp_server.server as server_module
+    from mcp_server.stop_event import ALREADY_RUNNING_RECORD
+
+    class FakeClient:
+        def is_running(self):
+            return True
+
+        def continue_execution(self):
+            return [ALREADY_RUNNING_RECORD.copy()]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool("continue_execution", {})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["already_running"] is True
+    assert "no resume sent" in payload["data"]["message"]
+    assert payload["core_state"] == "running"
+
+
+def test_continue_execution_reports_a_real_resume_as_one(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def is_running(self):
+            return True
+
+        def continue_execution(self):
+            return [{"type": "result", "message": "running", "payload": None}]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool("continue_execution", {})))
+
+    assert payload["data"]["message"] == "Execution continued"
+    assert "already_running" not in payload["data"]
+
+
+def test_a_reader_error_also_carries_the_core_state(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def is_running(self):
+            return True
+
+        def read_memory(self, address, length):
+            return [{"type": "console", "payload": "noise"}]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool(
+        "read_memory", {"address": "0x20000000", "length": 4})))
+
+    # The failure messages are the ones that GUESS at the run state, so this is
+    # where knowing it matters most.
+    assert payload["ok"] is False
+    assert payload["core_state"] == "running"
+
+
+def test_resolve_address_advertises_the_alias_it_accepts():
+    tools = {tool.name: tool for tool in asyncio.run(handle_list_tools())}
+    schema = tools["inspect_symbol"].inputSchema
+
+    assert "address" in schema["properties"]
+    resolve = next(v for v in schema["oneOf"] if v.get("title") == "resolve")
+    # A schema that rejects the name the handler accepts is the same
+    # contract/behaviour gap as an empty payload that claims success.
+    assert resolve["required"] == ["what"]
+
+
+def test_resolve_address_without_either_name_says_which_to_use(monkeypatch):
+    import mcp_server.server as server_module
+
+    monkeypatch.setattr(server_module, "gdb_client", object())
+    payload = _payload(asyncio.run(handle_call_tool("inspect_symbol", {"what": "resolve"})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "missing_argument"
+    assert "expr" in payload["error"]["message"]
+
+
+def test_source_listing_containing_an_error_phrase_is_not_reported_as_an_error(monkeypatch):
+
+    # find_mi_error scans stream text for markers like "No such file or directory";
+    # once the payload is user source code that heuristic turns a successful
+    # listing into a reported failure.
+    _console_client(monkeypatch, list_source=lambda self, location, count: _console(
+        '42\t    log_error("open failed: No such file or directory");\n'))
+
+    payload = _payload(asyncio.run(handle_call_tool("list_source", {"location": "main"})))
+
+    assert payload["ok"] is True
+    assert "No such file or directory" in payload["data"]["text"]
+
+
+def test_a_real_gdb_error_record_still_fails_a_console_tool(monkeypatch):
+    _console_client(monkeypatch, list_source=lambda self, location, count: [
+        {"type": "result", "message": "error", "payload": {"msg": "No symbol table is loaded."}}])
+
+    payload = _payload(asyncio.run(handle_call_tool("list_source", {"location": "main"})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "gdb_error"
+
+
+# --- measured on hardware: STM32L1 erases flash to 0x00, not 0xFF ---
+
+def _erase_session(monkeypatch, mcu, readback):
+    from conftest import FakeProfile
+
+    import mcp_server.server as server_module
+
+    client = _EraseClient(readback=readback)
+    monkeypatch.setattr(server_module, "gdb_client", client)
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile({"mcu": mcu} if mcu else {}))
+    return client
+
+
+def test_an_l1_erase_that_reads_back_zeros_is_a_success(monkeypatch):
+    # OpenOCD confirmed "erased address 0x0803f000 (length 4096) in 0.248094s" and
+    # the range read back all 0x00. Demanding 0xFF called that a failure.
+    _erase_session(monkeypatch, "STM32L151", "00000000")
+    payload = _payload(asyncio.run(handle_call_tool(
+        "flash_erase", {"address": "0x0803F000", "length": 4096})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["verify"]["erased"] is True
+    assert payload["data"]["verify"]["expected_erased_byte"] == "0x00"
+    assert payload["data"]["verify"]["observed_byte"] == "0x00"
+
+
+def test_an_l1_range_reading_back_0xff_is_not_erased(monkeypatch):
+    _erase_session(monkeypatch, "STM32L151", "ffffffff")
+    payload = _payload(asyncio.run(handle_call_tool(
+        "flash_erase", {"address": "0x0803F000", "length": 4096})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "flash_erase_failed"
+    assert "0x00" in payload["error"]["message"]
+
+
+def test_an_l4_erase_still_expects_0xff(monkeypatch):
+    _erase_session(monkeypatch, "STM32L431", "ffffffff")
+    payload = _payload(asyncio.run(handle_call_tool(
+        "flash_erase", {"address": "0x08010000", "length": 4096})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["verify"]["expected_erased_byte"] == "0xff"
+
+
+def test_zeros_on_a_part_that_erases_to_0xff_are_data_not_a_blank_sector(monkeypatch):
+    # The check must not simply accept both conventions when the part is known:
+    # on an L4, 0x00 is real content.
+    _erase_session(monkeypatch, "STM32L431", "00000000")
+    payload = _payload(asyncio.run(handle_call_tool(
+        "flash_erase", {"address": "0x08010000", "length": 4096})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "flash_erase_failed"
+
+
+def test_without_an_mcu_either_convention_is_accepted_and_said_so(monkeypatch):
+    _erase_session(monkeypatch, None, "00000000")
+    payload = _payload(asyncio.run(handle_call_tool(
+        "flash_erase", {"address": "0x0803F000", "length": 4096})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["verify"]["expected_erased_byte"] is None
+    assert "either erase convention" in payload["data"]["verify_note"]
+
+
+def test_a_mixed_readback_is_never_called_erased(monkeypatch):
+    _erase_session(monkeypatch, None, "a1bf0c00")
+    payload = _payload(asyncio.run(handle_call_tool(
+        "flash_erase", {"address": "0x0803F000", "length": 4096})))
+
+    assert payload["ok"] is False
+    # A failure keeps its evidence in raw_response, not data.
+    assert payload["raw_response"]["verify"]["observed_byte"] is None
+
+
+def test_flash_erase_reports_what_the_gdb_server_said(monkeypatch):
+    from conftest import FakeProfile
+
+    import mcp_server.server as server_module
+
+    class TargetStreamClient(_EraseClient):
+        def flash_erase(self, address, length):
+            self.erased.append((address, length))
+            # A monitor command is answered by the GDB server, so its reply is a
+            # 'target' record -- collecting only 'console' left server_output null.
+            return [
+                {"type": "log", "payload": "monitor flash erase_address pad 0x803f000 4096\n"},
+                {"type": "target", "payload":
+                 "erased address 0x0803f000 (length 4096) in 0.248094s (16.123 KiB/s)\n"},
+                {"type": "result", "message": "done", "payload": None},
+            ]
+
+    monkeypatch.setattr(server_module, "gdb_client", TargetStreamClient(readback="00000000"))
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile({"mcu": "STM32L151"}))
+    payload = _payload(asyncio.run(handle_call_tool(
+        "flash_erase", {"address": "0x0803F000", "length": 4096})))
+
+    assert payload["ok"] is True
+    assert "erased address 0x0803f000 (length 4096)" in payload["data"]["server_output"]

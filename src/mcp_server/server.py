@@ -220,7 +220,10 @@ async def handle_list_tools() -> list[Tool]:
             name="batch",
             description="Runs several tool calls in ONE round trip and returns ALL their full "
                         "results — the fastest way to do a sequence of operations (e.g. read "
-                        "registers + backtrace + several variables) without per-call latency.",
+                        "registers + backtrace + several variables) without per-call latency. "
+                        "ok is false if ANY step failed; data.succeeded/data.failed count the "
+                        "outcomes (count/total only count steps run vs requested). Pass session "
+                        "to run every step against a named debug session.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -434,6 +437,25 @@ def _dispatch_tool(name: str, arguments: dict | None) -> list[TextContent]:
         )]
 
 
+def _with_forwarded_session(outer: dict, inner_args):
+    """Carry a dispatcher's ``session`` selector into the step it forwards to.
+
+    call/call_read/batch/run_scenario all advertise ``session`` — the pinned tool
+    surface lists it and the server instructions tell agents to pass it to any
+    tool — but they forwarded only ``args``, so every step silently ran against
+    the "default" session. On a multi-board rig that sends reads to the wrong
+    board and, worse, ``batch(session="rackB", steps=[flash_firmware...])`` to the
+    wrong board's flash.
+
+    A step that names its own session wins; nothing is injected when the outer
+    call did not select one.
+    """
+    session = outer.get("session")
+    if not session or not isinstance(inner_args, dict) or "session" in inner_args:
+        return inner_args
+    return {**inner_args, "session": session}
+
+
 # Meta tools that operate on the journal itself are not journaled (avoids noise/recursion).
 _JOURNAL_SKIP = {"get_session", "clear_session_journal"}
 
@@ -454,7 +476,7 @@ async def handle_call_tool(name: str, arguments: dict | None) -> CallToolResult:
         if inner in (None, "call", "batch", "run_scenario"):
             return call_tool_result([content_error(
                 "call needs a 'tool' name (not call/batch/run_scenario).", code="invalid_call")])
-        return await handle_call_tool(inner, arguments.get("args", {}))
+        return await handle_call_tool(inner, _with_forwarded_session(arguments, arguments.get("args", {})))
 
     if name == "call_read":
         inner = arguments.get("tool")
@@ -467,7 +489,7 @@ async def handle_call_tool(name: str, arguments: dict | None) -> CallToolResult:
                 f"use call(tool=..., args=...) for anything that writes.",
                 code="not_read_only",
                 suggested_next_actions=["call", "tool_help"])])
-        return await handle_call_tool(inner, arguments.get("args", {}))
+        return await handle_call_tool(inner, _with_forwarded_session(arguments, arguments.get("args", {})))
 
     sid = arguments.get("session") or "default"
     if sid != "default":
@@ -520,13 +542,47 @@ async def _run_batch(arguments: dict) -> list[TextContent]:
     steps = arguments.get("steps") or []
     stop_on_error = arguments.get("stop_on_error", False)
     results = []
+    next_actions: list[str] = []
     for step in steps:
-        payload = json.loads((await handle_call_tool(step["tool"], step.get("args", {})))[0].text)
+        args = _with_forwarded_session(arguments, step.get("args", {}))
+        payload = json.loads((await handle_call_tool(step["tool"], args))[0].text)
         ok = bool(payload.get("ok"))
         results.append({"tool": step["tool"], "ok": ok, "data": payload.get("data"), "error": payload.get("error")})
+        if not ok:
+            for action in payload.get("suggested_next_actions") or []:
+                if action not in next_actions:
+                    next_actions.append(action)
         if stop_on_error and not ok:
             break
-    return [content_success({"results": results, "count": len(results), "total": len(steps)})]
+
+    failed = [r for r in results if not r["ok"]]
+    data = {
+        # count = steps executed, total = steps requested (they differ under
+        # stop_on_error); neither counts successes, so add the two that do.
+        "results": results,
+        "count": len(results),
+        "total": len(steps),
+        "succeeded": len(results) - len(failed),
+        "failed": len(failed),
+    }
+    if not failed:
+        return [content_success(data)]
+
+    # Every failing step used to repeat the same ~250-char remediation verbatim.
+    # When they are identical, say it once at the top and leave the codes per step.
+    messages = {r["error"]["message"] for r in failed if isinstance(r.get("error"), dict)}
+    shared = messages.pop() if len(messages) == 1 else None
+    if shared and len(failed) > 1:
+        for r in failed:
+            r["error"] = {**r["error"], "message": "(see the batch error above)"}
+
+    summary = f"{len(failed)} of {len(results)} batch steps failed"
+    return [content_error(
+        f"{summary}: {shared}" if shared else summary,
+        code="batch_step_failed",
+        data=data,
+        suggested_next_actions=next_actions[:4],
+    )]
 
 
 async def _run_scenario(arguments: dict) -> list[TextContent]:
@@ -537,9 +593,19 @@ async def _run_scenario(arguments: dict) -> list[TextContent]:
         return [content_error("run_scenario needs 'steps' or a 'path' to a scenario file.", code="invalid_scenario")]
 
     async def run_step(tool, args):
-        return json.loads((await handle_call_tool(tool, args))[0].text)
+        return json.loads((await handle_call_tool(tool, _with_forwarded_session(arguments, args)))[0].text)
 
     report = await replay_scenario(steps, run_step, stop_on_failure=arguments.get("stop_on_failure", True))
+    if not report.get("ok"):
+        # The same contract as batch: the envelope is what a caller reliably
+        # checks, so a replay whose steps failed must not read as a pass.
+        failed = report["total"] - report["passed"]
+        return [content_error(
+            f"{failed} of {report['total']} scenario steps failed",
+            code="scenario_step_failed",
+            data=report,
+            suggested_next_actions=["get_session", "check_session_health"],
+        )]
     return [content_success(report)]
 
 

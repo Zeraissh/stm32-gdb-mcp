@@ -13,7 +13,9 @@ from ..debug_experiments import (
     compare_expressions_after_action as run_expression_comparison,
 )
 from ..gdb_decode import decode_evaluated_value, decode_memory_bytes
+from ..mi_guard import find_mi_error
 from ..tool_response import content_error, content_success
+from ._helpers import core_state
 from .context import ToolContext
 from .registry import register
 
@@ -33,15 +35,28 @@ def read_variable(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     resp = ctx.gdb_client.read_variable(arguments["name"])
     value = decode_evaluated_value(resp)
     if value is None:
+        # GDB usually says exactly what went wrong ("No symbol \"foo\" in current
+        # context."). Overwriting that with a guess about target state sent agents
+        # to halt the core and reload symbols for what was a quoting bug (issue #38).
+        gdb_error = find_mi_error(resp)
+        if gdb_error:
+            return [content_error(
+                f"GDB could not evaluate {arguments['name']!r}: {gdb_error}",
+                code="gdb_error",
+                raw_response=resp,
+                suggested_next_actions=["inspect_symbol", "load_symbols"],
+            )]
         return [content_error(
             f"No value returned for expression {arguments['name']!r}. Target may be running or symbols may be missing.",
             code="no_value_returned",
             raw_response=resp,
-            suggested_next_actions=["halt", "load_symbols", "expressions"],
+            suggested_next_actions=["halt_execution", "load_symbols", "expressions"],
+            core_state=core_state(ctx.gdb_client),
         )]
     return [content_success(
         {"message": "Variable read", "name": arguments["name"], "value": value},
         raw_response=resp,
+        core_state=core_state(ctx.gdb_client),
     )]
 
 
@@ -61,11 +76,20 @@ def read_memory(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     resp = ctx.gdb_client.read_memory(arguments["address"], arguments["length"])
     contents = decode_memory_bytes(resp)
     if contents is None:
+        gdb_error = find_mi_error(resp)
+        if gdb_error:
+            return [content_error(
+                f"GDB could not read memory at {arguments['address']}: {gdb_error}",
+                code="gdb_error",
+                raw_response=resp,
+                suggested_next_actions=["self_check", "capture_state"],
+            )]
         return [content_error(
             f"No memory bytes returned for address {arguments['address']}. Target may be running or inaccessible.",
             code="no_value_returned",
             raw_response=resp,
-            suggested_next_actions=["halt", "self_check", "capture_state"],
+            suggested_next_actions=["halt_execution", "self_check", "capture_state"],
+            core_state=core_state(ctx.gdb_client),
         )]
     return [content_success(
         {
@@ -75,6 +99,7 @@ def read_memory(ctx: ToolContext, arguments: dict) -> list[TextContent]:
             "bytes": contents,
         },
         raw_response=resp,
+        core_state=core_state(ctx.gdb_client),
     )]
 
 
@@ -287,6 +312,7 @@ def read_typed_memory(ctx: ToolContext, arguments: dict) -> list[TextContent]:
             "count": arguments["count"],
         },
         raw_response=resp,
+        core_state=core_state(ctx.gdb_client),
     )]
 
 

@@ -31,3 +31,24 @@ def test_custom_reset_command_overrides_strategy():
 def test_unknown_reset_strategy_raises_clear_error():
     with pytest.raises(ValueError, match="Unsupported reset strategy"):
         resolve_reset_command("openocd", halt=True, strategy="bad")
+
+
+def test_a_strategy_that_is_only_an_alias_says_so():
+    # under_reset resolves to the same command as default for every backend, so
+    # selecting it changes nothing — silently, until now.
+    resolved = resolve_reset_command("openocd", halt=True, strategy="under_reset")
+
+    assert resolved["command"] == "monitor reset halt"
+    assert "'under_reset' resolves to the same command as ['default']" in resolved["note"]
+    assert "connect_assert_srst" in resolved["note"]
+
+
+def test_asking_for_the_default_carries_no_alias_note():
+    assert "note" not in resolve_reset_command("openocd", halt=True)
+
+
+def test_a_strategy_that_really_differs_carries_no_note():
+    resolved = resolve_reset_command("openocd", halt=True, strategy="software")
+
+    assert resolved["command"] == "monitor soft_reset_halt"
+    assert "note" not in resolved
