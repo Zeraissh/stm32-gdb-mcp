@@ -1,5 +1,230 @@
 # Changelog / 更新日志
 
+## [0.8.0] - 2026-08-04
+
+Ten issues an agent filed against v0.5.0, closed after checking each one against
+HEAD rather than taking it at face value. One turned out not to be a bug at all,
+two named the wrong mechanism, disproving one of them uncovered a worse defect
+nobody had filed, and running the result on real hardware found two more.
+
+一个 agent 针对 v0.5.0 提交的十个 issue,逐条对照 HEAD 核实后关闭,而非照单全收。
+其中一个根本不是缺陷,两个的机制判断有误;在证伪其中一个的过程中发现了一个更严重、
+无人提交的缺陷,而把结果放到真实硬件上跑又找出两个。
+
+### Expressions and symbols / 表达式与符号
+
+- Expressions are quoted before reaching GDB/MI. GDB splits a dash-command into argv on
+  whitespace, so `-data-evaluate-expression *(unsigned long *)0x08006000` arrived as four
+  arguments and GDB answered with a bare usage string. Every cast, every `sizeof`, and
+  every multi-argument call was unusable — which on bare metal rules out most of what
+  expression evaluation is for. The FreeRTOS inspector, `expressions(assert/capture/
+  compare)`, and the variable tracker all route through the same builder. (#38) /
+  表达式在送入 GDB/MI 前加引号:GDB 按空白把命令拆成 argv,任何含空格的表达式都会得到
+  一句 usage 提示。所有强制转换、`sizeof` 和多参数调用因此不可用,FreeRTOS 检查器、
+  表达式断言/捕获/比较和变量跟踪都走同一构造路径。
+- `gdb_expr()` is deliberately not `gdb_path()`: the latter rewrites backslashes to forward
+  slashes, which is right for a Windows path and wrong for an expression, where a backslash
+  is a C escape. / `gdb_expr()` 刻意不复用 `gdb_path()`:后者把反斜杠转为正斜杠,
+  对路径正确,对表达式则会破坏 C 转义。
+- `inspect_symbol(what="resolve")` returns `{resolved, symbol, offset, section, file, line}`
+  instead of `ok:true "Address resolved"` over an empty payload. It really did run
+  `info line`/`info symbol` and then discard the answer, and offered symbol-implying next
+  actions for an address it never resolved. The same echo-the-input shape was in every
+  message-only handler — `list_source`, `disassemble`, `list_functions`, `list_variables`,
+  `lookup_type`, `sizeof`, and `address_of`, the last of which returned no address at all.
+  (#40) / `inspect_symbol(what="resolve")` 返回结构化解析结果,不再是空载荷配
+  "Address resolved"。它其实执行了查询却丢弃了回复;同样"回显输入、丢弃答案"的形状存在于
+  每一个只返回 message 的处理函数中,其中 `address_of` 根本不返回地址。
+- Large listings are capped, but never silently: truncation is flagged in the payload,
+  because output that reads as complete when it is not is the same class of lie as an empty
+  payload that reads as success. / 大列表会截断,但绝不静默:截断状态写在载荷里——
+  截断了却读起来完整,与空载荷读起来成功属于同一类谎言。
+- `list_source` returned only the second of its two listings, so a request for "source
+  around main" answered with the lines *after* main. Invisible while the text was being
+  discarded. / `list_source` 只返回两次列举中的第二次,于是"main 附近的源码"给的是 main
+  之后的行——在文本被丢弃时无从察觉。
+
+### Honest results / 诚实的结果
+
+- `capture_state` no longer reports an impossible core state as target state. It returned
+  `ok:true` with an all-zero register set and a synthesised `0x00000000` backtrace; xPSR=0
+  is architecturally impossible on a halted Cortex-M, and the agent that hit it spent two
+  analysis rounds on a firmware fault that did not exist. Worth recording: `decode_registers`
+  does **not** zero-fill, so those zeros are what GDB actually answered — the defect was the
+  absence of any check before returning, not invention. `read_registers(what=core)` shares
+  the path. (#37) / `capture_state` 不再把架构上不可能的核心状态当作目标状态上报。
+  值得记录的是:那些零并非服务器捏造,`decode_registers` 不做零填充,零是 GDB 真实的回答;
+  缺陷在于返回前没有任何校验。
+- `pc=0` alone is not proof — `-data-list-register-values` reads the *selected* frame, and a
+  failed unwind legitimately reports `pc=0` for an outer frame — so it counts only alongside
+  a null stack pointer. / `pc=0` 本身不构成证据:该命令读的是**选中帧**,unwind 失败时外层帧
+  本就会报 `pc=0`;因此只有在栈指针同样为零时才判定。
+- `batch` reports `ok:false` when any step failed, and adds `succeeded`/`failed` counts.
+  It returned `ok:true` with every step failed; the failure data was one level down in
+  `results[]`, but the envelope is the level a caller reliably checks, and `count`/`total`
+  both mean "steps run" so neither distinguishes success from failure. An identical per-step
+  remediation is now stated once instead of repeating ~250 characters per step.
+  `run_scenario` had the same envelope bug and gets the same contract. (#41) /
+  `batch` 在任一步骤失败时返回 `ok:false`,并新增成功/失败计数;`count`/`total` 都表示
+  "跑了几步",无法区分成败。重复的补救文案只说一次。`run_scenario` 同样修正。
+- **`batch`, `call`, `call_read` and `run_scenario` now honour the `session` they are given.**
+  All four advertise it — the pinned surface lists it and the server instructions tell agents
+  to pass it to any tool — but they forwarded only `args`, so every step silently ran against
+  the default session. On a multi-board rig that sends reads to the wrong board, and
+  `batch(session="rackB", steps=[flash_firmware...])` to the wrong board's flash. No test
+  passed `session` to any of the four. Found while disproving #39. /
+  **四个调度工具现在真正使用传入的 `session`。** 它们都公告接受该参数,却只转发 `args`,
+  于是每个步骤都跑在默认会话上——多板台架上这会把读取、乃至烧录送到错误的板子。
+
+### Diagnosis / 诊断
+
+- A dead GDB/target link is classified as `connection_lost` and marked retryable, not as
+  `elf_load_failed` with `retryable:false`. "Could not read registers; remote failure reply
+  '0E'" during `load_symbols` was bucketed by the wrapping operation rather than the GDB text
+  already in hand, so `retry_call` refused to back off, `recover_session` was never suggested,
+  and the agent was sent to check a file path that was never wrong. The rule sits ahead of the
+  operation labels but explicitly out of the way of an attach failure, which carries the whole
+  OpenOCD log and can mention registers in passing. (#36) /
+  GDB 与目标之间的链路失效归类为 `connection_lost` 且可重试,不再按外层操作误判为
+  ELF 加载失败;该规则位于操作标签规则之前,但显式避开 attach 失败路径。
+- `target_unreachable` stops advising a power check when the probe's own log disproves it.
+  Every failed attach reported `Target voltage: 3.167938` and still said "check target
+  power" — pointing at the one hypothesis its own payload excluded. It cost the reporting
+  agent two wrong statements to their user, who had to correct them. Above ~1.6 V the
+  message now states the board is powered, names the real candidates (a low-power mode
+  gating SWD, a stale process holding the probe, repurposed SWD pins), and adds that a
+  failed attach says nothing about whether the CPU is executing. (#35) /
+  当探针日志本身已证明供电正常时,不再建议检查供电,而是给出真正的候选原因,并说明
+  attach 失败无法推断 CPU 是否在运行。
+- `resolve_reset_command` says when a strategy is only an alias. `under_reset` resolves to
+  the same command as `default` for every backend, so selecting it changed nothing, silently.
+  Real connect-under-reset is a `server_args`/`reset_config` concern at server start, and the
+  note points there. / 当某个复位策略只是别名时明确说明:`under_reset` 在所有后端都与
+  `default` 相同,选它不产生任何差别;真正的 connect-under-reset 属于启动参数。
+- Char and byte values read as numbers. Every u8/char came back as
+  `0 '<error reading variable: Converting character sets: Invalid argument.>` typed
+  `"string"`, so numeric comparison against captured values was impossible — and on
+  bare-metal firmware most interesting state is u8. Two independent causes: the value parser
+  now takes the leading integer out of a decorated value (`161 '\241'`, `0x20000010
+  <g_state>`) and keeps the full text in `raw`; and the session pins `set charset ASCII`,
+  which takes GDB's iconv out of the loop. Contrary to the report it was not per-byte
+  validity — 0, 12 and 32 failed too. (#34) / u8/char 值按数字读取:解析器从带修饰的值中
+  取出前导整数,`raw` 保留原文;会话启动时固定字符集,使 GDB 不再调用 iconv。
+  与报告不同,并非某些字节非法——0、12、32 同样失败。
+- `start_debug_session` says when the debug profile is EMPTY rather than under-filled. It is
+  in-memory only and empty again after the MCP server restarts, and "the profile does not
+  define it" reads as "you set the wrong field". The merge semantics of
+  `debug_profile(action=set)` are now stated where a caller reads them. (#39) /
+  区分"profile 为空"与"profile 缺字段";profile 仅存于内存,服务器重启即清空。
+- Not a bug, and recorded as such: `debug_profile(action=set)` has always merged, and the
+  response has always echoed the full resulting profile. Two of the three fixes the report
+  suggested were already the shipped behaviour. / 明确记录:`set` 一直是合并语义,
+  响应也一直回显完整 profile;报告建议的三条修复中有两条本就是既有行为。
+
+### Observability / 可观测性
+
+- Reads report `core_state` in the envelope, on success and on failure. An agent could not
+  tell the core was stopped, so a halt surfaced later as wrong measurements from some other
+  instrument — a serial capture reading zero bytes, a tick counter that stopped advancing —
+  with nothing to connect them back. The run state was already tracked from GDB's own async
+  records and simply never reported; it costs no extra target traffic. The failure paths
+  carry it too, since those are the messages that guess at the run state. (#33) /
+  读取类工具在信封中报告 `core_state`(成功与失败路径都报):运行状态本就从 GDB 的
+  异步记录中跟踪,此前从不告知调用方,零额外目标流量。
+- The reported mechanism does not exist and is worth recording: `read_memory` does not halt
+  anything. The likelier explanation is that 0.5.0's `halt_execution` could not stop a running
+  target at all, so the core was already halted and the halt got attributed to the wrong tool.
+  No `resume_after` was added for that reason — it would be a no-op entrenching a wrong mental
+  model. / 报告的机制并不存在:`read_memory` 不会暂停任何东西。因此没有加 `resume_after`,
+  那只会固化一个错误的心智模型。
+- `continue_execution` joins the compact surface and is idempotent. The shipped surface had a
+  halt and no resume, which taught agents to call `run_for_duration` purely for its side
+  effect. Like `halt_execution` it now drains first and consults the run state instead of
+  eating "not halted; context restore failed" — reading the flag unread would skip the one
+  resume that was needed, since it goes stale the moment the target stops on its own. /
+  `continue_execution` 进入精简工具面并做成幂等:先排空再判断,否则那个标志会在目标
+  自行停下的瞬间过期,反而跳过唯一真正需要的一次恢复。
+
+### Flash recovery / Flash 恢复
+
+- **New tool `flash_erase(address, length)`.** There was no way to erase flash through this
+  server, and the one situation that most needs a debugger is exactly where that bit: a
+  corrupt OTA journal left a bootloader retrying a restore until no image would boot, and the
+  only fix was to drop to a shell and run raw openocd. It goes through `monitor flash
+  erase_address pad`, so OpenOCD rounds to its own erase sectors — a driver property, not the
+  MCU page size (4 KiB sectors over 256 B pages on an STM32L1) — and no per-family table
+  lives here. (#42) / **新增 `flash_erase(address, length)`。** 此前无法通过本服务器擦除
+  flash,而最需要调试器的场景恰恰是救一块起不来的板子;扇区对齐交给 OpenOCD 自己完成。
+- Guard rails: an explicit address AND length with no mass-erase default, the write guard
+  consulted for the range, a destructive annotation, and a read-back that distinguishes
+  "still holds data" from "could not be verified" instead of falling through to ok. Pass
+  `sector_size_bytes` to have the guard check the padded range that is really erased;
+  without it the payload says plainly that only the requested range was checked. /
+  护栏:必须显式给出地址与长度、无整片擦除默认值、范围经写保护守卫、标注为破坏性操作,
+  且回读校验区分"仍有数据"与"无法验证"。
+- `MemoryWriteGuard.evaluate_range` is added for it, and an allow must now CONTAIN a range to
+  permit it: overlap semantics were safe while every caller was a 1–4 byte write, but an
+  erase range can clip an allowed region and cover a protected one in the same span. /
+  新增范围求值;放行区必须**完整包含**整个范围才生效——擦除范围可能同时蹭到放行区
+  与保护区。
+
+### Probes / 探针
+
+- `detect_probe` sees a CMSIS-DAP probe that enumerates as a composite device. It skipped
+  every `&MI_` node so one physical probe could not be counted several times, but a CMSIS-DAP
+  v2 probe **is** a composite device and only its MI_00 interface carries the name that
+  identifies it — the parent is called "USB Composite Device", which nothing can classify.
+  Measured with a Horco CMSIS-DAP v2 and an ST-Link V2 both plugged in: before `count=1,
+  suggested_probe="stlink"`; after `count=2` with both serials. The old answer is the
+  dangerous one, because `start_debug_session` auto-selects when exactly one probe is
+  detected — asking to debug over the DAPLink silently attached to the ST-Link. /
+  `detect_probe` 现在能看到以复合设备枚举的 CMSIS-DAP 探针:此前跳过所有 `&MI_` 节点,
+  而只有 MI_00 接口带有可识别的名字。实测两个探针同时插入时,修复前只报告一个 ST-Link,
+  且会被自动选中——请求用 DAPLink 调试却静默连到了 ST-Link。
+- An interface borrows its serial from the composite parent (OpenOCD needs it for `adapter
+  serial`) but only when that parent is unambiguous, so two identical probes still stay
+  apart — on hub path when they have no serial at all. / 接口从复合父节点借用序列号,
+  但仅在父节点唯一时;两个同型号探针仍会区分开。
+
+### Hardware validation / 硬件验证
+
+Validated on an STM32L151CCUx over a CMSIS-DAP probe, through the real tool dispatch path.
+在 STM32L151CCUx 上经 CMSIS-DAP 探针、走真实工具分发路径完成验证。
+
+- **Erased flash is `0x00` on STM32L0/L1, not `0xFF`.** `flash_erase` verified its work by
+  demanding every byte read back `0xFF`, so on exactly the family #42 was reported from,
+  every *successful* erase was reported as `flash_erase_failed`. The erase itself was never
+  in doubt — GDB returned OpenOCD's own words, `erased address 0x0803f000 (length 4096) in
+  0.248094s (16.123 KiB/s)` — and the range then read back all zeros. The expected value now
+  comes from the profile MCU instead of being assumed, and the payload reports
+  `expected_erased_byte`/`observed_byte` so a disagreement is evidence rather than a bare
+  `false`. With no MCU in the profile either convention is accepted and the payload says so. /
+  **STM32L0/L1 的擦除态是 `0x00` 而非 `0xFF`。** 此前的校验要求回读全 `0xFF`,
+  于是在 issue #42 所在的系列上,每一次成功的擦除都被报成失败。期望值现由 profile 的 MCU
+  推导,并在载荷中同时给出期望值与实测值。
+- A `monitor` command is answered by the GDB **server**, so its reply arrives on the target
+  stream, not the console one. Console-only collection is why `server_output` was `null` on
+  every erase. / `monitor` 命令由 GDB **服务器**应答,回复走 target 流而非 console 流。
+- Test safety: the target was an already-blank sector 200 KiB past the end of the
+  application, the whole 256 KiB was backed up first, and the flash was diffed against that
+  backup afterwards — zero bytes differed. / 测试安全:目标是应用区之后 200 KiB 处本就
+  空白的扇区;事前完整备份 256 KiB,事后逐字节比对,零差异。
+
+### Tests / 测试
+
+- 901 passing (from 782). Roughly 100 new tests, and against the pre-change source three test
+  files cannot even import while 48 of the rest fail — these are regression tests, not
+  decoration. A deliberate handful pass both before and after: they guard against
+  over-correction (a step's own `session` still wins, an unknown run state is not guessed at,
+  struct dumps are not parsed as integers, an allow that contains a whole range still
+  permits it). / 901 项通过(此前 782)。新增约 100 项;对照修改前的源码,三个测试文件
+  连导入都失败,其余中有 48 项失败——它们是真正的回归测试。另有若干前后都通过的守卫用例,
+  用于防止过度修正。
+- The MI command strings are asserted for the first time. Nothing anywhere had ever checked
+  what `-data-evaluate-expression` was actually handed, which is why #38 survived four
+  releases. / 首次对发出的 MI 命令字符串做断言:此前从无任何测试检查过实际发给 GDB 的
+  内容,这正是 #38 存活四个版本的原因。
+
 ## [0.7.1] - 2026-07-29
 
 Four fixes found by using v0.7.0 against real hardware: two ways a correct
