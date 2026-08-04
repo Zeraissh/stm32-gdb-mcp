@@ -1571,7 +1571,7 @@
       "type": "string"
      },
      "verify": {
-      "description": "Read back the first 64 bytes and confirm they are 0xFF (default true).",
+      "description": "Read back the first 64 bytes and confirm they hold this part's erased value \u2014 0x00 on STM32L0/L1, 0xFF elsewhere, taken from the profile MCU (default true).",
       "type": "boolean"
      }
     },

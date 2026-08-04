@@ -176,7 +176,7 @@ def flash_firmware(ctx: ToolContext, arguments: dict) -> list[TextContent]:
             "address": {"type": "string", "description": "Start address, e.g. '0x08016000'. Rounded DOWN to the erase-sector boundary."},
             "length": {"type": "integer", "description": "Bytes to erase. Rounded UP to the erase-sector boundary."},
             "sector_size_bytes": {"type": "integer", "description": "Erase-sector size of this part (e.g. 4096 on STM32L1, up to 131072 on F4). Give it and the write guard checks the padded range that is really erased; omit it and the guard can only check the range you asked for."},
-            "verify": {"type": "boolean", "description": "Read back the first 64 bytes and confirm they are 0xFF (default true)."}
+            "verify": {"type": "boolean", "description": "Read back the first 64 bytes and confirm they hold this part's erased value — 0x00 on STM32L0/L1, 0xFF elsewhere, taken from the profile MCU (default true)."}
         },
         "required": ["address", "length"]
     }
