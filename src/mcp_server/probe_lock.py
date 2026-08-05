@@ -20,11 +20,6 @@ import sys
 import tempfile
 import time
 
-if sys.platform == "win32":
-    import ctypes
-    from ctypes import wintypes
-
-
 # ---------------------------------------------------------------------------
 # Lock directory & key derivation
 # ---------------------------------------------------------------------------
@@ -82,14 +77,28 @@ def _pid_alive_posix(pid: int) -> bool:
     """os.kill(pid, 0) on POSIX: signal 0 = existence check, no signal delivered."""
     try:
         os.kill(pid, 0)
-    except (OSError, ProcessLookupError):
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # EPERM means the process EXISTS but belongs to another user — a lock
+        # held by it is genuinely held, not stale.
+        return True
+    except OSError:
         return False
     return True
 
 
 def _pid_alive_windows(pid: int) -> bool:
     """OpenProcess + GetExitCodeProcess — ``os.kill(pid, 0)`` is a no-op on Windows."""
+    # The guard is a statement, not a caller-side condition, so mypy narrows
+    # sys.platform and skips the Windows-only ctypes attributes when checking
+    # for other platforms (same idiom as process_guard / gdb_manager).
+    if sys.platform != "win32":
+        return False
     try:
+        import ctypes
+        from ctypes import wintypes
+
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
         PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
