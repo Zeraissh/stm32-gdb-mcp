@@ -8,6 +8,7 @@ import threading
 import time
 
 from . import process_guard
+from .probe_lock import ProbeLock, probe_lock_manager
 
 
 def _port_accepts(port: int | None, timeout: float = 0.2) -> bool:
@@ -31,6 +32,8 @@ class GdbServerManager:
         # True when the server on self.port was already running and we attached to
         # it instead of spawning our own. We do not own it, so we never stop it.
         self.adopted = False
+        # Cross-process probe lock held by THIS start() call.
+        self._probe_lock: ProbeLock | None = None
 
     def _read_output(self):
         if not self.process or not self.process.stdout:
@@ -91,45 +94,65 @@ class GdbServerManager:
             self.process = None
             return self.port
 
-        # We create a new process group so we can send CTRL_BREAK_EVENT on Windows.
-        # sys.platform in an if-statement (not os.name, not a ternary) so mypy skips the
-        # Windows-only attribute when checking other platforms.
-        if sys.platform == "win32":
-            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
-        else:
-            creationflags = 0
-        
-        # stdin=DEVNULL is critical: the MCP server talks JSON-RPC over its own stdin,
-        # so a spawned child must NEVER inherit it (it would steal protocol bytes and
-        # hang the server with no output).
-        # On Linux the child asks the kernel to kill it if we die; on Windows the
-        # job object installed at startup covers this. Either way a killed MCP
-        # server must not leave a GDB server holding the probe.
-        self.process = subprocess.Popen(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            creationflags=creationflags,
-            preexec_fn=process_guard.child_preexec(),  # noqa: PLW1509 - None on win32
-        )
+        # --- cross-process probe lock -------------------------------------------
+        # Acquire BEFORE spawning so two processes can't both launch a GDB server
+        # for the same probe.  The adopted path above skips this: we are not
+        # starting our own server, so we don't need to lock the probe.
+        lock = probe_lock_manager.acquire(self.server_type, args)
+        self._probe_lock = lock
 
-        self._reader_thread = threading.Thread(target=self._read_output, daemon=True)
-        self._reader_thread.start()
+        try:
+            # We create a new process group so we can send CTRL_BREAK_EVENT on Windows.
+            # sys.platform in an if-statement (not os.name, not a ternary) so mypy skips the
+            # Windows-only attribute when checking other platforms.
+            if sys.platform == "win32":
+                creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+            else:
+                creationflags = 0
 
-        # Wait until the GDB server actually accepts connections (instead of a fixed
-        # sleep), so a fast-binding server returns in ~0.2s instead of always 1.5s.
-        if not self._wait_for_port(self.port, timeout=10.0):
-            logs = self.get_logs()
-            process_exited = self.process.poll() is not None
-            self.stop()
-            if process_exited:
-                raise RuntimeError(f"GDB server failed to start. Logs: {logs}")
-            raise RuntimeError(
-                f"GDB server did not open its port within timeout. Logs: {logs}"
+            # stdin=DEVNULL is critical: the MCP server talks JSON-RPC over its own stdin,
+            # so a spawned child must NEVER inherit it (it would steal protocol bytes and
+            # hang the server with no output).
+            # On Linux the child asks the kernel to kill it if we die; on Windows the
+            # job object installed at startup covers this. Either way a killed MCP
+            # server must not leave a GDB server holding the probe.
+            self.process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                creationflags=creationflags,
+                preexec_fn=process_guard.child_preexec(),  # noqa: PLW1509 - None on win32
             )
+
+            # Backfill the child PID so zombie-openocd scenarios are attributable.
+            # Use getattr so mock process objects (tests) without .pid don't break.
+            child_pid = getattr(self.process, "pid", None)
+            if child_pid is not None:
+                probe_lock_manager.backfill_child_pid(lock, child_pid)
+
+            self._reader_thread = threading.Thread(target=self._read_output, daemon=True)
+            self._reader_thread.start()
+
+            # Wait until the GDB server actually accepts connections (instead of a fixed
+            # sleep), so a fast-binding server returns in ~0.2s instead of always 1.5s.
+            if not self._wait_for_port(self.port, timeout=10.0):
+                logs = self.get_logs()
+                process_exited = self.process.poll() is not None
+                self.stop()
+                if process_exited:
+                    raise RuntimeError(f"GDB server failed to start. Logs: {logs}")
+                raise RuntimeError(
+                    f"GDB server did not open its port within timeout. Logs: {logs}"
+                )
+        except Exception:
+            # Any failure after lock acquisition must release the lock so the
+            # probe is not stranded.
+            probe_lock_manager.release(self._probe_lock)
+            self._probe_lock = None
+            raise
 
         return self.port
 
@@ -223,6 +246,10 @@ class GdbServerManager:
         self.port = None
         self._reader_thread = None
         self.adopted = False
+
+        # Release the cross-process probe lock (idempotent).
+        probe_lock_manager.release(self._probe_lock)
+        self._probe_lock = None
 
     def is_alive(self) -> bool:
         if self.process is not None:

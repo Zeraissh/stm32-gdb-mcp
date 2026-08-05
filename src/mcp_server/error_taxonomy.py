@@ -28,6 +28,19 @@ _ATTACH_FAILURE_MARKERS = (
 # ELF path too, and routing that to "install a missing host tool" sent agents
 # chasing their toolchain instead of their path (issue #21/#22).
 _RULES: list[tuple] = [
+    # Ahead of everything: the cross-process probe lock tells us EXACTLY which
+    # PID holds the probe. This is not retryable — a retry just burns seconds
+    # waiting for a process that won't disappear on its own.
+    (("held by pid",), {
+        "code": "probe_locked",
+        "retryable": False,
+        "suggested_next_actions": [
+            "list_sessions", "stop_debug_session", "close_session", "detect_probe",
+        ],
+        "hint": "Another process (or another session in this process) already owns the debug "
+                "probe. Close the owning debug session, stop its GDB server, or kill the "
+                "zombie process that is still holding the probe.",
+    }),
     # Ahead of everything: this is a read that must not be reported as target
     # state. Its own wording is unique, so ordering costs nothing (issue #37).
     (("core register read is implausible", "core register read returned no registers"), {

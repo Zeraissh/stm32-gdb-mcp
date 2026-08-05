@@ -1,5 +1,29 @@
 # Changelog / 更新日志
 
+## [Unreleased]
+
+### Probe locking / 探针锁
+
+- Cross-process probe lock: starting a GDB server acquires an OS-level lock file keyed by
+  the probe identity (`adapter serial` when present, else the `-f interface/<name>.cfg`
+  driver, else the server type). A second process — or a second named session in the same
+  process — contending for the same probe now fails fast with
+  `probe '<key>' held by PID <x>` instead of a bare OpenOCD "init mode failed". The lock
+  payload records both the locker and the spawned GDB-server child, so an orphaned
+  OpenOCD whose parent died is still attributed by PID; locks whose holder processes are
+  both gone are cleaned up automatically. The new `probe_locked` error classification is
+  non-retryable, so session start does not burn retry attempts waiting out a holder that
+  will not go away on its own. Adopting an already-listening server skips the lock (we do
+  not own that server), and every failure path of `start()` releases it. /
+  跨进程探针锁:拉起 GDB server 前按探针身份(优先 `adapter serial`,其次
+  `-f interface/<name>.cfg` 驱动名,兜底 server 类型)获取 OS 级锁文件。另一进程——
+  或同进程内另一个命名会话——争抢同一探针时,快速失败并报
+  `probe '<键>' held by PID <x>`,取代此前裸的 OpenOCD "init mode failed"。锁载荷同时
+  记录取锁进程与拉起的 GDB server 子进程:父进程已死的孤儿 OpenOCD 依然能按 PID 归因;
+  持有者双双死亡的陈锁自动清理。新增 `probe_locked` 错误分类为不可重试——占用者不会
+  自己消失,会话启动不再空烧重试。领养已在监听的 server 时跳过取锁(那不是我们的
+  server),`start()` 的所有失败路径均释放锁。
+
 ## [0.8.0] - 2026-08-04
 
 Ten issues an agent filed against v0.5.0, closed after checking each one against
