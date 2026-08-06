@@ -3,9 +3,12 @@
 Never import server.py from here — callers pass session objects in explicitly.
 """
 
+import logging
 from typing import Any
 
 from ..reliability import retry_call
+
+_logger = logging.getLogger(__name__)
 
 
 def core_state(gdb_client: Any) -> str | None:
@@ -29,15 +32,40 @@ def core_state(gdb_client: Any) -> str | None:
 
 
 def autoload_symbols(sess: Any) -> bool:
-    """Load symbols from the profile's elf_path after a connect, if configured."""
+    """Load symbols from the profile's elf_path after a connect, if configured.
+
+    After loading, runs a non-throwing compare-sections to check whether the ELF
+    matches the target flash. A mismatch is logged at WARNING level so that
+    downstream agents can see the discrepancy even when there is no MCP response
+    carrier (this path is called from session setup, not from a tool handler).
+    """
     elf_path = sess.debug_profile.get().get("elf_path")
     if not elf_path:
         return False
     try:
         sess.gdb_client.load_symbols(elf_path)
-        return True
     except Exception:
         return False
+    # Non-throwing consistency check: log a warning if symbols don't match flash.
+    try:
+        report = sess.gdb_client.compare_sections_report()
+        if report["checked"]:
+            if report["mismatched"]:
+                _logger.warning(
+                    "Auto-loaded symbols from %s do NOT match target flash — %d section(s) mismatched: %s. "
+                    "Values read through these symbols will be meaningless. Re-flash or use the matching ELF.",
+                    elf_path,
+                    len(report["mismatched"]),
+                    "; ".join(report["mismatched"]),
+                )
+        else:
+            _logger.info(
+                "Could not verify symbol-flash match for %s: %s", elf_path, report.get("reason", "unknown")
+            )
+    except Exception:
+        # compare_sections_report is designed not to raise, but guard anyway.
+        _logger.debug("compare_sections_report failed unexpectedly", exc_info=True)
+    return True
 
 
 def recover_current_session(gdb_client: Any, gdb_manager: Any, last_session: dict, sess: Any) -> dict:

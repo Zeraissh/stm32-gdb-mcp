@@ -123,10 +123,44 @@ def load_symbols(ctx: ToolContext, arguments: dict) -> list[TextContent]:
             suggested_next_actions=["set_debug_profile"],
         )]
     resp = ctx.gdb_client.load_symbols(elf_path)
+    # Non-throwing consistency check: flag when the ELF doesn't match target flash.
+    report = ctx.gdb_client.compare_sections_report()
+    symbols_match = None  # None = could not check
+    mismatched_sections: list[str] = []
+    mismatch_reason: str | None = None
+    warning_text = ""
+    next_actions = ["set_breakpoint", "list_functions", "analyze_stack"]
+    if report["checked"]:
+        if report["mismatched"]:
+            symbols_match = False
+            mismatched_sections = report["mismatched"]
+            warning_text = (
+                "WARNING: Loaded symbols do NOT match target flash — "
+                f"{len(mismatched_sections)} section(s) mismatched. "
+                "Values read through these symbols WILL BE MEANINGLESS. "
+                "Re-flash the matching firmware (flash_firmware) or load a different ELF."
+            )
+            next_actions = ["flash_firmware", "verify_flash"] + next_actions
+        else:
+            symbols_match = True
+    else:
+        mismatch_reason = report.get("reason")
+    message = "Symbols loaded" if symbols_match is not False else f"Symbols loaded — {warning_text}"
+    data = {
+        "message": message,
+        "elf_path": elf_path,
+        "symbols_match": symbols_match,
+        "mismatched_sections": mismatched_sections,
+    }
+    if mismatch_reason:
+        data["symbols_mismatch_reason"] = mismatch_reason
+        if message == "Symbols loaded":
+            message = f"Symbols loaded (unable to verify flash match: {mismatch_reason})"
+            data["message"] = message
     return [content_success(
-        {"message": "Symbols loaded", "elf_path": elf_path},
+        data,
         raw_response=resp,
-        suggested_next_actions=["set_breakpoint", "list_functions", "analyze_stack"],
+        suggested_next_actions=next_actions,
     )]
 
 

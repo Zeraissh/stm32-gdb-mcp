@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### Symbol/target consistency / 符号与目标一致性
+
+- `load_symbols` now checks the loaded ELF against target flash and says so. GDB's
+  `compare-sections` was already available (via `verify_flash`) but nothing called it
+  on the symbol path, so loading symbols from a build the target is not running
+  succeeded silently — and every later symbol-based read returned data from the wrong
+  address. The values look plausible, which is worse than an error: in one real session
+  an agent read a telemetry magic word as zero and concluded the board was unprogrammed,
+  when in truth the board ran a different build of the same program. The response now
+  carries `symbols_match` (true / false / null when it could not be checked) plus
+  `mismatched_sections`, and a mismatch adds a prominent warning that values read through
+  these symbols will be meaningless, with `flash_firmware` / `verify_flash` as next
+  actions. It never fails the call — loading symbols for a not-yet-flashed board is
+  legitimate. The auto-load path (`autoload_symbols`, used on connect/recover) logs the
+  same mismatch at WARNING level, since it has no MCP response to carry it. /
+  `load_symbols` 现在会核对 ELF 与目标 flash 并如实报告。GDB 的 `compare-sections`
+  本就可用(`verify_flash` 在用),但符号路径从不调用它——于是"加载了一个目标并未运行
+  的构建"会静默成功,此后所有按符号的读取都落在错误地址上。读到的值看起来合理,这比
+  报错更糟:某次真实会话里 agent 把遥测 magic 读成 0,据此判定"板子未编程",而实际上
+  板上跑的是同一程序的另一个构建。响应新增 `symbols_match`(true/false/null=无法校验)
+  与 `mismatched_sections`;不匹配时给出显著告警(按这些符号读到的数值将无意义)并建议
+  `flash_firmware` / `verify_flash`。它【绝不】让调用失败——给尚未烧录的板加载符号是
+  合法用法。自动加载路径(`autoload_symbols`,连接/恢复会话时)没有响应载体,故以
+  WARNING 级日志记录同样的不匹配。
+- `verify_flash` keeps its throw-on-mismatch behaviour and now reuses the same parser,
+  and its response retains the comparison records as evidence. /
+  `verify_flash` 的不匹配即抛出行为不变,改为复用同一解析逻辑,并在响应中保留比对记录作为证据。
+
 ### Probe locking / 探针锁
 
 - Cross-process probe lock: starting a GDB server acquires an OS-level lock file keyed by
