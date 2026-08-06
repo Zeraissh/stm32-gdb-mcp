@@ -1,6 +1,16 @@
 # Changelog / 更新日志
 
-## [Unreleased]
+## [0.8.1] - 2026-08-06
+
+Two fixes that only real hardware could have found, both about the same thing:
+a debugger that fails quietly is worse than one that fails loudly. One turns an
+unattributable "init mode failed" into the PID that holds the probe; the other
+turns silently meaningless symbol reads into a warning that says so.
+
+两个只有真实硬件才能发现的修复，指向同一件事：静默失败的调试器比大声失败的更糟。
+一个把无从归因的 "init mode failed" 变成"谁占着探针的 PID"；另一个把静默无意义的
+符号读数变成一句明说的告警。
+
 
 ### Symbol/target consistency / 符号与目标一致性
 
