@@ -401,6 +401,68 @@ def test_verify_flash_passes_when_every_section_matches():
     assert client.verify_flash("fw.elf")
 
 
+def test_verify_flash_keeps_the_comparison_records_as_evidence():
+    # A passing verify must carry the compare-sections records in its response:
+    # without them a real verification is indistinguishable from one that never
+    # compared anything (the tool layer surfaces this as raw_response).
+    client = GdbClientManager()
+    client.gdb = ScriptedGdb({
+        "compare-sections": [
+            {"type": "console", "payload": "Section .text, range 0x8000000 -- 0x8001234: matched.\n"},
+            {"type": "result", "message": "done", "payload": None},
+        ]
+    })
+
+    responses = client.verify_flash("fw.elf")
+
+    payloads = [r.get("payload") for r in responses if isinstance(r.get("payload"), str)]
+    assert any("matched." in p for p in payloads)
+
+
+def test_compare_sections_report_picks_only_the_mismatched_sections():
+    # Parser precision: a mixed report must yield exactly the MIS-MATCHED entries,
+    # never the matched ones — a false positive here would tell an agent its
+    # symbols are wrong when they are fine.
+    client = GdbClientManager()
+    client.gdb = ScriptedGdb({
+        "compare-sections": [
+            {"type": "console", "payload": "Section .text, range 0x8000000 -- 0x8001234: matched.\n"},
+            {"type": "console", "payload": "Section .data, range 0x20000000 -- 0x20000100: MIS-MATCHED!\n"},
+            {"type": "console", "payload": "Section .rodata, range 0x8001234 -- 0x8002000: matched.\n"},
+            {"type": "console", "payload": "Section .bss, range 0x20000100 -- 0x20000200: MIS-MATCHED!\n"},
+            {"type": "result", "message": "done", "payload": None},
+        ]
+    })
+
+    report = client.compare_sections_report()
+
+    assert report["checked"] is True
+    assert report["reason"] is None
+    assert len(report["mismatched"]) == 2
+    assert all("MIS-MATCHED" in entry for entry in report["mismatched"])
+    assert any(".data" in entry for entry in report["mismatched"])
+    assert any(".bss" in entry for entry in report["mismatched"])
+    assert not any("matched." in entry and "MIS-MATCHED" not in entry for entry in report["mismatched"])
+
+
+def test_compare_sections_report_never_raises_when_the_command_blows_up():
+    # load_symbols calls this on every load; a throw here would turn a benign
+    # "symbols loaded for a not-yet-flashed board" into a hard tool failure.
+    class ExplodingGdb:
+        def write(self, command, timeout_sec=1.0):
+            raise RuntimeError("target is not connected")
+
+    client = GdbClientManager()
+    client.gdb = ExplodingGdb()
+
+    report = client.compare_sections_report()
+
+    assert report["checked"] is False
+    assert report["mismatched"] == []
+    assert "not connected" in report["reason"]
+    assert report["records"] == []
+
+
 def test_connect_seeds_the_halted_state_so_the_first_halt_sends_no_interrupt():
     # Attaching emits no *stopped (measured on hardware), so without the seed the
     # first halt_execution interrupts an already-halted target and the stub
@@ -944,3 +1006,5 @@ def test_list_source_returns_the_window_around_the_location_not_only_after_it():
     text = "".join(r["payload"] for r in records)
     assert "int main(void)" in text
     assert "next_window()" in text
+
+

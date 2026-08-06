@@ -13,7 +13,7 @@ from .gdb_decode import (
     decode_variables,
     implausible_register_set,
 )
-from .mi_guard import GdbCommandError, ensure_ok, has_terminal_result
+from .mi_guard import GdbCommandError, ensure_ok, find_mi_error, has_terminal_result
 from .stop_event import ALREADY_HALTED_RECORD, ALREADY_RUNNING_RECORD, parse_stop_event
 from .timeouts import TimeoutConfig
 
@@ -517,25 +517,57 @@ class GdbClientManager:
         self._symbol_cache.clear()
         return self.execute_cli_command(f"core-file {gdb_path(path)}", timeout_sec=self.timeouts.get("coredump_load"))
 
+    def compare_sections_report(self) -> dict:
+        """Run compare-sections and return structured findings — never raises.
+
+        GDB's compare-sections reports mismatches as "MIS-MATCHED!" in console
+        text while the MI command itself succeeds — the exact shape of a false
+        ok:true (issue #21). This method parses those console records into a
+        machine-readable report without throwing, so callers that cannot afford a
+        crash (like load_symbols) can detect mismatches safely.
+
+        Returns:
+            {checked: bool, mismatched: list[str], reason: str | None, records: list}.
+            *checked* is True only when the command ran and the records were parsed.
+            *mismatched* lists the payload strings of every MIS-MATCHED section.
+            *reason* carries the first error message when checked is False.
+            *records* is the raw MI record list, so callers can keep it as evidence
+            in their own response (verify_flash does).
+        """
+        try:
+            records = self.execute_cli_command("compare-sections", timeout_sec=self.timeouts.get("verify"))
+        except Exception as exc:
+            return {"checked": False, "mismatched": [], "reason": str(exc), "records": []}
+        # GDB may report errors as stream text without an ^error record.
+        mi_error = find_mi_error(records)
+        if mi_error:
+            return {"checked": False, "mismatched": [], "reason": mi_error, "records": records}
+        # Parse MIS-MATCHED sections from console/text payloads.
+        mismatched = [
+            record.get("payload").strip()
+            for record in records
+            if isinstance(record.get("payload"), str) and "MIS-MATCHED" in record["payload"]
+        ]
+        return {"checked": True, "mismatched": mismatched, "reason": None, "records": records}
+
     def verify_flash(self, file_path: str):
         responses = []
         responses.extend(self.load_symbols(file_path))
-        compared = self.execute_cli_command("compare-sections", timeout_sec=self.timeouts.get("verify"))
-        ensure_ok(compared, f"verify_flash({file_path})")
-        # compare-sections reports differing sections as "MIS-MATCHED!" in console
-        # text while the MI command itself succeeds — the exact shape of a false
-        # ok:true (issue #21).
-        mismatched = [
-            record.get("payload").strip()
-            for record in compared
-            if isinstance(record.get("payload"), str) and "MIS-MATCHED" in record["payload"]
-        ]
-        if mismatched:
+        report = self.compare_sections_report()
+        if not report["checked"]:
+            raise GdbCommandError(
+                f"verify_flash({file_path}) could not compare sections: {report['reason']}"
+            )
+        if report["mismatched"]:
             raise GdbCommandError(
                 f"verify_flash({file_path}) failed: target flash does not match the ELF — "
-                + "; ".join(mismatched)
+                + "; ".join(report["mismatched"])
             )
-        responses.extend(compared)
+        # Keep the comparison records in the response: they are the evidence that
+        # the verification actually ran, and the tool layer surfaces them as
+        # raw_response. Dropping them would make a passing verify indistinguishable
+        # from one that never compared anything.
+        responses.extend(report["records"])
         return responses
 
     def enable_cycle_counter(self):

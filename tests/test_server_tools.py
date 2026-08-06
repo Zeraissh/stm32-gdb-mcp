@@ -1214,6 +1214,9 @@ def test_load_symbols_falls_back_to_profile_elf(monkeypatch):
             loaded.append(path)
             return [{"message": "ok"}]
 
+        def compare_sections_report(self):
+            return {"checked": True, "mismatched": [], "reason": None}
+
     class FakeProfile:
         def get(self):
             return {"elf_path": "build/fw.elf"}
@@ -3781,3 +3784,108 @@ def test_flash_erase_reports_what_the_gdb_server_said(monkeypatch):
 
     assert payload["ok"] is True
     assert "erased address 0x0803f000 (length 4096)" in payload["data"]["server_output"]
+
+
+# --- load_symbols: symbol ↔ flash consistency alert ---
+
+def test_load_symbols_reports_symbols_match_true_when_all_sections_match(monkeypatch):
+    """AC1a: all sections match → symbols_match=true, no warning in message."""
+    import mcp_server.server as server_module
+
+    loaded = []
+
+    class FakeClient:
+        def load_symbols(self, path):
+            loaded.append(path)
+            return [{"message": "ok"}]
+
+        def compare_sections_report(self):
+            return {"checked": True, "mismatched": [], "reason": None}
+
+    class FakeProfile:
+        def get(self):
+            return {"elf_path": "build/fw.elf"}
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile())
+    payload = _payload(asyncio.run(handle_call_tool("load_symbols", {})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["symbols_match"] is True
+    assert payload["data"]["mismatched_sections"] == []
+    assert "WARNING" not in payload["data"]["message"]
+    assert loaded == ["build/fw.elf"]
+
+
+def test_load_symbols_reports_mismatch_with_alert_and_actions(monkeypatch):
+    """AC1b: MIS-MATCHED → symbols_match=false, message has warning,
+    suggested_next_actions includes flash_firmware."""
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def load_symbols(self, path):
+            return [{"message": "ok"}]
+
+        def compare_sections_report(self):
+            return {
+                "checked": True,
+                "mismatched": ["Section .text, range 0x8000000 -- 0x8001234: MIS-MATCHED!"],
+                "reason": None,
+            }
+
+    class FakeProfile:
+        def get(self):
+            return {"elf_path": "mismatch.elf"}
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile())
+    payload = _payload(asyncio.run(handle_call_tool("load_symbols", {})))
+
+    assert payload["ok"] is True  # AC6: still a success response
+    assert payload["data"]["symbols_match"] is False
+    assert len(payload["data"]["mismatched_sections"]) == 1
+    assert "MIS-MATCHED" in payload["data"]["mismatched_sections"][0]
+    assert "WARNING" in payload["data"]["message"]
+    assert "MEANINGLESS" in payload["data"]["message"]
+    assert "flash_firmware" in payload["suggested_next_actions"]
+    assert "verify_flash" in payload["suggested_next_actions"]
+
+
+def test_load_symbols_reports_null_when_compare_cannot_run(monkeypatch):
+    """AC1c: compare fails → symbols_match=null, reason present, ok=true (no error)."""
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def load_symbols(self, path):
+            return [{"message": "ok"}]
+
+        def compare_sections_report(self):
+            return {"checked": False, "mismatched": [], "reason": "target not connected"}
+
+    class FakeProfile:
+        def get(self):
+            return {"elf_path": "fw.elf"}
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile())
+    payload = _payload(asyncio.run(handle_call_tool("load_symbols", {})))
+
+    assert payload["ok"] is True  # not an error response
+    assert payload["data"]["symbols_match"] is None
+    assert payload["data"]["symbols_mismatch_reason"] == "target not connected"
+    assert "unable to verify" in payload["data"]["message"]
+
+
+def test_load_symbols_no_profile_elf_is_still_an_error(monkeypatch):
+    """No elf_path at all → error, same as before."""
+    import mcp_server.server as server_module
+
+    class FakeProfile:
+        def get(self):
+            return {}
+
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile())
+    payload = _payload(asyncio.run(handle_call_tool("load_symbols", {})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "missing_elf"
