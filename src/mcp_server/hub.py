@@ -624,9 +624,13 @@ class HubManager:
                     f"an unloaded port floats rather than reading zero. Power WAS removed "
                     f"either way. Causes, in order: nothing is connected to this port; the "
                     f"target is in deep sleep (under {LOAD_CURRENT_MA} mA); or this channel's "
-                    f"current sense is not reporting (seen on real hardware: one channel read "
-                    f"0 mA indefinitely while its voltage sense and power switching both "
-                    f"worked -- compare against another channel with a known load)."
+                    f"current sense is temporarily not reporting. That third case is real and "
+                    f"TRANSIENT: on a 4CH hub one channel returned 0 mA for several minutes "
+                    f"after a power cycle -- surviving an overcurrent-latch clear, two more "
+                    f"power cycles and a hub-MCU reboot -- while its voltage sense and power "
+                    f"switching kept working, then recovered on its own. Before concluding "
+                    f"anything from a 0 mA reading, re-read it and compare against another "
+                    f"channel with a known load."
                 )
             else:
                 result["browned_out"] = measured < BROWNOUT_MV

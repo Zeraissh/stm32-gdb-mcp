@@ -234,9 +234,11 @@ def test_an_unloaded_port_gives_an_inconclusive_verdict_not_a_wrong_one(fake_hub
     assert "cannot confirm a cold boot" in result["warning"]
     assert "Power WAS removed either way" in result["warning"]
     # All three real causes are named, including the one a bench actually hit:
-    # a channel whose current sense stopped reporting.
+    # a channel whose current sense stopped reporting -- and that it was
+    # TRANSIENT, so a single 0 mA reading is not a conclusion.
     assert "deep sleep" in result["warning"]
-    assert "current sense is not reporting" in result["warning"]
+    assert "current sense is temporarily not reporting" in result["warning"]
+    assert "re-read it" in result["warning"]
 
 
 def test_a_sample_the_device_marks_invalid_is_not_presented_as_data(fake_hub):
