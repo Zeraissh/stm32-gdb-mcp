@@ -7,7 +7,7 @@ from ..error_taxonomy import classify_error, refine_target_unreachable
 from ..reliability import retry_call
 from ..self_check import evaluate_self_check
 from ..tool_response import content_error, content_success
-from ._helpers import autoload_symbols, recover_current_session
+from ._helpers import autoload_symbols, core_state, hub_binding, recover_current_session
 from .context import ToolContext
 from .registry import register
 
@@ -342,8 +342,24 @@ def set_adapter_speed(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     description="Recovers a dropped or wedged session: cleanly tears down the GDB client and "
                 "server, then restarts the server (with retry/backoff for a busy probe) using "
                 "the last start_debug_session arguments and reconnects. Use after a "
-                "probe_unavailable or connection_lost error.",
-    inputSchema={"type": "object", "properties": {}}
+                "probe_unavailable or connection_lost error. When a programmable USB hub is "
+                "configured (debug_profile hub.channel), a retry that cannot fix the probe "
+                "escalates to toggling its USB data lines and then power-cycling the port -- "
+                "the only in-band cure for a wedged endpoint. Any hub action taken is reported "
+                "in recovery_steps.",
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "escalate": {
+                "type": "boolean",
+                "description": "Allow hub data-line/power escalation when a plain retry fails (default true).",
+            },
+            "deep": {
+                "type": "boolean",
+                "description": "Add a long (2 s) power-off rung to drain bulk capacitance.",
+            },
+        },
+    }
 ))
 def recover_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     if not ctx.last_session.get("server_type"):
@@ -352,14 +368,24 @@ def recover_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
             code="no_session",
             suggested_next_actions=["start_debug_session"],
         )]
-    recovered = recover_current_session(ctx.gdb_client, ctx.gdb_manager, ctx.last_session, ctx.sess)
+    binding = hub_binding(ctx) if arguments.get("escalate", True) else None
+    hub, channel = binding if binding else (None, None)
+    recovered = recover_current_session(
+        ctx.gdb_client, ctx.gdb_manager, ctx.last_session, ctx.sess,
+        hub=hub, channel=channel,
+        escalate=arguments.get("escalate", True),
+        deep=bool(arguments.get("deep")),
+    )
+    data = {
+        "message": recovered["message"],
+        "server_type": recovered["server_type"],
+        "port": recovered["port"],
+        "symbols_loaded": recovered["symbols_loaded"],
+    }
+    if "recovery_steps" in recovered:
+        data["recovery_steps"] = recovered["recovery_steps"]
     return [content_success(
-        {
-            "message": recovered["message"],
-            "server_type": recovered["server_type"],
-            "port": recovered["port"],
-            "symbols_loaded": recovered["symbols_loaded"],
-        },
+        data,
         raw_response=recovered["raw_response"],
         suggested_next_actions=["self_check", "check_session_health"],
     )]
@@ -384,16 +410,101 @@ def check_session_health(ctx: ToolContext, arguments: dict) -> list[TextContent]
         ctx.gdb_client.start_gdb()
         ctx.gdb_client.connect("localhost", ctx.gdb_manager.port)
         reconnected = True
+    state = core_state(ctx.gdb_client)
+    responsive, identity = _target_evidence(ctx.gdb_client, state)
     health = {
         "gdb_alive": ctx.gdb_client.is_alive(),
         "server_alive": ctx.gdb_manager.is_alive(),
-        "target_responsive": ctx.gdb_client.probe_target(),
+        "target_responsive": responsive,
         "server_type": ctx.gdb_manager.server_type,
         "port": ctx.gdb_manager.port,
         "reconnected": reconnected,
     }
-    next_actions = [] if health["target_responsive"] else ["start_debug_session", "get_gdb_server_logs"]
-    return [content_success(health, suggested_next_actions=next_actions)]
+    if identity:
+        health["identity"] = identity
+    hub_state = _hub_health(ctx)
+    if hub_state:
+        health["hub"] = hub_state
+
+    if responsive:
+        next_actions = []
+    elif state == "running":
+        # A running core is not a broken link. Sending an agent to recover_session
+        # here would tear down a perfectly good session.
+        next_actions = ["halt_execution", "self_check"]
+    else:
+        # recover_session first: with a live server, a re-enumerated probe is the
+        # usual cause and restarting the whole session is the heavier remedy.
+        next_actions = ["self_check", "recover_session", "start_debug_session",
+                        "get_gdb_server_logs"]
+    return [content_success(health, suggested_next_actions=next_actions, core_state=state)]
+
+
+def _target_evidence(gdb_client, state: str | None) -> tuple[bool, dict | None]:
+    """Is the target really answering? Judge by evidence, not by "no exception".
+
+    ``probe_target`` only asked whether GDB answered at all, which it does from
+    its own state even when the link underneath is dead. Measured on hardware
+    after a hub power cycle dropped the probe: it reported responsive=true while
+    every memory read returned 0x00000000 and self_check reported
+    cpuid=0x00000000. A health check that says "healthy" about a dead link is
+    worse than one that says nothing.
+
+    So read CPUID and apply the same signature test self_check uses: a real
+    Cortex-M has implementer 0x41 and the architecture constant 0xF. All-zero,
+    all-ones, or byte-swapped reads all fail it.
+
+    A RUNNING core also reads back zeros here (measured), which is not evidence
+    of a dead link -- but it is not evidence of a live one either. That case is
+    reported as unverified with the fix being ``halt_execution``, not
+    ``recover_session``: two very different failures should not look the same.
+    """
+    try:
+        cpuid = gdb_client.read_word(0xE000ED00)
+    except Exception as exc:  # noqa: BLE001 - an unanswered read IS the answer
+        return False, {"cpuid": None, "verified": False,
+                       "reason": f"CPUID read failed: {exc}"[:200]}
+
+    implementer = (cpuid >> 24) & 0xFF
+    constant = (cpuid >> 16) & 0xF
+    ok = implementer == 0x41 and constant == 0xF
+    evidence: dict = {"cpuid": f"0x{cpuid:08x}", "verified": ok}
+    if ok:
+        return True, evidence
+
+    if state == "running":
+        evidence["reason"] = (
+            f"Identity could not be verified because the core is RUNNING: reads returned "
+            f"0x{cpuid:08x}. This is expected while running and is NOT evidence of a dead link. "
+            f"Halt the core to check the link for real."
+        )
+    else:
+        evidence["reason"] = (
+            f"CPUID 0x{cpuid:08x} is not a Cortex-M signature (implementer 0x{implementer:02x}, "
+            f"expected 0x41). The link answered but the answer is not the target -- the probe "
+            f"has most likely re-enumerated, and every read is returning meaningless data."
+        )
+    return False, evidence
+
+
+def _hub_health(ctx: ToolContext) -> dict | None:
+    """One ~13 ms hub snapshot for this session's port. Costs no target traffic.
+
+    An unresponsive target and a port reading 0 mV are the same story told twice;
+    seeing both at once is what turns "the link died" into "the board lost power".
+    """
+    binding = hub_binding(ctx)
+    if binding is None:
+        return None
+    manager, channel = binding
+    try:
+        described = manager.describe()
+    except Exception:  # noqa: BLE001 - health must never fail because of the hub
+        return None
+    for port in described.get("ports", []):
+        if port.get("channel") == channel:
+            return dict(port)
+    return {"channel": channel}
 
 
 @register(Tool(

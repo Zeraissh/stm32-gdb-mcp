@@ -4,8 +4,11 @@ Never import server.py from here — callers pass session objects in explicitly.
 """
 
 import logging
+import time
 from typing import Any
 
+from ..hub_recovery import HubRecoveryError
+from ..hub_recovery import escalate as hub_escalate
 from ..reliability import retry_call
 
 _logger = logging.getLogger(__name__)
@@ -72,7 +75,44 @@ def autoload_symbols(sess: Any) -> bool:
     return True
 
 
-def recover_current_session(gdb_client: Any, gdb_manager: Any, last_session: dict, sess: Any) -> dict:
+def hub_binding(ctx: Any) -> tuple[Any, int] | None:
+    """The (manager, channel) this session's board sits on, or None.
+
+    Returns None for every "no hub here" reason -- extra not installed, no hub
+    block in the profile, no channel mapped, hub offline. A missing hub is never
+    an error, just no escalation available, so this must not raise.
+    """
+    try:
+        manager = ctx.fns.hub_manager
+        profile = ctx.debug_profile.get()
+        spec = profile.get("hub")
+        if not spec:
+            return None
+        manager.configure(spec)
+        channel, _source = manager.channel_for(
+            profile=profile,
+            session_id=ctx.session_id,
+            probe_serial=getattr(ctx.sess, "serial", None) or profile.get("serial"),
+        )
+    except Exception:  # noqa: BLE001 - no hub is a normal state, not a failure
+        return None
+    return manager, channel
+
+
+def recover_current_session(gdb_client: Any, gdb_manager: Any, last_session: dict, sess: Any,
+                            hub: Any = None, channel: int | None = None,
+                            escalate: bool = True, deep: bool = False,
+                            sleep=None) -> dict:
+    """Tear down client+server and bring the session back up.
+
+    With ``hub`` unset -- no extra installed, no hub configured, or a caller that
+    opted out -- this is exactly the pre-hub code path: one ``retry_call`` with
+    the same attempts and backoff. The hub only ever adds rungs ABOVE that, and
+    only for failures that re-enumeration can actually cure.
+    """
+    # Resolved at call time, not bound as a default, so tests can replace
+    # _helpers.time with a fake clock and keep the suite at unit speed.
+    sleep = sleep or time.sleep
     if not last_session.get("server_type"):
         raise RuntimeError("No prior session to recover; call start_debug_session first.")
     for teardown in (gdb_client.stop_gdb, gdb_manager.stop):
@@ -81,18 +121,42 @@ def recover_current_session(gdb_client: Any, gdb_manager: Any, last_session: dic
         except Exception:
             pass
 
-    port = retry_call(
-        lambda: gdb_manager.start(last_session["server_type"], last_session["server_args"]),
-        attempts=3,
-        backoff_base=0.8,
-    )
+    def start():
+        return gdb_manager.start(last_session["server_type"], last_session["server_args"])
+
+    steps: list[dict] = []
+    if hub is not None and escalate:
+        # Honour the profile's power_cycle timings, same as reset_target(cold).
+        # A board that needs 800 ms to brown out needs it on every path, and
+        # having the ladder quietly use 400 ms instead is the kind of split
+        # behaviour that makes a flaky rig look like a flaky tool.
+        cycle: dict = {}
+        try:
+            cycle = (sess.debug_profile.get().get("hub") or {}).get("power_cycle") or {}
+        except Exception:  # noqa: BLE001 - timings are an optimization, not a requirement
+            cycle = {}
+        try:
+            port, steps = hub_escalate(start, hub, channel, deep=deep, sleep=sleep,
+                                       off_ms=cycle.get("off_ms"),
+                                       settle_ms=cycle.get("settle_ms"))
+        except HubRecoveryError as exc:
+            # Surface the original failure, not a wrapper: callers classify on it.
+            raise exc.cause if exc.cause is not None else exc from None
+    else:
+        port = retry_call(start, attempts=3, backoff_base=0.8, sleep=sleep)
+
     gdb_client.start_gdb()
     resp = gdb_client.connect("localhost", port)
     symbols = autoload_symbols(sess)
-    return {
+    recovered = {
         "message": "Session recovered",
         "server_type": last_session["server_type"],
         "port": port,
         "symbols_loaded": symbols,
         "raw_response": resp,
     }
+    # Only reported when the hub was actually involved: a plain soft recovery must
+    # look exactly like it always did.
+    if any(step.get("rung") != "soft" for step in steps):
+        recovered["recovery_steps"] = steps
+    return recovered

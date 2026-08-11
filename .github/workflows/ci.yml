@@ -122,3 +122,29 @@ jobs:
 
       - name: Run tests against floors
         run: python -m pytest -q
+
+  # The main test job installs ".[dev]" WITHOUT the hub extra on purpose: that is what
+  # proves the optional dependency is genuinely optional. This job is the other half --
+  # it installs the extra so the real smartusbhub package is importable, which is the
+  # only way to catch an import-time regression in it. Still hardware-free: the suite
+  # drives FakeHub throughout and never opens a serial port.
+  hub-extra:
+    name: hub extra installed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install with the hub extra
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,hub]"
+
+      - name: Confirm the extra is actually importable
+        run: python -c "import smartusbhub; print(smartusbhub.SmartUSBHub)"
+
+      - name: Run tests
+        run: python -m pytest -q

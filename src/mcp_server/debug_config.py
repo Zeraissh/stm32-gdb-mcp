@@ -18,6 +18,7 @@ TOP_LEVEL_FIELDS = {
     "swo",
     "reset",
     "hil",
+    "hub",
     "notes",
 }
 
@@ -89,6 +90,7 @@ def validate_debug_config(config: dict) -> dict:
     _validate_swo(config.get("swo"), errors)
     _validate_reset(config.get("reset"), errors)
     _validate_hil(config.get("hil"), errors)
+    _validate_hub(config.get("hub"), errors)
 
     return {
         "valid": not errors,
@@ -182,6 +184,62 @@ def _validate_hil(hil, errors: list[str]):
         value = hil.get(field)
         if value is not None and (not isinstance(value, str) or not value.strip()):
             errors.append(f"hil.{field} must be a non-empty string")
+
+
+def _validate_hub(hub, errors: list[str]):
+    if hub is None:
+        return
+    if not isinstance(hub, dict):
+        errors.append("hub must be an object")
+        return
+    for field in ("port", "serial"):
+        value = hub.get(field)
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            errors.append(f"hub.{field} must not be empty when provided")
+
+    channel = hub.get("channel")
+    if channel is not None and (not isinstance(channel, int) or isinstance(channel, bool) or channel < 1):
+        errors.append("hub.channel must be an integer >= 1 (channels are 1-based)")
+
+    guard = hub.get("guard")
+    if guard is not None and guard not in ("allow", "confirm", "dry_run"):
+        errors.append("hub.guard must be one of: allow, confirm, dry_run")
+
+    channel_map = hub.get("map")
+    if channel_map is not None:
+        if not isinstance(channel_map, dict):
+            errors.append("hub.map must be an object keyed by channel number")
+        else:
+            for key, entry in channel_map.items():
+                try:
+                    number = int(key)
+                except (TypeError, ValueError):
+                    errors.append(f"hub.map key {key!r} must be a channel number")
+                    continue
+                if number < 1:
+                    errors.append(f"hub.map key {key!r} must be >= 1 (channels are 1-based)")
+                if not isinstance(entry, dict):
+                    errors.append(f"hub.map[{number}] must be an object with serial and/or label")
+                    continue
+                # `key` is what hub(action=discover) writes for a probe with no
+                # serial number: a USB-port-derived identity, stable while the
+                # probe stays in that port.
+                for field in ("serial", "label", "key"):
+                    value = entry.get(field)
+                    if value is not None and (not isinstance(value, str) or not value.strip()):
+                        errors.append(f"hub.map[{number}].{field} must be a non-empty string")
+
+    power_cycle = hub.get("power_cycle")
+    if power_cycle is not None:
+        if not isinstance(power_cycle, dict):
+            errors.append("hub.power_cycle must be an object")
+        else:
+            for field in ("off_ms", "settle_ms"):
+                value = power_cycle.get(field)
+                if value is None:
+                    continue
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+                    errors.append(f"hub.power_cycle.{field} must be a non-negative number")
 
 
 def _is_string_list(value):

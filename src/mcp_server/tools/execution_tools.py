@@ -4,8 +4,8 @@ from mcp.types import TextContent, Tool
 
 from ..reset_strategy import resolve_reset_command
 from ..stop_event import was_already_halted, was_already_running
-from ..tool_response import content_success
-from ._helpers import core_state, recover_current_session
+from ..tool_response import content_error, content_success
+from ._helpers import core_state, hub_binding, recover_current_session
 from .context import ToolContext
 from .registry import register
 
@@ -27,12 +27,16 @@ def _stop_event_next_actions(event: dict) -> list[str]:
 
 @register(Tool(
     name="reset_target",
-    description="Resets the target device. Can optionally halt immediately after reset.",
+    description="Resets the target device. Can optionally halt immediately after reset. "
+                "strategy=\"cold\" removes target power through a configured programmable USB "
+                "hub before resetting, which is the only strategy that produces a true "
+                "power-on reset (RCC_CSR POR flag, cleared .noinit, drained RAM); it fails "
+                "rather than silently doing a warm reset when no hub channel is mapped.",
     inputSchema={
         "type": "object",
         "properties": {
             "halt": {"type": "boolean", "description": "If true, halts the CPU immediately after reset."},
-            "strategy": {"type": "string", "description": "Optional reset strategy, e.g. default, under_reset, or software."},
+            "strategy": {"type": "string", "description": "Optional reset strategy: default, under_reset, software, or cold (hub power cycle)."},
             "command": {"type": "string", "description": "Optional custom GDB monitor reset command."}
         },
         "required": ["halt"]
@@ -48,8 +52,103 @@ def reset_target(ctx: ToolContext, arguments: dict) -> list[TextContent]:
         strategy=arguments.get("strategy") or reset_config.get("strategy"),
         command=arguments.get("command") or reset_config.get("command"),
     )
+
+    data: dict = {"message": "Target reset", "reset": resolved}
+    if resolved.get("requires_power_cycle"):
+        binding = hub_binding(ctx)
+        if binding is None:
+            # Downgrading to a warm reset here would report success for something
+            # that did not happen -- the exact false-success shape reset_strategy
+            # already warns about for 'under_reset'.
+            return [content_error(
+                "strategy=\"cold\" needs a programmable USB hub channel for this session, and "
+                "none is mapped. A cold reset is not a command, it is removing power -- "
+                "silently doing a warm reset instead would report a power-on reset that never "
+                "happened. Map a channel, or use strategy=\"default\".",
+                code="cold_reset_unavailable",
+                suggested_next_actions=["hub(action=describe)",
+                                        "debug_profile(action=set, hub=...)",
+                                        "reset_target(strategy=\"default\")"],
+            )]
+        if not ctx.last_session.get("server_type"):
+            return [content_error(
+                "strategy=\"cold\" removes power from the port the debug probe is on, which drops "
+                "the debug session -- so it needs a session it can re-establish afterwards, and "
+                "there is no prior start_debug_session to repeat.",
+                code="no_session",
+                suggested_next_actions=["start_debug_session"],
+            )]
+
+        manager, channel = binding
+        cycle_config = (profile.get("hub") or {}).get("power_cycle") or {}
+
+        # Tear the session down BEFORE cutting power. Killing a GDB server by
+        # yanking its probe's VBUS is the wedging scenario this whole feature
+        # exists to fix; do not create it while curing it.
+        for teardown in (ctx.gdb_client.stop_gdb, ctx.gdb_manager.stop):
+            try:
+                teardown()
+            except Exception:  # noqa: BLE001 - teardown is best effort
+                pass
+
+        try:
+            data["power_cycle"] = manager.power_cycle(
+                channel,
+                off_ms=int(cycle_config.get("off_ms", 400)),
+                settle_ms=int(cycle_config.get("settle_ms", 1500)),
+                confirm=True,  # the caller asked for a cold reset by name
+            )
+        except Exception as exc:  # noqa: BLE001 - report, never half-reset silently
+            return [content_error(
+                f"cold reset could not power-cycle hub channel {channel}: {exc}",
+                code="cold_reset_failed",
+                suggested_next_actions=["hub(action=describe)", "recover_session",
+                                        "reset_target(strategy=\"default\")"],
+            )]
+
+        # On any normal rig the probe sits on the port we just cut, so it has
+        # re-enumerated and the old GDB connection is dead. Measured on hardware:
+        # skipping this leaves a session where reads return 0x00000000 and
+        # check_session_health still reports target_responsive=true -- a wrong
+        # answer that looks exactly like a right one.
+        try:
+            recovered = recover_current_session(ctx.gdb_client, ctx.gdb_manager,
+                                                ctx.last_session, ctx.sess, escalate=False)
+        except Exception as exc:  # noqa: BLE001
+            return [content_error(
+                f"the board was power-cycled, but the debug session could not be re-established: "
+                f"{exc}. The target is running from its power-on reset; reconnect before reading "
+                f"anything, or reads will return zeros that look like data.",
+                code="cold_reset_reattach_failed",
+                data=data,
+                suggested_next_actions=["recover_session", "self_check"],
+            )]
+
+        data["reattached"] = {"port": recovered["port"],
+                              "symbols_loaded": recovered["symbols_loaded"]}
+
+        # The power-on reset IS the reset. Issuing another one would overwrite the
+        # RCC_CSR evidence and re-run the firmware's early init, destroying the
+        # cold-boot state (.noinit, drained RAM) that is the only reason to ask
+        # for this strategy.
+        if halt:
+            resp = ctx.gdb_client.halt_execution()
+            data["message"] = "Target power-cycled (power-on reset) and halted"
+            data["note"] = (
+                "Halted where the core was, NOT at the reset vector: the firmware runs for the "
+                "USB re-enumeration window (~1-3 s) before the probe is usable again. No second "
+                "reset was issued -- that would have overwritten the RCC_CSR power-on flag and "
+                "re-run early init, destroying the cold-boot state. To catch the core AT the "
+                "reset vector, start the server with server_args containing "
+                "-c \"reset_config srst_only srst_nogate connect_assert_srst\"."
+            )
+        else:
+            resp = None
+            data["message"] = "Target power-cycled (power-on reset) and left running"
+        return [content_success(data, raw_response=resp)]
+
     resp = ctx.gdb_client.reset_halt(command=resolved["command"])
-    return [content_success({"message": "Target reset", "reset": resolved}, raw_response=resp)]
+    return [content_success(data, raw_response=resp)]
 
 
 @register(Tool(
@@ -215,7 +314,12 @@ def run_for_duration(ctx: ToolContext, arguments: dict) -> list[TextContent]:
         capture=arguments.get("capture"),
         sample=arguments.get("sample"),
         resume_after=arguments.get("resume_after", False),
-        recover=lambda: recover_current_session(ctx.gdb_client, ctx.gdb_manager, ctx.last_session, ctx.sess),
+        # escalate=False on purpose: this is an automatic mid-run recovery, and
+        # power-cycling the board would destroy the very run being measured.
+        # Escalation stays where the agent explicitly asked to fix a link
+        # (recover_session).
+        recover=lambda: recover_current_session(ctx.gdb_client, ctx.gdb_manager, ctx.last_session,
+                                                ctx.sess, escalate=False),
     )
     next_actions = ["capture_state", "read_memory"]
     if result.get("resume_after"):

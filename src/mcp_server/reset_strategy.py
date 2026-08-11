@@ -1,20 +1,30 @@
 DEFAULT_STRATEGY = "default"
 
+# 'cold' is the one strategy whose difference is NOT in the command: it removes
+# target power through a programmable USB hub and then issues the same reset the
+# default would. What makes it cold is the power sequence, so it maps to the same
+# command on every backend by design -- and is excluded from the alias note below,
+# because calling it an alias would be actively misleading.
+POWER_CYCLE_STRATEGY = "cold"
+
 RESET_COMMANDS = {
     "openocd": {
         "default": {True: "monitor reset halt", False: "monitor reset run"},
         "under_reset": {True: "monitor reset halt", False: "monitor reset run"},
         "software": {True: "monitor soft_reset_halt", False: "monitor reset run"},
+        "cold": {True: "monitor reset halt", False: "monitor reset run"},
     },
     "stlink": {
         "default": {True: "monitor reset halt", False: "monitor reset run"},
         "under_reset": {True: "monitor reset halt", False: "monitor reset run"},
         "software": {True: "monitor reset halt", False: "monitor reset run"},
+        "cold": {True: "monitor reset halt", False: "monitor reset run"},
     },
     "jlink": {
         "default": {True: "monitor reset halt", False: "monitor reset go"},
         "under_reset": {True: "monitor reset halt", False: "monitor reset go"},
         "software": {True: "monitor reset halt", False: "monitor reset go"},
+        "cold": {True: "monitor reset halt", False: "monitor reset go"},
     },
 }
 
@@ -38,11 +48,17 @@ def resolve_reset_command(
     if not strategies or normalized_strategy not in strategies:
         raise ValueError(f"Unsupported reset strategy '{normalized_strategy}' for server type '{normalized_server}'")
 
-    resolved = {
+    resolved: dict = {
         "server_type": normalized_server,
         "strategy": normalized_strategy,
         "command": strategies[normalized_strategy][bool(halt)],
     }
+    if normalized_strategy == POWER_CYCLE_STRATEGY:
+        # Not an alias: the caller gets a real power cycle before this command runs.
+        # reset_target refuses rather than silently downgrading when no hub is
+        # mapped, so this flag is the contract between the two.
+        resolved["requires_power_cycle"] = True
+        return resolved
     # Say so when a strategy resolves to the same command as another: 'under_reset'
     # is currently an alias of 'default' for every backend, and silently doing
     # nothing different is exactly the false-success shape this server keeps
@@ -52,12 +68,15 @@ def resolve_reset_command(
     # default's command anyway — asking for "default" and getting it is no surprise.
     aliases = sorted(
         name for name, commands in strategies.items()
-        if name != normalized_strategy and commands[bool(halt)] == resolved["command"]
+        if name != normalized_strategy and name != POWER_CYCLE_STRATEGY
+        and commands[bool(halt)] == resolved["command"]
     ) if normalized_strategy != DEFAULT_STRATEGY else []
     if aliases:
         resolved["note"] = (
             f"'{normalized_strategy}' resolves to the same command as {aliases} for "
             f"{normalized_server}. For true connect-under-reset, start the server with "
-            "server_args containing -c \"reset_config srst_only srst_nogate connect_assert_srst\"."
+            "server_args containing -c \"reset_config srst_only srst_nogate connect_assert_srst\". "
+            "For a real cold boot (power actually removed), use strategy=\"cold\" with a "
+            "programmable USB hub configured."
         )
     return resolved

@@ -15,6 +15,7 @@ runner 上，该机器需要连接探针和目标板，并安装 GDB 与受支�
 - One supported GDB server on `PATH`: OpenOCD, J-Link, or ST-Link / `PATH` 中至少有一种受支持的 GDB Server：OpenOCD、J-Link 或 ST-Link
 - A connected STM32 target board / 已连接的 STM32 目标板
 - A debug config YAML file for the target / 面向该目标板的调试 YAML 配置
+- Optional: a SmartUSBHub plus `pip install 'stm32-gdb-mcp[hub]'` to run several boards in one dispatch (see Rack Mode below) / 可选：SmartUSBHub 与 `[hub]` extra，用于一次运行多块板（见下文机架模式）
 - Optional RTT or UART host tools when validating log capture / 验证日志采集时需要可选的 RTT 或 UART 主机工具
 
 ## Manual Workflow / 手动工作流
@@ -25,9 +26,74 @@ Run the GitHub Actions workflow named `Hardware-in-the-loop`.
 
 Inputs / 输入参数：
 
-- `board`: connected board profile, one of `l151`, `l431`, or `u535` / 当前连接的板卡配置，可选 `l151`、`l431` 或 `u535`
-- `config_path`: optional YAML override; empty uses `examples/configs/stm32<board>_openocd.yaml` / 可选 YAML 路径覆盖；留空时使用 `examples/configs/stm32<board>_openocd.yaml`
+- `boards`: JSON array of board profiles to run, e.g. `["l431"]` or `["l151","l431","u535"]`. Each becomes one matrix leg. Without a hub, list exactly the board that is physically connected. / 要运行的板卡列表（JSON 数组），每项对应一个 matrix 分支。没有 Hub 时只填当前物理连接的那一块。
+- `config_path`: optional YAML override, single-board runs only; empty uses `examples/configs/stm32<board>_openocd.yaml` / 可选 YAML 路径覆盖（仅单板）；留空时使用 `examples/configs/stm32<board>_openocd.yaml`
+- `use_hub`: isolate each board on its hub channel before running it / 运行前用 Hub 隔离每块板
+- `rack_config`: hub rack wiring, default `examples/configs/rack_hub.yaml` / Hub 机架接线配置
 - `smoke_command`: optional command executed after setup and config validation / 安装和配置校验后执行的可选烟测命令
+
+Legs always run one at a time (`max-parallel: 1`): there is one hub, one USB-CDC
+control port, and SWD is exclusive, so overlapping legs would fight over all three.
+
+分支始终串行执行：只有一个 Hub、一个 USB-CDC 控制口，且 SWD 是独占的。
+
+## Rack Mode / 机架模式
+
+With a programmable USB hub (`pip install 'stm32-gdb-mcp[hub]'`) the `boards` input
+stops meaning "which board did a human plug in" and starts meaning "which boards should
+this run cover". Each leg calls:
+
+接上可编程 USB Hub 后，`boards` 的含义从"人插了哪块板"变成"这次要跑哪些板"。每个分支执行：
+
+```bash
+python scripts/hil_rack.py isolate --config examples/configs/rack_hub.yaml --board l431
+```
+
+That disconnects every other channel's USB data lines, so `detect_probe` sees exactly one
+probe and `start_debug_session`'s single-probe auto-select stays on its safe path — the
+server never has to choose between two probes, which is the failure the multi-probe
+detection work was added to prevent. An `if: always()` step then restores the rack:
+
+这会断开其余通道的 USB 数据线，使 `detect_probe` 只看到一个探针，单探针自动选择的安全路径
+恒成立。结尾用 `if: always()` 步骤恢复机架：
+
+```bash
+python scripts/hil_rack.py restore --config examples/configs/rack_hub.yaml
+```
+
+### Wiring the rack / 机架接线
+
+1. Plug every board's probe into a hub channel and copy `examples/configs/rack_hub.yaml`.
+2. Set a `label` per channel matching the board profile names (`l151`, `l431`, `u535`).
+3. Fill the serials automatically — with all boards attached, run `hub(action=discover, apply=true)`
+   once. It drops each channel's data lines in turn and records which probe disappeared.
+   This is slow on Windows (`detect_probe` walks the whole USB device tree, ~8.5 s per
+   channel), which is why it is opt-in and run once rather than at every session start.
+4. Add `hub: {channel: N}` to each board's own config so `recover_session`,
+   `reset_target(strategy="cold")`, and `hub(action=measure)` know which port that board is on.
+
+插好所有板后跑一次 `hub(action=discover, apply=true)` 即可自动填好 serial；该调用在 Windows 上
+较慢，因此是显式选项而非每次会话启动都做。
+
+### What the hub makes testable / Hub 让哪些测试成为可能
+
+- **Cold vs warm boot.** `reset_target(strategy="cold")` removes power, so `.noinit`
+  persistence, RCC_CSR POR flags, and RAM decay become testable instead of assumed.
+  It fails rather than silently doing a warm reset when no channel is mapped.
+- **Watchdog and brownout behaviour**, which no SWD reset can reproduce.
+- **Low-power current draw.** `hub(action=measure)` reads the rail while the core runs, so
+  a Stop/Standby claim becomes a number. An MCU that entered Stop and one that only thinks
+  it did are identical over SWD and differ by orders of magnitude here.
+- **Unattended recovery.** A wedged probe is cleared by `recover_session`'s escalation
+  ladder instead of needing someone to walk over and replug it.
+
+Hub 让冷/热启动、看门狗与掉电行为、低功耗电流、以及无人值守的探针恢复真正可测。
+
+`tests/hil/test_real_hub_smoke.py` covers these on hardware and is gated behind
+`STM32_GDB_MCP_HIL_HUB=1` in addition to `STM32_GDB_MCP_HIL=1`, so a rig with a board but
+no hub keeps running the existing smoke unchanged.
+
+该文件额外由 `STM32_GDB_MCP_HIL_HUB=1` 控制，因此没有 Hub 的台子照常只跑原有 smoke。
 
 Example smoke command / 烟测命令示例：
 

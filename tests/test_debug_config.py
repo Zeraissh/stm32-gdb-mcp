@@ -84,6 +84,56 @@ def test_validate_debug_config_rejects_invalid_reset_and_hil_sections():
     assert "hil.expected_core must be a non-empty string" in result["errors"]
 
 
+def test_validate_debug_config_accepts_a_hub_section():
+    result = validate_debug_config({
+        "server_type": "openocd",
+        "hub": {
+            "port": "COM7",
+            "channel": 2,
+            "guard": "confirm",
+            "map": {1: {"serial": "0671FF56", "label": "l151"}, 2: {"label": "l431"}},
+            "power_cycle": {"off_ms": 400, "settle_ms": 1500},
+        },
+    })
+
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+
+def test_validate_debug_config_accepts_string_hub_map_keys_from_yaml():
+    # PyYAML gives int keys for `1:` but str keys for `"1":`; both name a channel.
+    result = validate_debug_config({"hub": {"map": {"3": {"label": "u535"}}}})
+
+    assert result["valid"] is True
+
+
+def test_validate_debug_config_rejects_an_invalid_hub_section():
+    result = validate_debug_config({
+        "hub": {
+            "port": "  ",
+            "channel": 0,
+            "guard": "sometimes",
+            "map": {"x": {"label": "l151"}, 2: {"serial": ""}},
+            "power_cycle": {"off_ms": -1},
+        },
+    })
+
+    assert result["valid"] is False
+    assert "hub.port must not be empty when provided" in result["errors"]
+    assert "hub.channel must be an integer >= 1 (channels are 1-based)" in result["errors"]
+    assert "hub.guard must be one of: allow, confirm, dry_run" in result["errors"]
+    assert "hub.map key 'x' must be a channel number" in result["errors"]
+    assert "hub.map[2].serial must be a non-empty string" in result["errors"]
+    assert "hub.power_cycle.off_ms must be a non-negative number" in result["errors"]
+
+
+def test_validate_debug_config_rejects_a_non_object_hub():
+    result = validate_debug_config({"hub": "COM7"})
+
+    assert result["valid"] is False
+    assert "hub must be an object" in result["errors"]
+
+
 def test_load_resolves_runtime_paths_relative_to_config_file(tmp_path):
     config_dir = tmp_path / "config"
     config_dir.mkdir()

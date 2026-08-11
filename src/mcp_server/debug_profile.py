@@ -14,6 +14,7 @@ class DebugProfileStore:
         "swo",
         "reset",
         "hil",
+        "hub",
         "notes",
     }
 

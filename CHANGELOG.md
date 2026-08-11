@@ -82,6 +82,239 @@
   full comparison for use right after a load, and its failure message now explains that
   those sections differ on any target that has run.
   `verify_flash` 采用同样的默认值——可写段在 RAM 里，本来就说明不了 flash 的内容。
+### Programmable USB hub / 可编程 USB Hub
+
+- New `hub(action=describe|power|data)` family, behind a new optional extra
+  (`pip install 'stm32-gdb-mcp[hub]'`). This server has documented the same dead end in
+  five separate places — a hard-killed GDB server wedges the ST-Link USB endpoint "until
+  the probe is physically unplugged" — and every mitigation shipped so far (the job
+  object, PDEATHSIG, the probe lock, retry/backoff) is software guarding against a
+  hardware failure, so none of them can reach the case the repo itself calls uncoverable.
+  A hub that can cut VBUS is the missing hand: `power` removes port power (cold-booting
+  the board and un-enumerating its probe), `data` drops just the USB data lines
+  (un-enumerating a probe without rebooting the board it is attached to), and
+  `describe` is a read-only look at identity, per-port state, and — on models with an
+  ADC — per-port voltage and current.
+  新增 `hub(action=describe|power|data)` 工具族，通过新的可选 extra 提供。仓库里有五处
+  文档承认同一个死角：硬杀 GDB 服务会把 ST-Link 的 USB 端点卡死，"只能物理插拔才能恢复"；
+  而此前所有缓解手段都是用软件去防一个硬件故障，覆盖不到仓库自陈无法覆盖的那一类。
+  能断 VBUS 的 Hub 就是缺的那只手。
+- The extra is optional in the strict sense: the vendor package is imported through a
+  single lazy seam and is never touched unless a hub tool is called. Without it,
+  `hub` returns `hub_unavailable` with an install hint and everything else — including
+  `recover_session` — behaves byte-for-byte as before. CI proves both halves: the main
+  job installs *without* the extra, and a new `hub-extra` job installs *with* it.
+  该 extra 是严格意义上的可选：厂商包只经由一个惰性导入接缝加载，不调用 Hub 工具就
+  永不触及。缺席时 `hub` 返回带安装提示的 `hub_unavailable`，其余行为逐字节不变。
+- Power and data-line changes go through a confirmation guard (`allow` / `confirm` /
+  `dry_run`, default `confirm`) with an audit trail. Confirmation is forced regardless of
+  mode when a GDB server is live on the target port — an `allow` policy set for scripted
+  CI must not silently brown out a board mid-flash. Interlock mode, which powers exactly
+  one port at a time, is refused outright rather than supported: on a multi-board rack it
+  would silently kill every other board.
+  电源与数据线变更均经过确认护栏并留审计；目标端口上有活跃 GDB 服务时无论何种模式都强制
+  确认。会一次只给一个口供电的 interlock 模式被直接拒绝而非支持——在多板机架上它会静默
+  杀掉其余所有板子。
+- `hub(action=data, exclusive=true)` disconnects every other port's data line, so exactly
+  one probe stays enumerated and `start_debug_session`'s single-probe auto-select keeps
+  working on a multi-board rack. It is never implicit: un-enumerating three neighbouring
+  boards inside a session start is exactly the kind of invisible side effect this server
+  refuses to hide.
+  `exclusive=true` 只保留一个探针被枚举，让单探针自动选择在多板机架上继续成立；但绝不隐式
+  触发——把"顺手拔掉另外三块板"藏在会话启动里，正是本服务器拒绝隐藏的那种副作用。
+- New `hub` block in the debug profile and YAML config (`port`, `serial`, `channel`,
+  `map`, `power_cycle`, `guard`), validated like the existing `rtt`/`uart`/`swo`/`reset`/
+  `hil` sections. Channels are 1-based, matching the hardware's silkscreen.
+- Ports this process powered off are re-powered on shutdown, so a client that kills the
+  MCP server does not leave a bench board dark.
+  本进程关掉的端口会在退出时自动恢复供电，避免客户端杀掉服务后把板子留在断电状态。
+
+### Recovery escalation / 恢复阶梯
+
+- `recover_session` now escalates when a plain retry cannot fix the probe:
+  retry → toggle the port's USB data lines → power-cycle the port → (with `deep=true`)
+  a 2 s power-off that drains bulk capacitance. Each rung is followed by a bounded
+  re-attach, and whatever was done to the hardware is reported in `recovery_steps` —
+  a tool that physically power-cycled a board has to say so.
+  `recover_session` 在普通重试救不回探针时开始升级：重试 → 断开该端口 USB 数据线 →
+  端口断电重上电 →（`deep=true` 时）2 秒长断电放干大电容。每一级之后都做有界重连，
+  并在 `recovery_steps` 里如实上报对硬件做过什么。
+- Escalation is gated by its own table, not by the taxonomy's `retryable` flag.
+  `retryable` answers "will waiting help?"; the new gate answers "will physically
+  re-enumerating the device help?" — different questions, so `reliability.py` and
+  `error_taxonomy.py` are untouched. `probe_locked` is deliberately excluded: the lock
+  is held by a live PID and cutting power cannot delete it, so escalating would brown
+  out a board for nothing.
+  升级门槛用独立的表而非 `retryable`：两者回答的是不同问题，因此这两个模块一行未改。
+  `probe_locked` 被刻意排除——锁由活着的进程持有，断电删不掉它。
+- With no hub configured the path is byte-for-byte the pre-existing one: the same single
+  `retry_call` with the same attempts and backoff, and no `recovery_steps` in the
+  response. The automatic mid-run recovery inside `run_for_duration` opts out explicitly
+  — power-cycling there would destroy the very run being measured.
+  没有配置 Hub 时，代码路径与之前逐字节相同。`run_for_duration` 里的自动恢复显式退出升级：
+  在测量中途断电会毁掉正在测的那次运行。
+- New `hub(action=cycle)` performs a cold boot on demand, and `check_session_health` now
+  carries the session's hub port state (power/data/voltage/current) — an unresponsive
+  target next to a port reading 0 mV is the same story told twice, and seeing both at
+  once is what turns "the link died" into "the board lost power".
+  新增 `hub(action=cycle)`；`check_session_health` 现在带上本会话 Hub 端口的状态。
+
+### A reset strategy that is actually cold / 真正的冷复位
+
+- `reset_target(strategy="cold")` removes target power through the hub before issuing the
+  reset. Until now every strategy was a monitor command, and `under_reset` was documented
+  as a no-op alias of `default` on every backend — so nothing this server could do
+  produced a real power-on reset. `cold` is the first one that does: POR flags in
+  RCC_CSR, a genuinely zeroed `.noinit`, and drained RAM.
+  在此之前所有策略都只是 monitor 命令，`under_reset` 更是被明确记录为各后端上的空别名，
+  因此本服务器无法产生真正的上电复位。`cold` 是第一个能做到的。
+- It **fails** with `cold_reset_unavailable` when no hub channel is mapped, rather than
+  quietly doing a warm reset. A cold reset is not a command, it is removing power;
+  silently substituting a warm one would report a power-on reset that never happened —
+  precisely the false-success shape the `under_reset` note already warns about. A failed
+  power cycle likewise aborts instead of falling through to the warm path.
+  没有映射 Hub 通道时它直接报错而不是悄悄降级成热复位——那会汇报一次根本没发生的上电复位。
+- `cold` is excluded from the alias note it would otherwise trigger: it maps to the same
+  monitor command by design, because what makes it cold is the power sequence.
+
+### Channel discovery and the rack / 通道发现与机架
+
+- New `hub(action=discover)` works out which channel each probe is plugged into by
+  dropping one channel's USB data lines at a time and seeing which probe disappears from
+  `detect_probe`. Data lines rather than power, so a neighbouring board mid-experiment is
+  not rebooted. USB topology cannot answer this question: `openocd_config` only records a
+  probe's `location` when it has no serial, and virtually every ST-Link has one.
+  新增 `hub(action=discover)`：逐通道断开数据线并观察哪个探针消失。用数据线而非电源，
+  避免重启邻座还在跑实验的板子。USB 拓扑回答不了这个问题——只有无序列号的探针才会记录
+  `location`，而 ST-Link 基本都有序列号。
+- Identity falls back serial → instance_id → location, the same chain
+  `_deduplicate_probes` already uses, so two identical unserialised probes still separate
+  by physical port. A channel where more than one probe vanishes is reported as ambiguous
+  rather than guessed at, and every data line is restored even if detection raises.
+  两个同型号无序列号探针仍可按物理口区分；一次消失多个探针时报告歧义而不猜测；
+  即使检测过程抛错也会恢复所有数据线。
+- It refuses while a GDB server is alive (`hub_busy_sessions`, override with `force=true`)
+  and is explicitly opt-in about cost: it runs `detect_probe` once per channel plus a
+  baseline, and on Windows each of those walks the whole USB device tree at ~8.5 s.
+- `.github/workflows/hil.yml` replaces its human-picked `board` dropdown with a matrix
+  over a `boards` JSON array, `max-parallel: 1` (one hub, one control port, exclusive
+  SWD). Each leg isolates its board with `scripts/hil_rack.py isolate` so `detect_probe`
+  sees exactly one probe, and an `if: always()` step restores the rack — a failed leg must
+  not leave it dark for whoever runs next. New `examples/configs/rack_hub.yaml` describes
+  the wiring.
+  HIL workflow 的人工下拉框换成板卡矩阵；每个分支先隔离本板，结尾无条件恢复机架。
+
+### Fixes from first real-hardware validation / 首次实机验证修复
+
+Validated on a SmartUSBHub HBP_USB2_4CH (COM7) with two serial-less ST-Link/V2 on
+channels 3 and 4. Two things only hardware could have found.
+在 4CH Hub + 两个无序列号 ST-Link/V2 的真实台架上验证，发现两个只有硬件能暴露的问题。
+
+- **`hub(action=discover, apply=true)` wrote empty map entries.** Both ST-Links report
+  VID:PID 0483:3748 with **no serial number**, and the apply step persisted only
+  `serial`/`label` — so it stored `{"3": {}, "4": {}}` and silently threw the whole
+  discovery result away. It now persists the port-derived `key` when there is no serial,
+  keeps any human-chosen `label`, and says in a `note` that port-keyed channels need a
+  label before they can be selected. `hub.map[N].key` is validated like the other fields.
+  两个 ST-Link 都没有序列号，而写回时只保留 `serial`/`label`，结果存成空对象，把发现结果
+  静默丢弃。现在无序列号时持久化按 USB 端口派生的 `key`，保留人工设置的 `label`，
+  并明确告知这类通道需要 label 才能被选中。
+- **The brown-out verdict is now gated on the port having drawn current.** An *empty*
+  switched-off port does not read 0 V — it floats, and was measured at 3112 mV once and
+  0 mV a few minutes later, while the same hub read 166 mV on a port with an ST-Link on
+  it. Unconditioned, every power cycle of an idle port would have warned that the board
+  refused to cold-boot. When the pre-cut draw is under 1 mA, `browned_out` is now `null`
+  with a warning explaining that the reading cannot confirm a cold boot either way,
+  instead of a confident wrong answer.
+  空置端口断电后并不读 0 V 而是浮空（实测一次 3112 mV、几分钟后 0 mV），而接了 ST-Link
+  的端口读 166 mV。因此断电前电流低于 1 mA 时，`browned_out` 返回 `null` 并说明该读数
+  无法证实冷启动，而不是给一个自信的错误结论。
+
+- **`reset_target(strategy="cold")` left a zombie session and called it success.** On any
+  normal rig the probe sits on the port whose power is being cut, so the cold reset killed
+  its own debug connection — and then issued `monitor reset halt` and returned `ok=true`
+  down a dead pipe. Measured afterwards: `check_session_health` still said
+  `target_responsive=true`, every read returned `0x00000000`, and only `self_check` caught
+  it (`cpuid=0x00000000`). It now tears the session down *before* cutting power (never
+  yank VBUS from under a live OpenOCD — that is the wedging this feature exists to cure),
+  then re-establishes it and reports `reattached`.
+  在任何正常台架上探针都在被断电的那个口上，所以冷复位会杀掉自己的调试连接，然后对着
+  死连接下命令并返回 ok=true。实测：health 仍报 `target_responsive=true`，所有读返回
+  `0x00000000`，只有 `self_check` 抓得住。现在先拆会话再断电，之后重建并上报 `reattached`。
+- **A cold reset no longer issues a second reset.** The power-on reset *is* the reset;
+  another one would overwrite the RCC_CSR power-on flag and re-run early init, destroying
+  the cold-boot state (`.noinit`, drained RAM) that is the only reason to ask for this
+  strategy. With `halt=true` the core is halted where it is, and the response says plainly
+  that this is not the reset vector and that catching it there needs
+  `connect_assert_srst`.
+  上电复位本身就是复位；再补一次会覆盖 RCC_CSR 的上电标志并重跑早期初始化，把冷启动状态
+  毁掉。`halt=true` 时就地暂停，并明确说明这不是复位向量处。
+
+Also confirmed working on hardware: `exclusive` data isolation turns the unsafe
+two-probe case (`count=2`, no `suggested_probe`) into the safe single-probe auto-select
+case (`count=1`, `suggested_probe=stlink`), and discovery mapped both channels with zero
+ambiguity in 60 s.
+实机确认：`exclusive` 隔离把 `count=2` 无法自动选择的状态变成 `count=1` 可安全自动选择；
+discovery 在 60 秒内零歧义地映射出两个通道。
+
+Cold boot proven on an STM32L151 via RCC_CSR: a warm reset ADDS `SFTRST`
+(`0x0C000000` → `0x1C000000`), while a cold reset brings the register back to
+`0x0C000000` — a sticky reset flag disappearing is something no SWD reset can do, because
+only VDD actually collapsing clears that field.
+在 STM32L151 上用 RCC_CSR 证明冷启动：热复位会**加上** `SFTRST`，而冷复位后该位**消失**
+——粘滞复位标志位消失是任何 SWD 复位都做不到的，只有 VDD 真正掉电才会清掉这个字段。
+
+### Review pass against the real rig / 对照实机的复查
+
+- **`check_session_health` reported `target_responsive: true` about a dead link.**
+  `probe_target` only asked whether GDB answered at all, and GDB answers from its own
+  state even when the link underneath is gone. Measured: with the probe's port powered
+  off, health said responsive while every read returned `0x00000000`. It now reads CPUID
+  and applies the same Cortex-M signature test `self_check` uses (implementer `0x41`,
+  architecture constant `0xF`), reports the evidence under `identity`, and explains why
+  when it fails. All-zero, all-ones, and byte-swapped reads are all caught.
+  健康检查此前只问"GDB 有没有应答"，而 GDB 即使底层链路已死也会用自己的状态应答。实测：
+  探针端口断电后它仍报 `target_responsive=true`，而所有读都返回 `0x00000000`。现在改为
+  读 CPUID 并套用 `self_check` 的 Cortex-M 签名校验，并给出证据与失败原因。
+  A **running** core also reads identity back as zeros (measured), which is expected and is
+  not a dead link — that case is reported separately, carries `core_state`, and suggests
+  `halt_execution` rather than `recover_session`, so "the core is busy" and "the probe is
+  gone" stop looking identical. 运行中的核心同样把身份寄存器读成 0，这是正常现象而非链路
+  死亡；该情况单独上报并建议 `halt_execution` 而不是 `recover_session`。
+- **`channel_for` could leak one session's hub channel into another's.** `HubManager` is a
+  process-wide singleton by design, and a session that had a profile but no `hub` block
+  fell back to whatever the last session configured — on a rack that resolves to a
+  neighbouring board and power-cycles the wrong one. The fallback now applies only when
+  the caller passes no profile at all (a script driving `HubManager` directly).
+  会话若有 profile 但没有 `hub` 块，会继承上一个会话配置的通道——在机架上就是对着邻座的板
+  子断电。现在只有完全不传 profile 的直接调用才走该回退。
+- **The recovery ladder ignored the profile's `power_cycle` timings** while
+  `reset_target(strategy="cold")` honoured them. A board needing 800 ms to brown out got
+  400 ms from the ladder, which makes a flaky rig look like a flaky tool. Both paths now
+  read the same config.
+  恢复阶梯此前不读 profile 的 `power_cycle` 时序，而冷复位读——两条路径现在一致。
+
+The full ladder was then exercised on hardware for the first time: with the probe's port
+switched off, `recover_session` reported
+`[soft=false, data_toggle=false, power_cycle=true]` and came back to
+`target_responsive=true, cpuid=0x412fc230`. The live-session interlock also proved itself
+unprompted — the first attempt to cut power to a port with a running GDB server was
+refused until `confirm=true`.
+随后在实机上首次完整跑通了恢复阶梯：探针端口被断电后，`recover_session` 依次尝试
+软重试→数据线开合→断电重上电并在最后一级成功恢复。活跃会话联锁也自证有效：对着有活跃
+GDB 服务的端口断电的第一次尝试被拒绝，直到显式传 `confirm=true`。
+
+### Power profiling / 功耗测量
+
+- New `hub(action=measure)` samples per-port voltage and current over a window and returns
+  the series plus min/max/mean. It is read-only and costs no target traffic, so it works
+  while the core is running — which is the point: an MCU that entered Stop and one that
+  only thinks it did are indistinguishable over SWD and differ by orders of magnitude
+  here. Reachable through `call_read`, and it carries `core_state` so a sample can be
+  read against what the core was doing.
+  新增 `hub(action=measure)`：按窗口采样每端口电压/电流并给出 min/max/mean。只读、不占用
+  目标端流量，因此可在核心运行时使用——真正进了 Stop 的 MCU 和自以为进了的，在 SWD 上看
+  完全一样，在这里差几个数量级。
 
 ## [0.8.1] - 2026-08-06
 

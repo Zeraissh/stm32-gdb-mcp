@@ -43,6 +43,9 @@ CORE_TOOLS = {
     "logging", "read_peripheral_register",
     "batch", "call", "call_read", "run_scenario", "get_session", "report_issue",
     "list_sessions", "close_session", "tool_help",
+    # The only tool that can cut target power -- the documented cure for a wedged
+    # probe, and useless if compact mode hides it exactly when things go wrong.
+    "hub",
 }
 
 
@@ -87,7 +90,7 @@ MERGED = {
     "debug_profile": ("action",
         {"get": "get_debug_profile", "set": "set_debug_profile"},
         "Active debug profile (mcu/elf/svd/probe).",
-        "action=get | set([mcu,elf_path,svd_path,board,probe,server_type,server_args,project_root,notes]). "
+        "action=get | set([mcu,elf_path,svd_path,board,probe,server_type,server_args,project_root,hub,notes]). "
         "set MERGES — fields you omit keep their current value — and returns the full resulting profile. "
         "The profile is in-memory only: it is empty again after the MCP server restarts."),
     "read_registers": ("what",
@@ -125,6 +128,17 @@ MERGED = {
         "Session/transport diagnostics.",
         "what=health([reconnect]) | events | server_logs. events returns recent GDB/MI records; "
         "server_logs returns the GDB server's stderr."),
+    "hub": ("action",
+        {"describe": "describe_hub", "power": "set_hub_power", "data": "set_hub_data",
+         "cycle": "power_cycle_target", "measure": "measure_hub_channel",
+         "discover": "discover_hub_map"},
+        "Programmable USB hub: per-port power, USB2 data lines, cold boot, and V/I sampling.",
+        "action=describe | power(state[,channel,confirm]) | data(state[,channel,exclusive,confirm]) | "
+        "cycle([channel,off_ms,settle_ms,confirm]) | "
+        "measure([channel,duration_sec,interval_sec,all_channels]) | "
+        "discover([apply,force,settle_sec]). "
+        "state=on|off; channel is 1-based and defaults to the session's mapped hub channel. "
+        "Removing port power cold-boots that board and un-enumerates its probe."),
 }
 
 MERGED_AWAY = {old for _, mapping, *_ in MERGED.values() for old in mapping.values()}
@@ -151,12 +165,16 @@ READ_ONLY_TOOLS = {
 # writes a file, stay out).
 READ_ONLY_EXTRAS = {
     "get_debug_profile", "get_timeouts", "get_write_audit_log", "list_breakpoints",
-    "get_gdb_events", "get_gdb_server_logs", "read_typed_memory",
+    "get_gdb_events", "get_gdb_server_logs", "read_typed_memory", "describe_hub",
+    "measure_hub_channel",
 }
 
 HARDWARE_WRITE_TOOLS = {
     "flash_firmware", "flash_and_run", "flash_erase", "reset_target", "write_memory", "typed_memory",
     "set_adapter_speed", "setup_swo", "configure_debug_freeze",
+    # Family-level: cutting VBUS is at least as destructive as a reset. describe_hub
+    # is reachable read-only through call_read (see READ_ONLY_EXTRAS).
+    "hub",
 }
 
 GENERIC_DISPATCH_TOOLS = {"call", "batch", "run_scenario"}

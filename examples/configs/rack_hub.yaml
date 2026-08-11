@@ -1,0 +1,56 @@
+# Multi-board rack behind one programmable USB hub.
+# 单个可编程 USB Hub 后面挂多块板的机架配置。
+#
+# Requires the optional extra:  pip install 'stm32-gdb-mcp[hub]'
+#
+# Channels are 1-based and match the hub's silkscreen. Fill `serial` in by running
+# hub(action=discover, apply=true) once with every board plugged in -- it drops each
+# channel's USB data lines in turn and records which probe disappeared. That call is
+# slow on Windows (detect_probe walks the whole USB device tree, ~8.5 s per channel),
+# which is why it is opt-in and run once rather than at every session start.
+# 通道号从 1 开始，与 Hub 丝印一致。插好所有板后跑一次 hub(action=discover, apply=true)
+# 即可自动填好 serial。
+#
+# Per-board settings (mcu, server_args, elf_path, ...) stay in that board's own config;
+# this file is only the rack wiring.
+# 各板自身的设置留在各自的配置文件里，本文件只描述机架接线。
+
+hub:
+  # Omit `port` to auto-scan. Scanning only opens devices matching the hub's own
+  # VID/PID (0x1A86/0xFE0C), so it will not touch a target's UART -- but pinning the
+  # port is still one less thing to go wrong on a rack that never moves.
+  # 省略 port 则自动扫描；扫描只会打开匹配 Hub 自身 VID/PID 的设备，不会碰目标板 UART。
+  port: COM7
+
+  # allow: no confirmation, for unattended CI. Cutting power to a port with a live
+  # GDB server STILL requires confirm=true even here -- that interlock is not a
+  # policy setting, because a power cut mid-flash is how a board becomes a brick.
+  # allow 适用于无人值守 CI；但端口上有活跃 GDB 服务时仍强制要求 confirm=true。
+  guard: allow
+
+  power_cycle:
+    off_ms: 400          # raise if a board's bulk capacitance holds VDD up
+    settle_ms: 1500      # USB re-enumeration budget after power returns
+
+  map:
+    1:
+      label: l151
+      serial: "REPLACE-WITH-L151-PROBE-SERIAL"
+    2:
+      label: l431
+      serial: "REPLACE-WITH-L431-PROBE-SERIAL"
+    3:
+      label: u535
+      serial: "REPLACE-WITH-U535-PROBE-SERIAL"
+    4:
+      label: spare
+
+notes: >
+  Rack wiring for the HIL matrix. Each CI leg calls
+  hub(action=data, state=on, exclusive=true, channel=<board>) first, so only that
+  board's probe is enumerated and start_debug_session's single-probe auto-select
+  stays on its safe path -- detect_probe never has to choose between two probes.
+  A final always-run step reconnects every data line and restores power.
+  /
+  HIL matrix 的机架接线。每个 CI 分支先做 exclusive 数据线隔离，使同一时刻只有一个
+  探针被枚举，单探针自动选择的安全路径恒成立；结尾用 always 步骤恢复全部数据线与供电。

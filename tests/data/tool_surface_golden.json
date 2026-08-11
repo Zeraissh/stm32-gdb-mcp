@@ -35,7 +35,8 @@
   "run_scenario",
   "logging",
   "breakpoint",
-  "debug_profile"
+  "debug_profile",
+  "hub"
  ],
  "tools": [
   {
@@ -348,9 +349,17 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Recovers a dropped or wedged session: cleanly tears down the GDB client and server, then restarts the server (with retry/backoff for a busy probe) using the last start_debug_session arguments and reconnects. Use after a probe_unavailable or connection_lost error.",
+   "description": "Recovers a dropped or wedged session: cleanly tears down the GDB client and server, then restarts the server (with retry/backoff for a busy probe) using the last start_debug_session arguments and reconnects. Use after a probe_unavailable or connection_lost error. When a programmable USB hub is configured (debug_profile hub.channel), a retry that cannot fix the probe escalates to toggling its USB data lines and then power-cycling the port -- the only in-band cure for a wedged endpoint. Any hub action taken is reported in recovery_steps.",
    "inputSchema": {
     "properties": {
+     "deep": {
+      "description": "Add a long (2 s) power-off rung to drain bulk capacitance.",
+      "type": "boolean"
+     },
+     "escalate": {
+      "description": "Allow hub data-line/power escalation when a plain retry fails (default true).",
+      "type": "boolean"
+     },
      "session": {
       "description": "Optional debug-session name. Omit for the default target.",
       "type": "string"
@@ -495,7 +504,7 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Resets the target device. Can optionally halt immediately after reset.",
+   "description": "Resets the target device. Can optionally halt immediately after reset. strategy=\"cold\" removes target power through a configured programmable USB hub before resetting, which is the only strategy that produces a true power-on reset (RCC_CSR POR flag, cleared .noinit, drained RAM); it fails rather than silently doing a warm reset when no hub channel is mapped.",
    "inputSchema": {
     "properties": {
      "command": {
@@ -511,7 +520,7 @@
       "type": "string"
      },
      "strategy": {
-      "description": "Optional reset strategy, e.g. default, under_reset, or software.",
+      "description": "Optional reset strategy: default, under_reset, software, or cold (hub power cycle).",
       "type": "string"
      }
     },
@@ -2832,7 +2841,7 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Active debug profile (mcu/elf/svd/probe). action=get | set([mcu,elf_path,svd_path,board,probe,server_type,server_args,project_root,notes]). set MERGES \u2014 fields you omit keep their current value \u2014 and returns the full resulting profile. The profile is in-memory only: it is empty again after the MCP server restarts.",
+   "description": "Active debug profile (mcu/elf/svd/probe). action=get | set([mcu,elf_path,svd_path,board,probe,server_type,server_args,project_root,hub,notes]). set MERGES \u2014 fields you omit keep their current value \u2014 and returns the full resulting profile. The profile is in-memory only: it is empty again after the MCP server restarts.",
    "inputSchema": {
     "oneOf": [
      {
@@ -2872,6 +2881,10 @@
      },
      "elf_path": {
       "type": "string"
+     },
+     "hub": {
+      "description": "Programmable USB hub binding: {port, serial, channel, map, power_cycle, guard}. channel is 1-based and selects which port this session's board sits on.",
+      "type": "object"
      },
      "mcu": {
       "type": "string"
@@ -3539,6 +3552,162 @@
     "type": "object"
    },
    "name": "session_diagnostics"
+  },
+  {
+   "annotations": {
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Programmable USB hub: per-port power, USB2 data lines, cold boot, and V/I sampling. action=describe | power(state[,channel,confirm]) | data(state[,channel,exclusive,confirm]) | cycle([channel,off_ms,settle_ms,confirm]) | measure([channel,duration_sec,interval_sec,all_channels]) | discover([apply,force,settle_sec]). state=on|off; channel is 1-based and defaults to the session's mapped hub channel. Removing port power cold-boots that board and un-enumerates its probe.",
+   "inputSchema": {
+    "oneOf": [
+     {
+      "properties": {
+       "action": {
+        "const": "describe"
+       }
+      },
+      "required": [
+       "action"
+      ],
+      "title": "describe"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "power"
+       }
+      },
+      "required": [
+       "action",
+       "state"
+      ],
+      "title": "power"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "data"
+       }
+      },
+      "required": [
+       "action",
+       "state"
+      ],
+      "title": "data"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "cycle"
+       }
+      },
+      "required": [
+       "action"
+      ],
+      "title": "cycle"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "measure"
+       }
+      },
+      "required": [
+       "action"
+      ],
+      "title": "measure"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "discover"
+       }
+      },
+      "required": [
+       "action"
+      ],
+      "title": "discover"
+     }
+    ],
+    "properties": {
+     "action": {
+      "description": "Which operation to perform.",
+      "enum": [
+       "describe",
+       "power",
+       "data",
+       "cycle",
+       "measure",
+       "discover"
+      ],
+      "type": "string"
+     },
+     "all_channels": {
+      "description": "Sample every channel instead of just one.",
+      "type": "boolean"
+     },
+     "apply": {
+      "description": "Write the discovered map into the debug profile.",
+      "type": "boolean"
+     },
+     "channel": {
+      "description": "1-based hub channel. Defaults to the session's mapped hub channel.",
+      "type": "integer"
+     },
+     "confirm": {
+      "description": "Required to cut power/data when the guard is in confirm mode or a session is live.",
+      "type": "boolean"
+     },
+     "duration_sec": {
+      "description": "Sampling window; 0 (default) takes one snapshot.",
+      "type": "number"
+     },
+     "exclusive": {
+      "description": "With state=on, disconnect every other port's data line.",
+      "type": "boolean"
+     },
+     "force": {
+      "description": "Run even though a GDB server is alive on this session.",
+      "type": "boolean"
+     },
+     "interval_sec": {
+      "description": "Delay between samples (default 0.05).",
+      "type": "number"
+     },
+     "off_ms": {
+      "description": "Milliseconds to hold power off (default 400).",
+      "type": "integer"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "settle_ms": {
+      "description": "Milliseconds to wait after restoring power (default 1500).",
+      "type": "integer"
+     },
+     "settle_sec": {
+      "description": "Seconds to wait for USB re-enumeration per toggle (default 1.0).",
+      "type": "number"
+     },
+     "state": {
+      "description": "Target state for the port.",
+      "enum": [
+       "on",
+       "off"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   },
+   "name": "hub"
   }
  ]
 }
