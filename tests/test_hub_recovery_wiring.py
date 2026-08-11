@@ -201,7 +201,21 @@ def test_power_cycle_flags_a_rail_that_never_collapsed(fake_hub):
 
     assert result["browned_out"] is False
     assert "did NOT cold-boot" in result["warning"]
-    assert BROWNOUT_MV == 500
+
+
+def test_the_brownout_threshold_clears_the_worst_measured_residual(fake_hub):
+    # Highest off-window reading seen on real hardware was 345 mV, on a board with
+    # more bulk capacitance than the others. The threshold must sit above it or
+    # that board reports a cold boot that did happen as one that did not.
+    manager = _manager(fake_hub, {"channel": 1, "guard": "allow"})
+    fake_hub.current_ma = 60
+    fake_hub.residual_voltage_mv = 345
+
+    result = manager.power_cycle(1, settle_ms=0, sleep=lambda _s: None, monotonic=lambda: 0.0)
+
+    assert BROWNOUT_MV > 345
+    assert result["browned_out"] is True
+    assert "warning" not in result
 
 
 def test_an_unloaded_port_gives_an_inconclusive_verdict_not_a_wrong_one(fake_hub):
@@ -217,8 +231,23 @@ def test_an_unloaded_port_gives_an_inconclusive_verdict_not_a_wrong_one(fake_hub
 
     assert result["pre_current_ma"] == 0
     assert result["browned_out"] is None, "an unloaded port must not produce a verdict"
-    assert "floating node" in result["warning"]
     assert "cannot confirm a cold boot" in result["warning"]
+    assert "Power WAS removed either way" in result["warning"]
+    # All three real causes are named, including the one a bench actually hit:
+    # a channel whose current sense stopped reporting.
+    assert "deep sleep" in result["warning"]
+    assert "current sense is not reporting" in result["warning"]
+
+
+def test_a_sample_the_device_marks_invalid_is_not_presented_as_data(fake_hub):
+    manager = _manager(fake_hub, {"channel": 1, "guard": "allow"})
+    fake_hub.invalid_channels = {1}
+
+    described = manager.describe()
+    port = {p["channel"]: p for p in described["ports"]}[1]
+
+    assert port["voltage_mv"] is None
+    assert port["current_ma"] is None
 
 
 def test_a_loaded_port_still_gets_a_real_verdict(fake_hub):

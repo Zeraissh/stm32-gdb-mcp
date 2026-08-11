@@ -171,6 +171,8 @@ class FakeHub:
         self.adc = adc
         self.interlock = interlock
         self.fail_on = {}
+        # Channels whose samples the device reports as not valid.
+        self.invalid_channels: set[int] = set()
         self.ack = True
         self.connected = True
         self.disconnect_callback = None
@@ -243,7 +245,8 @@ class FakeHub:
             ch: {
                 "voltage": self.voltage_mv if self.power.get(ch) else self.residual_voltage_mv,
                 "current": self.current_ma if self.power.get(ch) else 0,
-                "fresh": True, "stale": False, "valid": True,
+                "fresh": True, "stale": False,
+                "valid": ch not in self.invalid_channels,
             }
             for ch in channels
         }

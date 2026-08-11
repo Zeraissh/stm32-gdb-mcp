@@ -23,10 +23,17 @@ import threading
 import time
 from typing import Any, Protocol
 
-# Below this, the rail is considered collapsed and the board really did cold-boot.
-# Matches the spirit of error_taxonomy._POWERED_VOLTS (1.6 V), kept well under the
-# brown-out reset level of every STM32 this server targets.
-BROWNOUT_MV = 500
+# Below this, the port rail is considered collapsed and the board really did
+# cold-boot. Calibrated against measurements on a 4CH hub, off-window readings:
+#   94-166 mV  ST-Link + STM32L151 board drawing ~80 mA
+#   345 mV     ST-Link + STM32L151 board drawing ~60 mA (more bulk capacitance)
+# 345 mV sat uncomfortably close to the original 500 mV, so the threshold has
+# headroom now. It stays far below any level that could keep a board alive: this
+# measures the 5 V port rail, and an STM32's brown-out reset trips with its 3.3 V
+# regulator input long gone. Raising it trades a false "did not cold-boot"
+# warning (annoying, safe) against a false confirmation (a wrong answer) -- 800 mV
+# is still nowhere near able to run a board.
+BROWNOUT_MV = 800
 
 # Minimum pre-cut draw for the brown-out verdict to mean anything. Below this the
 # port has no measurable load, and a switched-off port with nothing on it floats
@@ -434,6 +441,13 @@ class HubManager:
         return {channels[0]: raw}
 
     def _measurements(self, hub: HubBackend, channels: tuple[int, ...]) -> dict[int, dict] | None:
+        """Per-channel voltage/current, dropping samples the device disowns.
+
+        The vendor tags every sample ``valid``/``fresh``/``stale``. Passing an
+        invalid one through as data would be the same false-success shape this
+        server keeps fixing, so a sample the device does not stand behind is
+        reported as None rather than as a number.
+        """
         if not channels:
             return None
         try:
@@ -442,7 +456,22 @@ class HubManager:
             return None
         if not isinstance(raw, dict):
             return None
-        return {ch: raw[ch] for ch in channels if ch in raw}
+
+        samples = {}
+        for channel in channels:
+            sample = raw.get(channel)
+            if not isinstance(sample, dict):
+                continue
+            if sample.get("valid") is False:
+                samples[channel] = {"voltage": None, "current": None, "valid": False}
+                continue
+            samples[channel] = {
+                "voltage": sample.get("voltage"),
+                "current": sample.get("current"),
+                "valid": True,
+                "stale": bool(sample.get("stale")),
+            }
+        return samples
 
     def describe(self) -> dict:
         """Identity + per-channel power/data/measurement snapshot. Read-only."""
@@ -590,11 +619,14 @@ class HubManager:
                 # a confident wrong answer, so say what is actually known.
                 result["browned_out"] = None
                 result["warning"] = (
-                    f"channel {channel} drew {pre_current} mA before the cut, so nothing "
-                    f"measurable was powered from this port and the {measured} mV read during "
-                    f"the off window is a floating node, not a live board. Power was removed "
-                    f"either way; this reading simply cannot confirm a cold boot. (A target in "
-                    f"deep sleep can also draw under {LOAD_CURRENT_MA} mA.)"
+                    f"channel {channel} drew {pre_current} mA before the cut, so the "
+                    f"{measured} mV read during the off window cannot confirm a cold boot -- "
+                    f"an unloaded port floats rather than reading zero. Power WAS removed "
+                    f"either way. Causes, in order: nothing is connected to this port; the "
+                    f"target is in deep sleep (under {LOAD_CURRENT_MA} mA); or this channel's "
+                    f"current sense is not reporting (seen on real hardware: one channel read "
+                    f"0 mA indefinitely while its voltage sense and power switching both "
+                    f"worked -- compare against another channel with a known load)."
                 )
             else:
                 result["browned_out"] = measured < BROWNOUT_MV
