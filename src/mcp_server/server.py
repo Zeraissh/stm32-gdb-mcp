@@ -56,7 +56,10 @@ from .tool_surface import (
     advertised_tools as _advertised_tools,
 )
 from .tool_surface import (
-    read_only_tool_names as _read_only_tool_names,
+    read_only_actions as _read_only_actions,
+)
+from .tool_surface import (
+    read_only_dispatch_target as _read_only_dispatch_target,
 )
 from .tools import REGISTRY as _TOOL_REGISTRY
 from .tools import TOOL_ORDER as _TOOL_ORDER
@@ -276,6 +279,10 @@ async def handle_list_tools() -> list[Tool]:
             description="Like call, but restricted to tools that only READ state — so it needs no "
                         "approval prompt where call, which can reach anything, does. Prefer it for "
                         "hidden read-only tools: call_read(tool='read_core_registers', args={}). "
+                        "The gate is per-ACTION, not per-tool: a family's reading action goes "
+                        "through even though the family also writes, so "
+                        "call_read(tool='debug_profile', args={'action':'get'}) works while "
+                        "action='set' does not. A refusal names the actions it would accept. "
                         "Refuses anything that writes; use call for those.",
             inputSchema={
                 "type": "object",
@@ -492,10 +499,19 @@ async def handle_call_tool(name: str, arguments: dict | None) -> CallToolResult:
 
     if name == "call_read":
         inner = arguments.get("tool")
-        allowed = _read_only_tool_names()
-        if inner not in allowed:
-            detail = ("call_read needs a 'tool' name." if inner is None
-                      else f"'{inner}' is not a read-only tool.")
+        # Judge the ACTION, not just the tool name: debug_profile(action=get) reads
+        # and debug_profile(action=set) writes. Refusing both taught agents to fall
+        # back to `call` -- the approval-prompting path -- for pure reads, which
+        # inverts the whole point of call_read. Unknown/missing action => refused.
+        if _read_only_dispatch_target(inner, arguments.get("args")) is None:
+            readable = _read_only_actions(inner)
+            if inner is None:
+                detail = "call_read needs a 'tool' name."
+            elif readable:
+                detail = (f"'{inner}' is read-only only for "
+                          f"{_MERGED[inner][0]}={'|'.join(readable)}; this call is not.")
+            else:
+                detail = f"'{inner}' is not a read-only tool."
             return call_tool_result([content_error(
                 f"{detail} call_read only forwards to tools that read state; "
                 f"use call(tool=..., args=...) for anything that writes.",

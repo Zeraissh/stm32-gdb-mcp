@@ -9,6 +9,7 @@
   "call",
   "call_read",
   "tool_help",
+  "mcp_info",
   "recover_session",
   "build_firmware",
   "load_symbols",
@@ -292,7 +293,7 @@
     "openWorldHint": false,
     "readOnlyHint": true
    },
-   "description": "Like call, but restricted to tools that only READ state \u2014 so it needs no approval prompt where call, which can reach anything, does. Prefer it for hidden read-only tools: call_read(tool='read_core_registers', args={}). Refuses anything that writes; use call for those.",
+   "description": "Like call, but restricted to tools that only READ state \u2014 so it needs no approval prompt where call, which can reach anything, does. Prefer it for hidden read-only tools: call_read(tool='read_core_registers', args={}). The gate is per-ACTION, not per-tool: a family's reading action goes through even though the family also writes, so call_read(tool='debug_profile', args={'action':'get'}) works while action='set' does not. A refusal names the actions it would accept. Refuses anything that writes; use call for those.",
    "inputSchema": {
     "properties": {
      "args": {
@@ -341,6 +342,25 @@
     "type": "object"
    },
    "name": "tool_help"
+  },
+  {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "description": "Identifies THIS running stm32-gdb-mcp server: release version, git commit, the directory the code was imported from, whether compact mode is hiding tools, and how many tools this build advertises. Needs NO debug session, NO probe and NO target \u2014 call it the moment a tool you expect is missing or behaves like an older build, instead of guessing which checkout the client actually launched.",
+   "inputSchema": {
+    "properties": {
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "mcp_info"
   },
   {
    "annotations": {
@@ -504,7 +524,7 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Resets the target device. Can optionally halt immediately after reset. strategy=\"cold\" removes target power through a configured programmable USB hub before resetting, which is the only strategy that produces a true power-on reset (RCC_CSR POR flag, cleared .noinit, drained RAM); it fails rather than silently doing a warm reset when no hub channel is mapped.",
+   "description": "Resets the target device. Can optionally halt immediately after reset. strategy=\"cold\" removes target power through a configured programmable USB hub before resetting, which is the only strategy that produces a true power-on reset (RCC_CSR POR flag, cleared .noinit, drained RAM); it fails rather than silently doing a warm reset when no hub channel is mapped. It needs no confirm argument -- asking for a cold reset by name IS the confirmation the hub guard wants -- and it stops the GDB session before the cut, then re-establishes it.",
    "inputSchema": {
     "properties": {
      "command": {
@@ -2841,7 +2861,7 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Active debug profile (mcu/elf/svd/probe). action=get | set([mcu,elf_path,svd_path,board,probe,server_type,server_args,project_root,hub,notes]). set MERGES \u2014 fields you omit keep their current value \u2014 and returns the full resulting profile. The profile is in-memory only: it is empty again after the MCP server restarts.",
+   "description": "Active debug profile (mcu/elf/svd/probe). action=get | set([mcu,elf_path,svd_path,board,probe,server_type,server_args,project_root,hub,notes,merge]). set merges at the TOP LEVEL ONLY: omitted fields keep their value, but a nested block you pass REPLACES the stored one whole \u2014 hub={map:{3:{label:TC}}} drops the rest of hub, including what hub(action=discover) wrote. merge=true deep-merges nested blocks instead; leave it off to DROP a stale entry, since replace is the only way to remove one. Returns the full resulting profile, which is in-memory only: empty again after the MCP server restarts.",
    "inputSchema": {
     "oneOf": [
      {
@@ -2888,6 +2908,10 @@
      },
      "mcu": {
       "type": "string"
+     },
+     "merge": {
+      "description": "Deep-merge nested blocks (hub, rtt, uart, swo, reset, hil) into the stored ones instead of replacing them -- use it to add one key, e.g. a hub.map label, without dropping the identity hub(action=discover) wrote. Leave it off to replace, which is the only way to remove a stale entry.",
+      "type": "boolean"
      },
      "notes": {
       "type": "string"

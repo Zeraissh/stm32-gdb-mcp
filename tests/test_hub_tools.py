@@ -188,3 +188,16 @@ def test_a_nonexistent_channel_is_rejected(hub_session):
 
     assert payload["ok"] is False
     assert "does not exist" in payload["error"]["message"]
+
+
+# FIX 4 (unmapped-channel messages)
+def test_the_unmapped_error_suggests_a_per_session_load_not_a_pinned_channel(hub_session):
+    # Pinning a channel per session bypasses hub.map instead of loading it where
+    # it is missing, so it must not be what the envelope recommends.
+    payload = _call("hub", {"action": "power", "state": "off"})
+
+    assert payload["error"]["code"] == "hub_unavailable"
+    assert 'debug_config(action=load, path=..., session="default")' in \
+        payload["suggested_next_actions"]
+    assert "debug_profile(action=set, hub=...)" not in payload["suggested_next_actions"]
+

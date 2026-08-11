@@ -145,3 +145,17 @@ def test_merged_tools_hoist_shared_properties_instead_of_repeating_them():
     watch = _branch(breakpoint_tool, "action", "watch")
     assert "watch" in watch["properties"]["location"]["description"].lower()
     assert "break at" in breakpoint_tool.inputSchema["properties"]["location"]["description"].lower()
+
+
+# FIX 2 (action-aware call_read)
+def test_annotations_are_unchanged_by_the_action_aware_gate():
+    # call_read admission is decided by READ_ONLY_EXTRAS + the action map; the
+    # ADVERTISED annotation still comes from READ_ONLY_TOOLS alone, so a family
+    # with one read-only action must not start claiming to be read-only.
+    tools = _tools()
+
+    for name in ("debug_profile", "debug_config", "hub", "breakpoint", "typed_memory"):
+        assert tools[name].annotations.readOnlyHint is False, name
+    for name in ("frame", "snapshot", "inspect_symbol", "read_registers"):
+        assert tools[name].annotations.readOnlyHint is True, name
+

@@ -268,3 +268,25 @@ def test_measure_is_reachable_through_call_read():
     from mcp_server.tool_surface import read_only_tool_names
 
     assert "measure_hub_channel" in read_only_tool_names()
+
+
+# FIX 5 (hub interlock wording)
+def test_cold_reset_records_its_own_confirmation_in_the_audit_trail(monkeypatch, hub_session):
+    # The docs now say the exception is honest because it is auditable: a cold
+    # reset confirms on its own behalf, but it leaves the same trace an explicit
+    # confirm=true would. A self-confirmed power cut with no trace would be the
+    # overstatement all over again, one layer down.
+    import mcp_server.server as server_module
+
+    monkeypatch.setattr(server_module, "_last_session",
+                        {"server_type": "openocd", "server_args": []})
+    _set_profile({"channel": 2, "power_cycle": {"off_ms": 0, "settle_ms": 0}})
+
+    assert _call("reset_target", {"halt": True, "strategy": "cold"})["ok"] is True
+
+    power_off = [entry for entry in hub_session.manager.guard.get_audit_log()
+                 if entry["action"] == "power_off"]
+    assert [entry["decision"] for entry in power_off] == ["apply"]
+    assert power_off[0]["channel"] == 2
+    assert power_off[0]["acknowledged"] is True
+

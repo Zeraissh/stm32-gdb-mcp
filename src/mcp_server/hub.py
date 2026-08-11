@@ -51,7 +51,17 @@ INSTALL_HINT = "pip install 'stm32-gdb-mcp[hub]'"
 
 
 class HubUnavailableError(RuntimeError):
-    """The hub cannot be reached: extra not installed, no device, or link down."""
+    """The hub cannot be reached: extra not installed, no device, or link down.
+
+    ``next_actions`` lets a raise site that knows WHICH cause applies carry the
+    remedy for THAT cause out to the tool layer. Without it every hub failure got
+    the same generic pair of suggestions, and for an unmapped channel the generic
+    pair pointed at the wrong fix.
+    """
+
+    def __init__(self, *args: Any, next_actions: list[str] | None = None) -> None:
+        super().__init__(*args)
+        self.next_actions: list[str] = list(next_actions or [])
 
 
 class HubBusyError(RuntimeError):
@@ -145,6 +155,14 @@ class HubPowerGuard:
         alive on this channel. When set, confirmation is required regardless of
         mode: an "allow" policy set for scripted CI must not silently brown out a
         board in the middle of a flash.
+
+        ``confirm`` asserts intent and does not have to arrive as a caller's
+        argument. The entry points that exist to remove power -- cold reset,
+        recover_session's escalation ladder, discovery's data toggles -- pass it
+        themselves, because naming one of those IS the confirmation, and each drops
+        or refuses the debug session before the cut. Those decisions are audited
+        exactly like an argument-confirmed one, which is what keeps the exception
+        honest rather than a hole.
         """
         if self.mode == "dry_run":
             return {"action": "simulated", "reason": "dry_run mode is active",
@@ -396,9 +414,102 @@ class HubManager:
                 if entry.get("label") == session_id:
                     return self._validated(ch), "map_label"
 
-        raise HubUnavailableError(
-            "hub channel unmapped: no channel given, none in the debug profile, and no hub.map "
-            "entry matches this session. Set it with debug_profile(action=set, hub={\"channel\": N})."
+        raise self._unmapped(profile, spec, entries, session_id, probe_serial)
+
+    def _unmapped(self, profile: dict | None, spec: dict, entries: dict[int, dict],
+                  session_id: str | None, probe_serial: str | None) -> HubUnavailableError:
+        """Name the ONE cause that applies, with the remedy that fixes THAT cause.
+
+        The message used to list all three causes at once and offer a single
+        remedy -- pin hub.channel -- which is the wrong answer for two of them.
+        Observed on a rack: the config was loaded into the DEFAULT session only,
+        hub(session="TC") then failed, and pinning a channel per session would
+        have bypassed the map instead of loading it where it was missing.
+
+        Everything below is decided from what this call actually knows: whether a
+        profile was passed at all, whether it is empty, whether it has a hub
+        block, and what the map can select on.
+        """
+        who = f'session "{session_id}"' if session_id else "this session"
+        load = (f'debug_config(action=load, path=..., session="{session_id}")'
+                if session_id else "debug_config(action=load, path=...)")
+        pin = 'debug_profile(action=set, hub={"channel": N})'
+
+        if not spec:
+            if profile is None:
+                return HubUnavailableError(
+                    "hub channel unmapped: this HubManager has no hub spec -- configure() was "
+                    "never given a channel or a map. This is the direct-caller path (a script "
+                    'driving HubManager); pass explicit=N, or configure({"channel": N}) first.',
+                    next_actions=["hub(action=describe)"],
+                )
+            shared = ""
+            if self._spec:
+                shared = (" A hub block IS configured elsewhere in this process, but it belongs "
+                          "to another session and is deliberately never inherited -- on a rack, "
+                          "inheriting it would power-cycle a neighbouring board.")
+            if not profile:
+                return HubUnavailableError(
+                    f"hub channel unmapped: the debug profile for {who} is EMPTY, so no hub config "
+                    f"was ever loaded into it. The profile is per-session and in-memory only: "
+                    f"loading a rack config into one session leaves every other session empty, and "
+                    f"a server restart clears them all.{shared} Load it into this session: {load}.",
+                    next_actions=[load, "debug_profile(action=get)"],
+                )
+            return HubUnavailableError(
+                f'hub channel unmapped: the debug profile for {who} has no "hub" block, so it '
+                f"names neither a channel nor a hub.map.{shared} Load the rack config into this "
+                f"session ({load}), or give this session its own hub block.",
+                next_actions=[load, pin],
+            )
+
+        if not entries:
+            return HubUnavailableError(
+                f'hub channel unmapped: the hub block for {who} has no "channel" and no "map", so '
+                f"nothing says which port this board is on. Fill the map in with "
+                f"hub(action=discover, apply=true), or pin this port with {pin}.",
+                next_actions=["hub(action=discover, apply=true)", pin],
+            )
+
+        labels = sorted(str(entry["label"]) for entry in entries.values() if entry.get("label"))
+        serials = sorted(str(entry["serial"]) for entry in entries.values() if entry.get("serial"))
+
+        if labels:
+            tried = f'"{session_id}"' if session_id else "no session name at all"
+            also = (f' The probe serial "{probe_serial}" matched no mapped serial either.'
+                    if probe_serial and serials else "")
+            return HubUnavailableError(
+                f"hub channel unmapped: hub.map defines the labels {labels}, and a label is "
+                f"compared against the debug session name EXACTLY -- this call ran under {tried}, "
+                f"which is none of them.{also} Start this board's session under its label "
+                f'(session="{labels[0]}"), or change that label in the config to the session name '
+                f"you are using.",
+                next_actions=["hub(action=describe)", "debug_profile(action=get)"],
+            )
+
+        if serials:
+            if probe_serial:
+                return HubUnavailableError(
+                    f'hub channel unmapped: hub.map selects by serial ({serials}), and the probe '
+                    f'serial for {who}, "{probe_serial}", is not among them. No entry carries a '
+                    f'"label", so there is no second way to select a channel. Refresh the serials '
+                    f"with hub(action=discover, apply=true), or add a label equal to the session "
+                    f"name.",
+                    next_actions=["hub(action=discover, apply=true)", "hub(action=describe)"],
+                )
+            return HubUnavailableError(
+                f"hub channel unmapped: hub.map selects by serial ({serials}), but {who} has no "
+                f'probe serial to match -- no debug session is running and the profile has no '
+                f'"serial". Start the session first, or add a "label" equal to the session name.',
+                next_actions=["start_debug_session", "hub(action=describe)"],
+            )
+
+        return HubUnavailableError(
+            f"hub channel unmapped: hub.map has entries for channels {sorted(entries)}, but none "
+            f'carries a "label" or a "serial", so none of them can be selected. Discovery keys '
+            f"serial-less probes by USB port, which identifies a channel but cannot select one: "
+            f"give those channels a label equal to the session name, or pin one with {pin}.",
+            next_actions=["hub(action=describe)", pin],
         )
 
     def _validated(self, channel: Any) -> int:

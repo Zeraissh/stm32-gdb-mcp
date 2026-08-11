@@ -4,10 +4,29 @@ from mcp.types import TextContent, Tool
 
 from ..issue_reporter import DEFAULT_REPO, build_issue_body, issue_fingerprint
 from ..metrics import compute_metrics
-from ..server_metadata import mcp_version
+from ..server_metadata import mcp_version, server_info
 from ..tool_response import content_error, content_success
 from .context import ToolContext
 from .registry import register
+
+
+@register(Tool(
+    name="mcp_info",
+    description="Identifies THIS running stm32-gdb-mcp server: release version, git commit, the "
+                "directory the code was imported from, whether compact mode is hiding tools, and "
+                "how many tools this build advertises. Needs NO debug session, NO probe and NO "
+                "target — call it the moment a tool you expect is missing or behaves like an older "
+                "build, instead of guessing which checkout the client actually launched.",
+    inputSchema={"type": "object", "properties": {}}
+))
+def mcp_info(ctx: ToolContext, arguments: dict) -> list[TextContent]:
+    info = server_info()
+    catalog = ctx.tool_catalog()
+    if catalog:
+        # Populated only once the client has listed tools; an empty catalog would
+        # read as "this build advertises nothing", which is worse than silence.
+        info["tools_advertised"] = len(catalog)
+    return [content_success(info, suggested_next_actions=["tool_help"])]
 
 
 @register(Tool(
@@ -40,6 +59,11 @@ def tool_help(ctx: ToolContext, arguments: dict) -> list[TextContent]:
         )]
     return [content_success({
         "count": len(matches),
+        # count=0 for a tool the agent is sure exists means one of two things, and
+        # only the build identity separates them: wrong build, or right build with
+        # the tool renamed. Answering both in one call is what stops the
+        # restart-the-client-and-look-again loop.
+        "server": server_info(),
         "tools": [tool.model_dump(by_alias=True, exclude_none=True) for tool in matches],
     })]
 

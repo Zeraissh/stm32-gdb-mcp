@@ -88,6 +88,12 @@ def _error(exc: Exception) -> list[TextContent]:
     if isinstance(exc, HubBusyError):
         return [content_error(str(exc), code="hub_busy",
                               suggested_next_actions=["hub(action=describe)"])]
+    # A raise site that knows WHICH cause applies ships the remedy for that cause.
+    # The generic pair below is only for the failures that cannot tell -- link
+    # down, no device, no ADC -- where "look at the hub" really is the next step.
+    if isinstance(exc, HubUnavailableError) and exc.next_actions:
+        return [content_error(str(exc), code="hub_unavailable",
+                              suggested_next_actions=exc.next_actions)]
     return [content_error(str(exc), code="hub_unavailable",
                           suggested_next_actions=["hub(action=describe)",
                                                   "debug_profile(action=set, hub=...)"])]

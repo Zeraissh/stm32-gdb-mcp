@@ -43,6 +43,10 @@ CORE_TOOLS = {
     "logging", "read_peripheral_register",
     "batch", "call", "call_read", "run_scenario", "get_session", "report_issue",
     "list_sessions", "close_session", "tool_help",
+    # Compact mode hides most of the surface, which is itself the leading
+    # explanation for "the tool I want is missing" -- so the one tool that reports
+    # both the running build AND compact_mode has to survive compact mode.
+    "mcp_info",
     # The only tool that can cut target power -- the documented cure for a wedged
     # probe, and useless if compact mode hides it exactly when things go wrong.
     "hub",
@@ -90,9 +94,12 @@ MERGED = {
     "debug_profile": ("action",
         {"get": "get_debug_profile", "set": "set_debug_profile"},
         "Active debug profile (mcu/elf/svd/probe).",
-        "action=get | set([mcu,elf_path,svd_path,board,probe,server_type,server_args,project_root,hub,notes]). "
-        "set MERGES — fields you omit keep their current value — and returns the full resulting profile. "
-        "The profile is in-memory only: it is empty again after the MCP server restarts."),
+        "action=get | set([mcu,elf_path,svd_path,board,probe,server_type,server_args,project_root,hub,notes,merge]). "
+        "set merges at the TOP LEVEL ONLY: omitted fields keep their value, but a nested block you pass "
+        "REPLACES the stored one whole — hub={map:{3:{label:TC}}} drops the rest of hub, including what "
+        "hub(action=discover) wrote. merge=true deep-merges nested blocks instead; leave it off to DROP a "
+        "stale entry, since replace is the only way to remove one. Returns the full resulting profile, "
+        "which is in-memory only: empty again after the MCP server restarts."),
     "read_registers": ("what",
         {"core": "read_core_registers", "fault": "read_fault_registers", "cycle": "read_cycle_counter"},
         "Read CPU register groups.",
@@ -149,7 +156,7 @@ SESSION_PROPERTY = {
 }
 
 READ_ONLY_TOOLS = {
-    "tool_help", "inspect_project", "read_memory", "read_variable", "read_call_stack",
+    "tool_help", "mcp_info", "inspect_project", "read_memory", "read_variable", "read_call_stack",
     "read_registers", "read_peripheral_register", "decode_peripheral_register",
     "inspect_symbol", "frame", "snapshot", "get_session",
     "list_sessions", "analyze_stack", "diagnose_fault", "detect_rtos", "read_freertos",
@@ -167,6 +174,10 @@ READ_ONLY_EXTRAS = {
     "get_debug_profile", "get_timeouts", "get_write_audit_log", "list_breakpoints",
     "get_gdb_events", "get_gdb_server_logs", "read_typed_memory", "describe_hub",
     "measure_hub_channel",
+    # A pure function of the caller's own dict -- no session, no file, no hardware
+    # (tools/config_tools.py:115). It was the starkest case of the name-only gate
+    # refusing something that has nothing to write to.
+    "validate_debug_config",
 }
 
 HARDWARE_WRITE_TOOLS = {
@@ -195,6 +206,55 @@ def read_only_tool_names() -> set[str]:
         if family in READ_ONLY_TOOLS:
             names.update(mapping.values())
     return names - READ_ONLY_DISPATCH_EXCLUDED
+
+
+def read_only_actions(name: object) -> list[str]:
+    """The discriminator values of family ``name`` that resolve to a read-only tool.
+
+    Empty for anything that is not a family, and for a family with no read-only
+    action at all. Used to tell a refused caller which actions it could have used.
+    """
+    if not isinstance(name, str):
+        return []
+    family = MERGED.get(name)
+    if family is None:
+        return []
+    allowed = read_only_tool_names()
+    return [choice for choice, target in family[1].items() if target in allowed]
+
+
+def read_only_dispatch_target(name: object, args: object = None) -> str | None:
+    """What ``call_read(tool=name, args=args)`` would run, or None if it writes.
+
+    The gate used to judge the tool NAME alone, which is the wrong unit for an
+    action-dispatched family: ``debug_profile(action=get)`` only reads and
+    ``action=set`` only writes, yet both were refused because the family as a
+    whole is not read-only -- so agents fell back to ``call``, the
+    approval-prompting path, for operations that can never need approval.
+    Resolving the discriminator first and judging the tool it lands on makes the
+    verdict per-action, and reuses MERGED as the classification table so it can
+    never disagree with what _dispatch_tool actually runs.
+
+    FAILS CLOSED: a missing, non-string, or unknown discriminator resolves to
+    nothing and is refused exactly like a write, so a family that grows a new
+    action stays on the write side until someone puts its target tool in the
+    read-only set. A family whose every action reads (frame, snapshot,
+    inspect_symbol, read_registers) is returned by name, leaving its own
+    dispatcher to produce the better "requires 'action' to be one of [...]"
+    error for a missing discriminator.
+    """
+    if not isinstance(name, str) or name in READ_ONLY_DISPATCH_EXCLUDED:
+        return None
+    allowed = read_only_tool_names()
+    family = MERGED.get(name)
+    if family is None:
+        return name if name in allowed else None
+    discriminator, mapping = family[0], family[1]
+    if all(target in allowed for target in mapping.values()):
+        return name
+    choice = args.get(discriminator) if isinstance(args, dict) else None
+    target = mapping.get(choice) if isinstance(choice, str) else None
+    return target if target in allowed else None
 
 
 def _with_session(schema: dict) -> dict:

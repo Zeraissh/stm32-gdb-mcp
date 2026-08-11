@@ -22,10 +22,19 @@ hub:
   # 省略 port 则自动扫描；扫描只会打开匹配 Hub 自身 VID/PID 的设备，不会碰目标板 UART。
   port: COM7
 
-  # allow: no confirmation, for unattended CI. Cutting power to a port with a live
-  # GDB server STILL requires confirm=true even here -- that interlock is not a
-  # policy setting, because a power cut mid-flash is how a board becomes a brick.
-  # allow 适用于无人值守 CI；但端口上有活跃 GDB 服务时仍强制要求 confirm=true。
+  # allow: no confirmation, for unattended CI. A hub(action=power/data/cycle) call
+  # against a port with a live GDB server STILL requires confirm=true even here --
+  # that interlock is not a policy setting, because a power cut mid-flash is how a
+  # board becomes a brick. One exception is deliberate: the tools that exist to
+  # remove power -- reset_target(strategy="cold") and recover_session's escalation
+  # ladder -- pass confirm themselves, because naming them IS the confirmation, and
+  # both stop the GDB session before the cut rather than cutting under a live one.
+  # Their decisions are audited like any other; hub(action=describe) lists them.
+  # allow 适用于无人值守 CI；但端口上有活跃 GDB 服务时，hub(action=power/data/cycle)
+  # 仍强制要求 confirm=true，任何 guard 模式都关不掉这条联锁。唯一的例外是刻意设计的：
+  # 以断电为本职的工具（reset_target(strategy="cold") 与 recover_session 的恢复阶梯）自行
+  # 传入 confirm——点名调用它们本身就是确认，且两者都会先停掉 GDB 会话再断电。这些决定
+  # 同样进审计日志，可用 hub(action=describe) 查看。
   guard: allow
 
   power_cycle:

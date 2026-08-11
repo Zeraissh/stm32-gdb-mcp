@@ -6,6 +6,7 @@ from ..debug_session import teardown_debug_session
 from ..error_taxonomy import classify_error, refine_target_unreachable
 from ..reliability import retry_call
 from ..self_check import evaluate_self_check
+from ..server_metadata import server_info
 from ..tool_response import content_error, content_success
 from ._helpers import autoload_symbols, core_state, hub_binding, recover_current_session
 from .context import ToolContext
@@ -248,6 +249,10 @@ def self_check(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     expected = arguments.get("expected_family") or ctx.debug_profile.get().get("mcu")
     result = evaluate_self_check(cpuid, dbgmcu_idcode, expected_family=expected)
     result["halted_for_check"] = halted
+    # self_check is the mandated first call after connecting, so this is the one
+    # place the running build's identity reaches the transcript unprompted --
+    # before anyone thinks to ask which server they are actually talking to.
+    result["server"] = server_info()
     next_actions = [] if result["ok"] else ["check_session_health", "start_debug_session"]
     return [content_success(result, suggested_next_actions=next_actions)]
 

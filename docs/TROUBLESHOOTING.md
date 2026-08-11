@@ -39,6 +39,11 @@ Some MCP clients cap the tools they display. The server provides two stable esca
   `tool_help(query="<text>")` searches the catalog. /
   `tool_help(name="<name>")` 返回隐藏工具的完整说明与 schema；
   `tool_help(query="<text>")` 可搜索目录。
+- `mcp_info` reports the version, git commit, install path and compact-mode state of the
+  server actually serving you. Call it when a tool you expect does not exist at all,
+  instead of inspecting the client's plugin manifest or restarting to find out. /
+  `mcp_info` 返回当前正在服务的服务器版本、git commit、安装路径与 compact 模式状态。
+  当你预期的工具完全不存在时先调用它，而不是去查客户端插件清单或重启客户端。
 
 Old standalone names remain callable through `call`; errors also point to the merged form:
 

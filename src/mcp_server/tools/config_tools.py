@@ -19,7 +19,11 @@ from .registry import register
 
 @register(Tool(
     name="set_debug_profile",
-    description="Stores board/session defaults such as MCU, probe, GDB server args, ELF path, and SVD path.",
+    description=(
+        "Stores board/session defaults such as MCU, probe, GDB server args, ELF path, and SVD path. "
+        "Top-level fields you omit keep their value, but a nested block you pass (hub, rtt, uart, swo, "
+        "reset, hil) REPLACES the stored one whole -- pass merge=true to deep-merge into it instead."
+    ),
     inputSchema={
         "type": "object",
         "properties": {
@@ -38,12 +42,24 @@ from .registry import register
                     "channel is 1-based and selects which port this session's board sits on."
                 ),
             },
-            "notes": {"type": "string"}
+            "notes": {"type": "string"},
+            "merge": {
+                "type": "boolean",
+                "description": (
+                    "Deep-merge nested blocks (hub, rtt, uart, swo, reset, hil) into the stored ones "
+                    "instead of replacing them -- use it to add one key, e.g. a hub.map label, without "
+                    "dropping the identity hub(action=discover) wrote. Leave it off to replace, which "
+                    "is the only way to remove a stale entry."
+                ),
+            }
         }
     }
 ))
 def set_debug_profile(ctx: ToolContext, arguments: dict) -> list[TextContent]:
-    profile = ctx.debug_profile.update(arguments)
+    # merge is a control flag, not a profile field: forwarding it would trip the
+    # store's unknown-field check (ALLOWED_FIELDS).
+    values = {key: value for key, value in arguments.items() if key != "merge"}
+    profile = ctx.debug_profile.update(values, merge=bool(arguments.get("merge")))
     svd_path = profile.get("svd_path")
     if svd_path:
         ctx.svd_parser.load(svd_path)
@@ -61,7 +77,11 @@ def get_debug_profile(ctx: ToolContext, arguments: dict) -> list[TextContent]:
 
 @register(Tool(
     name="load_debug_config",
-    description="Loads a YAML debug config and applies compatible fields to the active debug profile.",
+    description=(
+        "Loads a YAML debug config and applies compatible fields to the active debug profile. "
+        "Fields the file defines REPLACE the stored ones, so re-loading a rack config after re-cabling "
+        "never accumulates the previous rig's hub.map channels; fields it omits are left alone."
+    ),
     inputSchema={
         "type": "object",
         "properties": {
