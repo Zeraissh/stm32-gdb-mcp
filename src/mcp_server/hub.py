@@ -270,9 +270,12 @@ class HubManager:
         try:
             hub = factory(exclude_ports=self._spec.get("exclude_ports"))
         except _port_busy_error() as exc:
+            # The vendor raises PortBusyError for "could not open port" too, which
+            # covers a port that does not exist at all -- so name both causes
+            # rather than sending someone hunting for a process that isn't there.
             raise HubBusyError(
-                f"hub port busy: {exc}. Another stm32-gdb-mcp process or vendor tool holds the "
-                f"hub's control port."
+                f"hub port busy: {exc} Either another process holds the hub's control port, or "
+                f"the configured port does not exist. Omit hub.port to auto-scan."
             ) from exc
         except _vendor_errors() as exc:
             raise HubUnavailableError(f"hub unavailable: {exc}") from exc

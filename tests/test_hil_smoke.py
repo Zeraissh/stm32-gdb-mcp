@@ -124,13 +124,39 @@ def test_hil_board_matrix_configs_are_valid_and_non_flashing(board, core, target
     assert target in config["server_args"]
 
 
-def test_hil_workflow_selects_each_board_and_uploads_evidence():
+def test_hil_workflow_runs_a_board_matrix_and_uploads_evidence():
     root = Path(__file__).resolve().parents[1]
     workflow = (root / ".github" / "workflows" / "hil.yml").read_text(encoding="utf-8")
 
-    for board in ("l151", "l431", "u535"):
-        assert f"          - {board}" in workflow
+    # The board list is a matrix input rather than a human-picked dropdown, so a
+    # hub rack can run several boards in one dispatch.
+    assert "matrix:" in workflow
+    assert "board: ${{ fromJSON(inputs.boards) }}" in workflow
+    # One hub, one USB-CDC control port, one SWD probe: legs must not overlap.
+    assert "max-parallel: 1" in workflow
+    assert "${{ matrix.board }}" in workflow
     assert "STM32_GDB_MCP_HIL_REPORT" in workflow
     assert "--junitxml=" in workflow
     assert "if: always()" in workflow
     assert "actions/upload-artifact" in workflow
+
+
+def test_hil_workflow_always_restores_the_rack():
+    # A failed leg must not leave the rack dark or half-disconnected for the next one.
+    root = Path(__file__).resolve().parents[1]
+    workflow = (root / ".github" / "workflows" / "hil.yml").read_text(encoding="utf-8")
+
+    assert "hil_rack.py restore" in workflow
+    assert "if: ${{ always() && inputs.use_hub }}" in workflow
+    # Isolation runs before the tests, restore after them.
+    assert workflow.index("hil_rack.py isolate") < workflow.index("Run HIL smoke tests")
+    assert workflow.index("Run HIL smoke tests") < workflow.index("hil_rack.py restore")
+
+
+def test_rack_config_labels_cover_the_hil_boards():
+    root = Path(__file__).resolve().parents[1]
+    loaded = load_debug_config(root / "examples" / "configs" / "rack_hub.yaml")
+
+    assert loaded["validation"]["valid"], loaded["validation"]
+    labels = {entry.get("label") for entry in loaded["config"]["hub"]["map"].values()}
+    assert {"l151", "l431", "u535"} <= labels

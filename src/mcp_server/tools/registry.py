@@ -45,6 +45,7 @@ TOOL_ORDER: list[str] = [
     "start_debug_session", "stop_debug_session", "self_check", "detect_probe", "suggest_server_args",
     "set_adapter_speed", "batch", "call", "call_read", "tool_help", "recover_session", "check_session_health",
     "describe_hub", "set_hub_power", "set_hub_data", "power_cycle_target", "measure_hub_channel",
+    "discover_hub_map",
     "build_firmware", "load_symbols", "flash_firmware", "reset_target", "set_breakpoint",
     "list_breakpoints", "delete_breakpoint", "continue_execution", "halt_execution", "run_and_wait",
     "debug_until", "capture_state", "flash_and_run", "run_for_duration", "wait_for_stop", "step",

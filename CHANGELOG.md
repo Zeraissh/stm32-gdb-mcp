@@ -97,6 +97,33 @@
 - `cold` is excluded from the alias note it would otherwise trigger: it maps to the same
   monitor command by design, because what makes it cold is the power sequence.
 
+### Channel discovery and the rack / 通道发现与机架
+
+- New `hub(action=discover)` works out which channel each probe is plugged into by
+  dropping one channel's USB data lines at a time and seeing which probe disappears from
+  `detect_probe`. Data lines rather than power, so a neighbouring board mid-experiment is
+  not rebooted. USB topology cannot answer this question: `openocd_config` only records a
+  probe's `location` when it has no serial, and virtually every ST-Link has one.
+  新增 `hub(action=discover)`：逐通道断开数据线并观察哪个探针消失。用数据线而非电源，
+  避免重启邻座还在跑实验的板子。USB 拓扑回答不了这个问题——只有无序列号的探针才会记录
+  `location`，而 ST-Link 基本都有序列号。
+- Identity falls back serial → instance_id → location, the same chain
+  `_deduplicate_probes` already uses, so two identical unserialised probes still separate
+  by physical port. A channel where more than one probe vanishes is reported as ambiguous
+  rather than guessed at, and every data line is restored even if detection raises.
+  两个同型号无序列号探针仍可按物理口区分；一次消失多个探针时报告歧义而不猜测；
+  即使检测过程抛错也会恢复所有数据线。
+- It refuses while a GDB server is alive (`hub_busy_sessions`, override with `force=true`)
+  and is explicitly opt-in about cost: it runs `detect_probe` once per channel plus a
+  baseline, and on Windows each of those walks the whole USB device tree at ~8.5 s.
+- `.github/workflows/hil.yml` replaces its human-picked `board` dropdown with a matrix
+  over a `boards` JSON array, `max-parallel: 1` (one hub, one control port, exclusive
+  SWD). Each leg isolates its board with `scripts/hil_rack.py isolate` so `detect_probe`
+  sees exactly one probe, and an `if: always()` step restores the rack — a failed leg must
+  not leave it dark for whoever runs next. New `examples/configs/rack_hub.yaml` describes
+  the wiring.
+  HIL workflow 的人工下拉框换成板卡矩阵；每个分支先隔离本板，结尾无条件恢复机架。
+
 ### Power profiling / 功耗测量
 
 - New `hub(action=measure)` samples per-port voltage and current over a window and returns

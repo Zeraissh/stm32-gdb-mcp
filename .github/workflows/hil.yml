@@ -3,19 +3,31 @@ name: Hardware-in-the-loop
 on:
   workflow_dispatch:
     inputs:
-      board:
-        description: "Connected board profile / 当前连接的板卡配置"
+      boards:
+        description: >-
+          JSON array of board profiles to run. With a programmable USB hub the rack can
+          run several in one dispatch; without one, list exactly the board that is
+          physically connected. / 要运行的板卡列表（JSON 数组）。接了可编程 USB Hub 时可
+          一次跑多块；没有 Hub 时只填当前物理连接的那一块。
         required: true
-        default: "l431"
-        type: choice
-        options:
-          - l151
-          - l431
-          - u535
+        default: '["l431"]'
+        type: string
       config_path:
-        description: "Optional config override / 可选的配置路径覆盖"
+        description: "Optional config override (single-board runs only) / 可选的配置路径覆盖（仅单板）"
         required: false
         default: ""
+      rack_config:
+        description: "Hub rack wiring / Hub 机架接线配置"
+        required: false
+        default: "examples/configs/rack_hub.yaml"
+      use_hub:
+        description: >-
+          Isolate each board on its hub channel before running it. Requires the [hub]
+          extra and a rack_config with a channel for every board. / 运行前用 Hub 隔离
+          每块板。需要 [hub] extra 和包含各板通道的 rack_config。
+        required: false
+        default: false
+        type: boolean
       smoke_command:
         description: "Optional command to run on the self-hosted STM32 runner / 在自托管 STM32 runner 上运行的可选命令"
         required: false
@@ -23,13 +35,23 @@ on:
 
 jobs:
   hil-smoke:
-    name: HIL smoke check
+    name: HIL smoke check (${{ matrix.board }})
     runs-on: [self-hosted, stm32]
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      # MANDATORY: one hub, one USB-CDC control port, one SWD probe at a time.
+      # Parallel legs would fight over all three.
+      max-parallel: 1
+      matrix:
+        board: ${{ fromJSON(inputs.boards) }}
     env:
       STM32_GDB_MCP_HIL: "1"
-      STM32_GDB_MCP_HIL_CONFIG: ${{ inputs.config_path || format('examples/configs/stm32{0}_openocd.yaml', inputs.board) }}
-      STM32_GDB_MCP_HIL_REPORT: artifacts/hil-${{ inputs.board }}.json
+      STM32_GDB_MCP_HIL_CONFIG: ${{ inputs.config_path || format('examples/configs/stm32{0}_openocd.yaml', matrix.board) }}
+      STM32_GDB_MCP_HIL_REPORT: artifacts/hil-${{ matrix.board }}.json
+      STM32_GDB_MCP_HIL_HUB: ${{ inputs.use_hub && '1' || '' }}
+      RACK_CONFIG: ${{ inputs.rack_config }}
+      BOARD: ${{ matrix.board }}
 
     steps:
       - uses: actions/checkout@v7
@@ -41,7 +63,7 @@ jobs:
       - name: Install package
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          python -m pip install -e ".[dev]${{ inputs.use_hub && ',hub' || '' }}"
 
       - name: Check host debug tools
         run: python setup_env.py
@@ -49,18 +71,31 @@ jobs:
       - name: Validate debug config
         run: python -c "from mcp_server.debug_config import load_debug_config; import json, os, sys; result = load_debug_config(os.environ['STM32_GDB_MCP_HIL_CONFIG']); print(json.dumps(result['validation'], indent=2)); sys.exit(0 if result['validation']['valid'] else 1)"
 
+      # Leave exactly this board's probe enumerated. detect_probe then sees one probe,
+      # so start_debug_session's single-probe auto-select stays on its safe path and
+      # never has to choose between two probes on the rack.
+      - name: Isolate board on the hub
+        if: ${{ inputs.use_hub }}
+        run: python scripts/hil_rack.py isolate --config "$RACK_CONFIG" --board "$BOARD"
+
       - name: Run HIL smoke tests
-        run: python -m pytest -q tests/hil -m hil --junitxml=artifacts/hil-${{ inputs.board }}-junit.xml
+        run: python -m pytest -q tests/hil -m hil --junitxml=artifacts/hil-${{ matrix.board }}-junit.xml
 
       - name: Run optional board smoke command
         if: ${{ inputs.smoke_command != '' }}
         run: ${{ inputs.smoke_command }}
 
+      # Non-negotiable: a failed leg must not leave the rack dark or half-disconnected
+      # for whoever runs next.
+      - name: Restore the rack
+        if: ${{ always() && inputs.use_hub }}
+        run: python scripts/hil_rack.py restore --config "$RACK_CONFIG"
+
       - name: Upload HIL evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: hil-${{ inputs.board }}-${{ github.run_attempt }}
+          name: hil-${{ matrix.board }}-${{ github.run_attempt }}
           path: artifacts/
           if-no-files-found: warn
           retention-days: 30

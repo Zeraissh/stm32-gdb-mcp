@@ -8,9 +8,12 @@ Every handler degrades cleanly when the ``[hub]`` extra is absent or no hub is
 attached -- ``hub_unavailable`` with an install hint, never a traceback.
 """
 
+import time
+
 from mcp.types import TextContent, Tool
 
 from ..hub import HubBusyError, HubGuardError, HubUnavailableError
+from ..hub_topology import discover_by_toggle
 from ..tool_response import content_error, content_success
 from ._helpers import core_state
 from .context import ToolContext
@@ -168,6 +171,89 @@ def set_hub_data(ctx: ToolContext, arguments: dict) -> list[TextContent]:
         return _error(exc)
     except ValueError as exc:
         return [content_error(str(exc), code="invalid_argument")]
+
+
+@register(Tool(
+    name="discover_hub_map",
+    description=(
+        "Works out which hub channel each debug probe is plugged into, by disconnecting one "
+        "channel's USB data lines at a time and seeing which probe disappears from detect_probe. "
+        "Data lines, not power, so a neighbouring board mid-experiment is not rebooted. SLOW and "
+        "opt-in: it runs detect_probe once per channel plus a baseline, and on Windows each of "
+        "those walks the whole USB device tree (~8.5 s). Refuses while any GDB server is alive "
+        "unless force=true. With apply=true the result is written into the active debug profile."
+    ),
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "apply": {"type": "boolean", "description": "Write the discovered map into the debug profile."},
+            "force": {"type": "boolean", "description": "Run even though a GDB server is alive on this session."},
+            "settle_sec": {"type": "number", "description": "Seconds to wait for USB re-enumeration per toggle (default 1.0)."},
+        },
+    }
+))
+def discover_hub_map(ctx: ToolContext, arguments: dict) -> list[TextContent]:
+    try:
+        manager = _manager(ctx)
+        if not arguments.get("force") and _any_session_live(ctx):
+            return [content_error(
+                "a GDB server is alive on this session; discovery un-enumerates probes one at a "
+                "time and would drop it. Stop the session, or pass force=true.",
+                code="hub_busy_sessions",
+                suggested_next_actions=["stop_debug_session", "hub(action=discover, force=true)"],
+            )]
+
+        channels = manager.channels()
+        result = discover_by_toggle(
+            _GuardBypass(manager), ctx.fns.detect_probe, channels,
+            sleep=time.sleep, settle_sec=float(arguments.get("settle_sec", 1.0)),
+        )
+
+        if arguments.get("apply") and result["map"]:
+            spec = dict(ctx.debug_profile.get().get("hub") or {})
+            merged = {str(k): v for k, v in (spec.get("map") or {}).items()}
+            for channel, entry in result["map"].items():
+                merged[str(channel)] = {k: v for k, v in entry.items() if k in ("serial", "label")}
+            spec["map"] = merged
+            ctx.debug_profile.update({"hub": spec})
+            manager.configure(spec)
+            result["applied"] = True
+
+        # JSON has no integer keys, so stringify explicitly rather than leave it to
+        # the serializer -- callers should see the same shape they can write back.
+        result["map"] = {str(channel): entry for channel, entry in result["map"].items()}
+
+        next_actions = ["debug_profile(action=get)"] if result.get("applied") else \
+            ["hub(action=discover, apply=true)"]
+        if result["ambiguous"]:
+            next_actions.insert(0, "hub(action=describe)")
+        return [content_success(result, suggested_next_actions=next_actions)]
+    except (HubUnavailableError, HubBusyError, HubGuardError) as exc:
+        return _error(exc)
+    except (TypeError, ValueError) as exc:
+        return [content_error(str(exc), code="invalid_argument")]
+
+
+def _any_session_live(ctx: ToolContext) -> bool:
+    try:
+        return bool(ctx.gdb_manager is not None and ctx.gdb_manager.is_alive())
+    except Exception:  # noqa: BLE001 - liveness is advisory
+        return False
+
+
+class _GuardBypass:
+    """Data-line toggles issued by discovery, which is itself the explicit request.
+
+    Discovery only ever restores what it disconnected, and it already refused to
+    run while a session is live, so re-asking for confirmation per channel would
+    make the tool unusable without adding safety.
+    """
+
+    def __init__(self, manager):
+        self._manager = manager
+
+    def data(self, channel, state, confirm=False):
+        return self._manager.data(channel, state, confirm=True)
 
 
 @register(Tool(

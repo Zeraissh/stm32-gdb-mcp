@@ -3556,7 +3556,7 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Programmable USB hub: per-port power, USB2 data lines, cold boot, and V/I sampling. action=describe | power(state[,channel,confirm]) | data(state[,channel,exclusive,confirm]) | cycle([channel,off_ms,settle_ms,confirm]) | measure([channel,duration_sec,interval_sec,all_channels]). state=on|off; channel is 1-based and defaults to the session's mapped hub channel. Removing port power cold-boots that board and un-enumerates its probe.",
+   "description": "Programmable USB hub: per-port power, USB2 data lines, cold boot, and V/I sampling. action=describe | power(state[,channel,confirm]) | data(state[,channel,exclusive,confirm]) | cycle([channel,off_ms,settle_ms,confirm]) | measure([channel,duration_sec,interval_sec,all_channels]) | discover([apply,force,settle_sec]). state=on|off; channel is 1-based and defaults to the session's mapped hub channel. Removing port power cold-boots that board and un-enumerates its probe.",
    "inputSchema": {
     "oneOf": [
      {
@@ -3615,6 +3615,17 @@
        "action"
       ],
       "title": "measure"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "discover"
+       }
+      },
+      "required": [
+       "action"
+      ],
+      "title": "discover"
      }
     ],
     "properties": {
@@ -3625,12 +3636,17 @@
        "power",
        "data",
        "cycle",
-       "measure"
+       "measure",
+       "discover"
       ],
       "type": "string"
      },
      "all_channels": {
       "description": "Sample every channel instead of just one.",
+      "type": "boolean"
+     },
+     "apply": {
+      "description": "Write the discovered map into the debug profile.",
       "type": "boolean"
      },
      "channel": {
@@ -3649,6 +3665,10 @@
       "description": "With state=on, disconnect every other port's data line.",
       "type": "boolean"
      },
+     "force": {
+      "description": "Run even though a GDB server is alive on this session.",
+      "type": "boolean"
+     },
      "interval_sec": {
       "description": "Delay between samples (default 0.05).",
       "type": "number"
@@ -3664,6 +3684,10 @@
      "settle_ms": {
       "description": "Milliseconds to wait after restoring power (default 1500).",
       "type": "integer"
+     },
+     "settle_sec": {
+      "description": "Seconds to wait for USB re-enumeration per toggle (default 1.0).",
+      "type": "number"
      },
      "state": {
       "description": "Target state for the port.",
