@@ -70,8 +70,27 @@ def reset_target(ctx: ToolContext, arguments: dict) -> list[TextContent]:
                                         "debug_profile(action=set, hub=...)",
                                         "reset_target(strategy=\"default\")"],
             )]
+        if not ctx.last_session.get("server_type"):
+            return [content_error(
+                "strategy=\"cold\" removes power from the port the debug probe is on, which drops "
+                "the debug session -- so it needs a session it can re-establish afterwards, and "
+                "there is no prior start_debug_session to repeat.",
+                code="no_session",
+                suggested_next_actions=["start_debug_session"],
+            )]
+
         manager, channel = binding
         cycle_config = (profile.get("hub") or {}).get("power_cycle") or {}
+
+        # Tear the session down BEFORE cutting power. Killing a GDB server by
+        # yanking its probe's VBUS is the wedging scenario this whole feature
+        # exists to fix; do not create it while curing it.
+        for teardown in (ctx.gdb_client.stop_gdb, ctx.gdb_manager.stop):
+            try:
+                teardown()
+            except Exception:  # noqa: BLE001 - teardown is best effort
+                pass
+
         try:
             data["power_cycle"] = manager.power_cycle(
                 channel,
@@ -83,9 +102,50 @@ def reset_target(ctx: ToolContext, arguments: dict) -> list[TextContent]:
             return [content_error(
                 f"cold reset could not power-cycle hub channel {channel}: {exc}",
                 code="cold_reset_failed",
-                suggested_next_actions=["hub(action=describe)", "reset_target(strategy=\"default\")"],
+                suggested_next_actions=["hub(action=describe)", "recover_session",
+                                        "reset_target(strategy=\"default\")"],
             )]
-        data["message"] = "Target power-cycled and reset"
+
+        # On any normal rig the probe sits on the port we just cut, so it has
+        # re-enumerated and the old GDB connection is dead. Measured on hardware:
+        # skipping this leaves a session where reads return 0x00000000 and
+        # check_session_health still reports target_responsive=true -- a wrong
+        # answer that looks exactly like a right one.
+        try:
+            recovered = recover_current_session(ctx.gdb_client, ctx.gdb_manager,
+                                                ctx.last_session, ctx.sess, escalate=False)
+        except Exception as exc:  # noqa: BLE001
+            return [content_error(
+                f"the board was power-cycled, but the debug session could not be re-established: "
+                f"{exc}. The target is running from its power-on reset; reconnect before reading "
+                f"anything, or reads will return zeros that look like data.",
+                code="cold_reset_reattach_failed",
+                data=data,
+                suggested_next_actions=["recover_session", "self_check"],
+            )]
+
+        data["reattached"] = {"port": recovered["port"],
+                              "symbols_loaded": recovered["symbols_loaded"]}
+
+        # The power-on reset IS the reset. Issuing another one would overwrite the
+        # RCC_CSR evidence and re-run the firmware's early init, destroying the
+        # cold-boot state (.noinit, drained RAM) that is the only reason to ask
+        # for this strategy.
+        if halt:
+            resp = ctx.gdb_client.halt_execution()
+            data["message"] = "Target power-cycled (power-on reset) and halted"
+            data["note"] = (
+                "Halted where the core was, NOT at the reset vector: the firmware runs for the "
+                "USB re-enumeration window (~1-3 s) before the probe is usable again. No second "
+                "reset was issued -- that would have overwritten the RCC_CSR power-on flag and "
+                "re-run early init, destroying the cold-boot state. To catch the core AT the "
+                "reset vector, start the server with server_args containing "
+                "-c \"reset_config srst_only srst_nogate connect_assert_srst\"."
+            )
+        else:
+            resp = None
+            data["message"] = "Target power-cycled (power-on reset) and left running"
+        return [content_success(data, raw_response=resp)]
 
     resp = ctx.gdb_client.reset_halt(command=resolved["command"])
     return [content_success(data, raw_response=resp)]

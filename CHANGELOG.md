@@ -150,12 +150,39 @@ channels 3 and 4. Two things only hardware could have found.
   的端口读 166 mV。因此断电前电流低于 1 mA 时，`browned_out` 返回 `null` 并说明该读数
   无法证实冷启动，而不是给一个自信的错误结论。
 
+- **`reset_target(strategy="cold")` left a zombie session and called it success.** On any
+  normal rig the probe sits on the port whose power is being cut, so the cold reset killed
+  its own debug connection — and then issued `monitor reset halt` and returned `ok=true`
+  down a dead pipe. Measured afterwards: `check_session_health` still said
+  `target_responsive=true`, every read returned `0x00000000`, and only `self_check` caught
+  it (`cpuid=0x00000000`). It now tears the session down *before* cutting power (never
+  yank VBUS from under a live OpenOCD — that is the wedging this feature exists to cure),
+  then re-establishes it and reports `reattached`.
+  在任何正常台架上探针都在被断电的那个口上，所以冷复位会杀掉自己的调试连接，然后对着
+  死连接下命令并返回 ok=true。实测：health 仍报 `target_responsive=true`，所有读返回
+  `0x00000000`，只有 `self_check` 抓得住。现在先拆会话再断电，之后重建并上报 `reattached`。
+- **A cold reset no longer issues a second reset.** The power-on reset *is* the reset;
+  another one would overwrite the RCC_CSR power-on flag and re-run early init, destroying
+  the cold-boot state (`.noinit`, drained RAM) that is the only reason to ask for this
+  strategy. With `halt=true` the core is halted where it is, and the response says plainly
+  that this is not the reset vector and that catching it there needs
+  `connect_assert_srst`.
+  上电复位本身就是复位；再补一次会覆盖 RCC_CSR 的上电标志并重跑早期初始化，把冷启动状态
+  毁掉。`halt=true` 时就地暂停，并明确说明这不是复位向量处。
+
 Also confirmed working on hardware: `exclusive` data isolation turns the unsafe
 two-probe case (`count=2`, no `suggested_probe`) into the safe single-probe auto-select
 case (`count=1`, `suggested_probe=stlink`), and discovery mapped both channels with zero
 ambiguity in 60 s.
 实机确认：`exclusive` 隔离把 `count=2` 无法自动选择的状态变成 `count=1` 可安全自动选择；
 discovery 在 60 秒内零歧义地映射出两个通道。
+
+Cold boot proven on an STM32L151 via RCC_CSR: a warm reset ADDS `SFTRST`
+(`0x0C000000` → `0x1C000000`), while a cold reset brings the register back to
+`0x0C000000` — a sticky reset flag disappearing is something no SWD reset can do, because
+only VDD actually collapsing clears that field.
+在 STM32L151 上用 RCC_CSR 证明冷启动：热复位会**加上** `SFTRST`，而冷复位后该位**消失**
+——粘滞复位标志位消失是任何 SWD 复位都做不到的，只有 VDD 真正掉电才会清掉这个字段。
 
 ### Power profiling / 功耗测量
 

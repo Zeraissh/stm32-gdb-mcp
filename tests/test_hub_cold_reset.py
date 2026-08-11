@@ -68,32 +68,81 @@ def test_cold_reset_refuses_when_no_hub_channel_is_mapped(hub_session):
     assert ("reset_halt", "monitor reset halt") not in hub_session.session.client.calls
 
 
-def test_cold_reset_power_cycles_then_resets(hub_session):
-    _set_profile({"channel": 2, "guard": "allow", "power_cycle": {"off_ms": 0, "settle_ms": 0}})
+@pytest.fixture
+def cold_rig(monkeypatch, hub_session):
+    """hub_session plus a prior start_debug_session for cold reset to re-establish.
 
+    Cold reset cuts power to the port the probe is on, so it MUST be able to
+    repeat the last session -- there is no connection left to reset over.
+    """
+    import mcp_server.server as server_module
+
+    monkeypatch.setattr(server_module, "_last_session",
+                        {"server_type": "openocd", "server_args": ["-f", "interface/stlink.cfg"]})
+    _set_profile({"channel": 2, "guard": "allow", "power_cycle": {"off_ms": 0, "settle_ms": 0}})
+    return hub_session
+
+
+def test_cold_reset_power_cycles_then_reattaches(cold_rig):
     payload = _call("reset_target", {"halt": True, "strategy": "cold"})
 
     assert payload["ok"] is True
-    assert payload["data"]["message"] == "Target power-cycled and reset"
     assert payload["data"]["power_cycle"]["channel"] == 2
     assert payload["data"]["power_cycle"]["browned_out"] is True
-    # Power really was removed and restored, and the reset still ran.
-    assert hub_session.hub.calls.count("set_channel_power") == 2
-    assert hub_session.hub.power[2] == 1
-    assert ("reset_halt", "monitor reset halt") in hub_session.session.client.calls
+    # Power really was removed and restored.
+    assert cold_rig.hub.calls.count("set_channel_power") == 2
+    assert cold_rig.hub.power[2] == 1
+    # And the session was rebuilt, because the probe was on that port.
+    assert payload["data"]["reattached"]["port"] == 3333
+    assert cold_rig.session.manager.started == [("openocd", ["-f", "interface/stlink.cfg"])]
 
 
-def test_cold_reset_needs_no_confirm_because_the_caller_named_it(hub_session):
+def test_the_session_is_torn_down_before_power_is_cut(cold_rig):
+    # Yanking VBUS out from under a live OpenOCD is the wedging scenario this
+    # feature exists to cure; it must not create one while curing it.
+    _call("reset_target", {"halt": True, "strategy": "cold"})
+
+    client_calls = [c[0] if isinstance(c, tuple) else c for c in cold_rig.session.client.calls]
+    assert client_calls.index("stop_gdb") < client_calls.index("connect")
+    assert cold_rig.session.manager.stopped is True
+
+
+def test_cold_reset_halts_rather_than_issuing_a_second_reset(cold_rig):
+    # The power-on reset IS the reset. Another one would overwrite the RCC_CSR
+    # power-on flag and re-run early init, destroying the cold-boot state that is
+    # the only reason to ask for this strategy.
+    payload = _call("reset_target", {"halt": True, "strategy": "cold"})
+
+    calls = [c[0] if isinstance(c, tuple) else c for c in cold_rig.session.client.calls]
+    assert "halt_execution" in calls
+    assert "reset_halt" not in calls
+    assert "NOT at the reset vector" in payload["data"]["note"]
+    assert "connect_assert_srst" in payload["data"]["note"]
+
+
+def test_cold_reset_without_halt_issues_nothing_further(cold_rig):
+    payload = _call("reset_target", {"halt": False, "strategy": "cold"})
+
+    calls = [c[0] if isinstance(c, tuple) else c for c in cold_rig.session.client.calls]
+    assert "reset_halt" not in calls
+    assert "halt_execution" not in calls
+    assert "left running" in payload["data"]["message"]
+
+
+def test_cold_reset_needs_no_confirm_because_the_caller_named_it(monkeypatch, hub_session):
     # Guard is left at its default "confirm": asking for a cold reset by name IS
     # the confirmation, otherwise the strategy would be unusable.
+    import mcp_server.server as server_module
+
+    monkeypatch.setattr(server_module, "_last_session",
+                        {"server_type": "openocd", "server_args": []})
     _set_profile({"channel": 2, "power_cycle": {"off_ms": 0, "settle_ms": 0}})
 
     assert _call("reset_target", {"halt": True, "strategy": "cold"})["ok"] is True
 
 
-def test_cold_reset_reports_a_rail_that_never_collapsed(hub_session):
-    _set_profile({"channel": 2, "guard": "allow", "power_cycle": {"off_ms": 0, "settle_ms": 0}})
-    hub_session.hub.residual_voltage_mv = 3300  # a second supply keeps the board alive
+def test_cold_reset_reports_a_rail_that_never_collapsed(cold_rig):
+    cold_rig.hub.residual_voltage_mv = 3300  # a second supply keeps the board alive
 
     payload = _call("reset_target", {"halt": True, "strategy": "cold"})
 
@@ -101,15 +150,23 @@ def test_cold_reset_reports_a_rail_that_never_collapsed(hub_session):
     assert "did NOT cold-boot" in payload["data"]["power_cycle"]["warning"]
 
 
-def test_a_failing_power_cycle_does_not_fall_back_to_a_warm_reset(hub_session):
-    _set_profile({"channel": 2, "guard": "allow", "power_cycle": {"off_ms": 0, "settle_ms": 0}})
-    hub_session.hub.ack = False
+def test_a_failing_power_cycle_does_not_fall_back_to_a_warm_reset(cold_rig):
+    cold_rig.hub.ack = False
 
     payload = _call("reset_target", {"halt": True, "strategy": "cold"})
 
     assert payload["ok"] is False
     assert payload["error"]["code"] == "cold_reset_failed"
-    assert ("reset_halt", "monitor reset halt") not in hub_session.session.client.calls
+    calls = [c[0] if isinstance(c, tuple) else c for c in cold_rig.session.client.calls]
+    assert "reset_halt" not in calls
+
+
+def test_cold_reset_without_a_prior_session_refuses(hub_session):
+    _set_profile({"channel": 2, "guard": "allow"})
+
+    payload = _call("reset_target", {"halt": True, "strategy": "cold"})
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "no_session"
 
 
 def test_a_normal_reset_never_touches_the_hub(hub_session):
@@ -119,8 +176,7 @@ def test_a_normal_reset_never_touches_the_hub(hub_session):
     assert "set_channel_power" not in hub_session.hub.calls
 
 
-def test_cold_reset_can_come_from_the_reset_config_block(hub_session):
-    _set_profile({"channel": 2, "guard": "allow", "power_cycle": {"off_ms": 0, "settle_ms": 0}})
+def test_cold_reset_can_come_from_the_reset_config_block(cold_rig):
     asyncio.run(handle_call_tool("debug_profile", {
         "action": "set", "reset": {"strategy": "cold"}}))
 
