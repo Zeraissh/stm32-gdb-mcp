@@ -13,6 +13,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Programmable USB hub control (per-port power / USB2 data lines / V+I sampling).
+# Optional on purpose: everything else in this server works unchanged without it,
+# and CI stays hardware-free. Adds one wheel -- pyserial is already a runtime dep.
+hub = ["smartusbhub>=1.2.1,<2"]
 dev = [
     "build>=1.2",
     "mypy>=1.14",
@@ -79,5 +83,5 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
-module = ["pygdbmi.*", "serial.*"]
+module = ["pygdbmi.*", "serial.*", "smartusbhub.*"]
 ignore_missing_imports = true

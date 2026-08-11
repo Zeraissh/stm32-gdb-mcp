@@ -102,6 +102,32 @@ also ships always-on `instructions`, so any MCP client gets the debug loop witho
   **写操作受保护。** option bytes、IWDG、WWDG 默认禁止，需用 `write_guard(action=policy)` 显式放行。
 - **Never hard-kill OpenOCD** (wedges the ST-Link USB) — use `recover_session`. SWD is exclusive. /
   **不要强杀 OpenOCD。** 使用 `recover_session`；同一探针的 SWD 调试连接是独占的。
+- **A wedged probe needs a physical re-enumeration.** With the optional `[hub]` extra and a
+  SmartUSBHub, `hub(action=power)` cuts VBUS and `hub(action=data)` drops the USB data lines,
+  so that re-plug becomes a tool call. Without a hub it is still a human with a cable. /
+  **卡死的探针必须物理重新枚举。** 装上可选的 `[hub]` extra 并接可编程 USB Hub 后，
+  `hub(action=power)` 可断 VBUS、`hub(action=data)` 可断数据线，那次插拔就变成一次工具调用；
+  没有 Hub 时仍然只能靠人手拔插。
+
+### Programmable USB hub (optional) / 可编程 USB Hub（可选）
+
+```bash
+pip install 'stm32-gdb-mcp[hub]'
+```
+
+Then point a session at its port (1-based, matching the hub's silkscreen):
+
+```json
+{"action": "set", "hub": {"channel": 2, "guard": "confirm"}}
+```
+
+`hub(action=describe)` is read-only and also reports per-port voltage/current on models
+with an ADC. Power and data actions require `confirm=true` while the guard is in its
+default `confirm` mode, or whenever a GDB server is live on that port — cutting power
+mid-flash is how a board becomes a brick. Set `guard: allow` for scripted CI. /
+`hub(action=describe)` 是只读的，带 ADC 的型号还会返回每端口电压/电流。默认 `confirm`
+模式下，或该端口上有活跃 GDB 服务时，电源与数据线操作都必须显式传 `confirm=true`
+——烧录中途断电正是把板子变砖的方式。CI 脚本可设 `guard: allow`。
 
 ## Response shape / 响应结构
 

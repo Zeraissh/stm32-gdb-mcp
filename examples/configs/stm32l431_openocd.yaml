@@ -22,4 +22,13 @@ uart:
   port: COM3
   baudrate: 115200
   timeout: 0.1
+# Optional: a programmable USB hub (pip install 'stm32-gdb-mcp[hub]'). Omit the whole
+# block if you do not have one -- every other tool behaves identically without it.
+# channel is 1-based and names the port this board's probe is plugged into.
+hub:
+  channel: 1
+  guard: confirm          # allow | confirm | dry_run
+  power_cycle:
+    off_ms: 400
+    settle_ms: 1500
 notes: "STM32L431CCT6 OpenOCD/ST-Link smoke config. / STM32L431CCT6 OpenOCD/ST-Link 烟测配置。"

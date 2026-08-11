@@ -1,5 +1,54 @@
 # Changelog / 更新日志
 
+## [Unreleased]
+
+### Programmable USB hub / 可编程 USB Hub
+
+- New `hub(action=describe|power|data)` family, behind a new optional extra
+  (`pip install 'stm32-gdb-mcp[hub]'`). This server has documented the same dead end in
+  five separate places — a hard-killed GDB server wedges the ST-Link USB endpoint "until
+  the probe is physically unplugged" — and every mitigation shipped so far (the job
+  object, PDEATHSIG, the probe lock, retry/backoff) is software guarding against a
+  hardware failure, so none of them can reach the case the repo itself calls uncoverable.
+  A hub that can cut VBUS is the missing hand: `power` removes port power (cold-booting
+  the board and un-enumerating its probe), `data` drops just the USB data lines
+  (un-enumerating a probe without rebooting the board it is attached to), and
+  `describe` is a read-only look at identity, per-port state, and — on models with an
+  ADC — per-port voltage and current.
+  新增 `hub(action=describe|power|data)` 工具族，通过新的可选 extra 提供。仓库里有五处
+  文档承认同一个死角：硬杀 GDB 服务会把 ST-Link 的 USB 端点卡死，"只能物理插拔才能恢复"；
+  而此前所有缓解手段都是用软件去防一个硬件故障，覆盖不到仓库自陈无法覆盖的那一类。
+  能断 VBUS 的 Hub 就是缺的那只手。
+- The extra is optional in the strict sense: the vendor package is imported through a
+  single lazy seam and is never touched unless a hub tool is called. Without it,
+  `hub` returns `hub_unavailable` with an install hint and everything else — including
+  `recover_session` — behaves byte-for-byte as before. CI proves both halves: the main
+  job installs *without* the extra, and a new `hub-extra` job installs *with* it.
+  该 extra 是严格意义上的可选：厂商包只经由一个惰性导入接缝加载，不调用 Hub 工具就
+  永不触及。缺席时 `hub` 返回带安装提示的 `hub_unavailable`，其余行为逐字节不变。
+- Power and data-line changes go through a confirmation guard (`allow` / `confirm` /
+  `dry_run`, default `confirm`) with an audit trail. Confirmation is forced regardless of
+  mode when a GDB server is live on the target port — an `allow` policy set for scripted
+  CI must not silently brown out a board mid-flash. Interlock mode, which powers exactly
+  one port at a time, is refused outright rather than supported: on a multi-board rack it
+  would silently kill every other board.
+  电源与数据线变更均经过确认护栏并留审计；目标端口上有活跃 GDB 服务时无论何种模式都强制
+  确认。会一次只给一个口供电的 interlock 模式被直接拒绝而非支持——在多板机架上它会静默
+  杀掉其余所有板子。
+- `hub(action=data, exclusive=true)` disconnects every other port's data line, so exactly
+  one probe stays enumerated and `start_debug_session`'s single-probe auto-select keeps
+  working on a multi-board rack. It is never implicit: un-enumerating three neighbouring
+  boards inside a session start is exactly the kind of invisible side effect this server
+  refuses to hide.
+  `exclusive=true` 只保留一个探针被枚举，让单探针自动选择在多板机架上继续成立；但绝不隐式
+  触发——把"顺手拔掉另外三块板"藏在会话启动里，正是本服务器拒绝隐藏的那种副作用。
+- New `hub` block in the debug profile and YAML config (`port`, `serial`, `channel`,
+  `map`, `power_cycle`, `guard`), validated like the existing `rtt`/`uart`/`swo`/`reset`/
+  `hil` sections. Channels are 1-based, matching the hardware's silkscreen.
+- Ports this process powered off are re-powered on shutdown, so a client that kills the
+  MCP server does not leave a bench board dark.
+  本进程关掉的端口会在退出时自动恢复供电，避免客户端杀掉服务后把板子留在断电状态。
+
 ## [0.8.1] - 2026-08-06
 
 Two fixes that only real hardware could have found, both about the same thing:

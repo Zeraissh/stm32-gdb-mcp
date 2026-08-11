@@ -31,6 +31,13 @@ from .registry import register
             "elf_path": {"type": "string"},
             "svd_path": {"type": "string"},
             "project_root": {"type": "string"},
+            "hub": {
+                "type": "object",
+                "description": (
+                    "Programmable USB hub binding: {port, serial, channel, map, power_cycle, guard}. "
+                    "channel is 1-based and selects which port this session's board sits on."
+                ),
+            },
             "notes": {"type": "string"}
         }
     }

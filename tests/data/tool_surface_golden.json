@@ -35,7 +35,8 @@
   "run_scenario",
   "logging",
   "breakpoint",
-  "debug_profile"
+  "debug_profile",
+  "hub"
  ],
  "tools": [
   {
@@ -2828,7 +2829,7 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Active debug profile (mcu/elf/svd/probe). action=get | set([mcu,elf_path,svd_path,board,probe,server_type,server_args,project_root,notes]). set MERGES \u2014 fields you omit keep their current value \u2014 and returns the full resulting profile. The profile is in-memory only: it is empty again after the MCP server restarts.",
+   "description": "Active debug profile (mcu/elf/svd/probe). action=get | set([mcu,elf_path,svd_path,board,probe,server_type,server_args,project_root,hub,notes]). set MERGES \u2014 fields you omit keep their current value \u2014 and returns the full resulting profile. The profile is in-memory only: it is empty again after the MCP server restarts.",
    "inputSchema": {
     "oneOf": [
      {
@@ -2868,6 +2869,10 @@
      },
      "elf_path": {
       "type": "string"
+     },
+     "hub": {
+      "description": "Programmable USB hub binding: {port, serial, channel, map, power_cycle, guard}. channel is 1-based and selects which port this session's board sits on.",
+      "type": "object"
      },
      "mcu": {
       "type": "string"
@@ -3535,6 +3540,94 @@
     "type": "object"
    },
    "name": "session_diagnostics"
+  },
+  {
+   "annotations": {
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "description": "Programmable USB hub: per-port power and USB2 data-line control. action=describe | power(state[,channel,confirm]) | data(state[,channel,exclusive,confirm]). state=on|off; channel is 1-based and defaults to the session's mapped hub channel. Powering a port off removes VBUS, so it cold-boots that board and un-enumerates its probe.",
+   "inputSchema": {
+    "oneOf": [
+     {
+      "properties": {
+       "action": {
+        "const": "describe"
+       }
+      },
+      "required": [
+       "action"
+      ],
+      "title": "describe"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "power"
+       }
+      },
+      "required": [
+       "action",
+       "state"
+      ],
+      "title": "power"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "data"
+       }
+      },
+      "required": [
+       "action",
+       "state"
+      ],
+      "title": "data"
+     }
+    ],
+    "properties": {
+     "action": {
+      "description": "Which operation to perform.",
+      "enum": [
+       "describe",
+       "power",
+       "data"
+      ],
+      "type": "string"
+     },
+     "channel": {
+      "description": "1-based hub channel. Defaults to the session's mapped hub channel.",
+      "type": "integer"
+     },
+     "confirm": {
+      "description": "Required to cut power/data when the guard is in confirm mode or a session is live.",
+      "type": "boolean"
+     },
+     "exclusive": {
+      "description": "With state=on, disconnect every other port's data line.",
+      "type": "boolean"
+     },
+     "session": {
+      "description": "Optional debug-session name. Omit for the default target.",
+      "type": "string"
+     },
+     "state": {
+      "description": "Target state for the port.",
+      "enum": [
+       "on",
+       "off"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   },
+   "name": "hub"
   }
  ]
 }

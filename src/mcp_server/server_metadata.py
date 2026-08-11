@@ -19,8 +19,9 @@ breakpoint(action=set|delete|list|watch), logging(action=start|stop|get|clear, c
 expressions(action=assert|capture|compare), debug_profile(action=get|set),
 debug_config(action=load|save|validate), read_registers(what=core|fault|cycle),
 inspect_symbol(what=size|type|address|resolve|functions|variables), frame(action=select|source|
-variables), write_guard(action=policy|audit), coredump, timeouts, typed_memory, snapshot,
-session_diagnostics. (Old standalone names still work if you call them.)
+variables), write_guard(action=policy|audit), hub(action=describe|power|data), coredump,
+timeouts, typed_memory, snapshot, session_diagnostics.
+(Old standalone names still work if you call them.)
 
 Core workflow:
 0. Need OpenOCD server_args? Call suggest_server_args(mcu, probe) - it returns the
@@ -53,6 +54,11 @@ Key rules (the target must cooperate):
 - If halting causes mysterious resets, configure_debug_freeze (freeze IWDG/WWDG/timers).
 - On probe_unavailable / connection_lost, call recover_session; tune flaky probes with
   timeouts(action=set).
+- A wedged ST-Link USB endpoint cannot be cleared in software. If a programmable USB hub
+  is configured (debug_profile hub.channel), hub(action=power, state=off/on) is the only
+  in-band way to force a re-enumeration - and hub(action=data) un-enumerates a probe
+  without rebooting its board. Both need confirm=true while a GDB server is live on that
+  port. Without a hub, that recovery is still a physical replug.
 - The ST-Link SWD/debug interface is EXCLUSIVE: while this MCP session is active, never
   start a second OpenOCD/GDB on the same probe (e.g. a verify script's own --reset will
   fail with "ST-Link in use"). Reset via reset_target instead. The ST-Link virtual COM

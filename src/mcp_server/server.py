@@ -24,6 +24,11 @@ from .freertos_inspector import FreeRTOSInspector
 from .gdb_client import GdbClientManager
 from .gdb_manager import GdbServerManager
 
+# hub_manager stays a module global for the same reason as the composites above:
+# _make_context reads it via globals() on every dispatch so tests that monkeypatch
+# mcp_server.server.hub_manager keep working (ctx.fns.hub_manager).
+from .hub import hub_manager  # noqa: F401
+
 # file_issue stays a module global for the same reason as the composites above.
 from .issue_reporter import file_issue  # noqa: F401
 from .log_reader import FileLogReader, ProcessLogReader, SerialLogReader
@@ -117,6 +122,12 @@ def _shutdown_all_sessions():
             getattr(obj, method)()
         except Exception:  # noqa: BLE001
             pass
+    # Re-power any hub port this process switched off. A client that kills the
+    # server must not leave a bench board dark with no way to notice.
+    try:
+        hub_manager.close(restore_power=True)
+    except Exception:  # noqa: BLE001 - shutdown must not raise
+        pass
 
 
 _process_guard.install()
@@ -202,6 +213,7 @@ def _make_context(sess) -> ToolContext:
             capture_state=g["capture_state"],
             debug_until=g["debug_until"],
             file_issue=g["file_issue"],
+            hub_manager=g["hub_manager"],
         ),
         dispatch=lambda tool_name, tool_args: g["_dispatch_tool"](tool_name, tool_args),
         default_session=lambda: _resolve_session({}),
