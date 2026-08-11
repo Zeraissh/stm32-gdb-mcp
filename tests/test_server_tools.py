@@ -3934,7 +3934,12 @@ def test_mcp_info_survives_and_reports_compact_mode(monkeypatch):
     # this test exists to prevent.
     assert "mcp_info" in names
     assert payload["data"]["compact_mode"] is True
-    assert payload["data"]["tools_advertised"] > len(names)
+    # tools_advertised must be what the CLIENT can see, not the size of the
+    # catalog. The catalog stays full in compact mode (tool_help needs it to
+    # describe hidden tools), so reporting its size here would answer "why can't I
+    # see my tool?" with a number that contradicts the client's own tool list.
+    assert payload["data"]["tools_advertised"] == len(names)
+    assert payload["data"]["tools_in_catalog"] > len(names)
 
 
 # FIX 1 (mcp_info)

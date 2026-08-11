@@ -10,13 +10,20 @@
   off disk and comparing commit shas, and it cost two wasted session restarts before the
   cause (a version-keyed plugin cache still serving old source) was found. /
   此前没有任何工具能报出正在运行的服务器身份，只能去磁盘上翻客户端插件清单。
-- **New `mcp_info`** returns `version`, `commit`, `install_root`, `compact_mode` and
-  `tools_advertised`. It needs no debug session, no probe and no target — which matters,
-  because it gets called precisely when nothing is connected. It is in `CORE_TOOLS`, so
-  compact mode (itself the leading explanation for a missing tool) cannot hide it, and it is
-  read-only, so `call_read` reaches it without a prompt. `tool_help` and `self_check` now
-  carry the same block. / 新增 `mcp_info`，无需会话/探针/目标即可调用；已列入 `CORE_TOOLS`
-  且为只读，`tool_help` 与 `self_check` 也一并携带该信息。
+- **New `mcp_info`** returns `version`, `commit`, `install_root` and `compact_mode`. It needs
+  no debug session, no probe and no target — which matters, because it gets called precisely
+  when nothing is connected. It is in `CORE_TOOLS`, so compact mode (itself the leading
+  explanation for a missing tool) cannot hide it, and it is read-only, so `call_read` reaches
+  it without a prompt. `tool_help` and `self_check` now carry the same block. /
+  新增 `mcp_info`，无需会话/探针/目标即可调用；已列入 `CORE_TOOLS` 且为只读，
+  `tool_help` 与 `self_check` 也一并携带该信息。
+- **Two tool counts, not one.** `tools_advertised` is what the client can actually see;
+  `tools_in_catalog` is the full surface, still reachable through `call`/`tool_help`. They
+  differ in compact mode, and reporting the catalog size as "advertised" would answer "why
+  can't I see my tool?" with a number that contradicts the client's own tool list — the exact
+  kind of true-sounding wrong number this tool exists to eliminate. /
+  `tools_advertised` 是客户端实际可见的数量，`tools_in_catalog` 是完整工具面；两者在 compact
+  模式下不同，把后者当成前者上报，会给出与客户端所见相矛盾的数字。
 - **`mcp_version()` no longer reports an unrelated repository.** It shelled out to
   `git -C <root>` without checking `<root>/.git` exists, so a wheel under `site-packages`
   let git walk upward and report some other checkout's HEAD as this server's version.

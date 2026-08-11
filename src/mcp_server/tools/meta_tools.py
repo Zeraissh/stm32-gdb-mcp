@@ -6,6 +6,7 @@ from ..issue_reporter import DEFAULT_REPO, build_issue_body, issue_fingerprint
 from ..metrics import compute_metrics
 from ..server_metadata import mcp_version, server_info
 from ..tool_response import content_error, content_success
+from ..tool_surface import CORE_TOOLS
 from .context import ToolContext
 from .registry import register
 
@@ -25,7 +26,18 @@ def mcp_info(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     if catalog:
         # Populated only once the client has listed tools; an empty catalog would
         # read as "this build advertises nothing", which is worse than silence.
-        info["tools_advertised"] = len(catalog)
+        #
+        # Two numbers, because in compact mode they differ and only one of them
+        # answers "why can't I see my tool?". The catalog always holds the full
+        # surface -- tool_help needs it to describe hidden tools -- so reporting
+        # its size as "advertised" would tell an agent 86 tools are on offer while
+        # the client is being shown 38. That is the exact kind of true-sounding
+        # wrong number this tool exists to eliminate.
+        info["tools_in_catalog"] = len(catalog)
+        info["tools_advertised"] = (
+            sum(1 for name in catalog if name in CORE_TOOLS)
+            if info["compact_mode"] else len(catalog)
+        )
     return [content_success(info, suggested_next_actions=["tool_help"])]
 
 
