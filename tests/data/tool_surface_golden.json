@@ -504,7 +504,7 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Resets the target device. Can optionally halt immediately after reset.",
+   "description": "Resets the target device. Can optionally halt immediately after reset. strategy=\"cold\" removes target power through a configured programmable USB hub before resetting, which is the only strategy that produces a true power-on reset (RCC_CSR POR flag, cleared .noinit, drained RAM); it fails rather than silently doing a warm reset when no hub channel is mapped.",
    "inputSchema": {
     "properties": {
      "command": {
@@ -520,7 +520,7 @@
       "type": "string"
      },
      "strategy": {
-      "description": "Optional reset strategy, e.g. default, under_reset, or software.",
+      "description": "Optional reset strategy: default, under_reset, software, or cold (hub power cycle).",
       "type": "string"
      }
     },
@@ -3556,7 +3556,7 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Programmable USB hub: per-port power, USB2 data lines, and cold boot. action=describe | power(state[,channel,confirm]) | data(state[,channel,exclusive,confirm]) | cycle([channel,off_ms,settle_ms,confirm]). state=on|off; channel is 1-based and defaults to the session's mapped hub channel. Removing port power cold-boots that board and un-enumerates its probe.",
+   "description": "Programmable USB hub: per-port power, USB2 data lines, cold boot, and V/I sampling. action=describe | power(state[,channel,confirm]) | data(state[,channel,exclusive,confirm]) | cycle([channel,off_ms,settle_ms,confirm]) | measure([channel,duration_sec,interval_sec,all_channels]). state=on|off; channel is 1-based and defaults to the session's mapped hub channel. Removing port power cold-boots that board and un-enumerates its probe.",
    "inputSchema": {
     "oneOf": [
      {
@@ -3604,6 +3604,17 @@
        "action"
       ],
       "title": "cycle"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "measure"
+       }
+      },
+      "required": [
+       "action"
+      ],
+      "title": "measure"
      }
     ],
     "properties": {
@@ -3613,9 +3624,14 @@
        "describe",
        "power",
        "data",
-       "cycle"
+       "cycle",
+       "measure"
       ],
       "type": "string"
+     },
+     "all_channels": {
+      "description": "Sample every channel instead of just one.",
+      "type": "boolean"
      },
      "channel": {
       "description": "1-based hub channel. Defaults to the session's mapped hub channel.",
@@ -3625,9 +3641,17 @@
       "description": "Required to cut power/data when the guard is in confirm mode or a session is live.",
       "type": "boolean"
      },
+     "duration_sec": {
+      "description": "Sampling window; 0 (default) takes one snapshot.",
+      "type": "number"
+     },
      "exclusive": {
       "description": "With state=on, disconnect every other port's data line.",
       "type": "boolean"
+     },
+     "interval_sec": {
+      "description": "Delay between samples (default 0.05).",
+      "type": "number"
      },
      "off_ms": {
       "description": "Milliseconds to hold power off (default 400).",

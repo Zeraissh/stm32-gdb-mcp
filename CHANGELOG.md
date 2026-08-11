@@ -79,6 +79,36 @@
   once is what turns "the link died" into "the board lost power".
   新增 `hub(action=cycle)`；`check_session_health` 现在带上本会话 Hub 端口的状态。
 
+### A reset strategy that is actually cold / 真正的冷复位
+
+- `reset_target(strategy="cold")` removes target power through the hub before issuing the
+  reset. Until now every strategy was a monitor command, and `under_reset` was documented
+  as a no-op alias of `default` on every backend — so nothing this server could do
+  produced a real power-on reset. `cold` is the first one that does: POR flags in
+  RCC_CSR, a genuinely zeroed `.noinit`, and drained RAM.
+  在此之前所有策略都只是 monitor 命令，`under_reset` 更是被明确记录为各后端上的空别名，
+  因此本服务器无法产生真正的上电复位。`cold` 是第一个能做到的。
+- It **fails** with `cold_reset_unavailable` when no hub channel is mapped, rather than
+  quietly doing a warm reset. A cold reset is not a command, it is removing power;
+  silently substituting a warm one would report a power-on reset that never happened —
+  precisely the false-success shape the `under_reset` note already warns about. A failed
+  power cycle likewise aborts instead of falling through to the warm path.
+  没有映射 Hub 通道时它直接报错而不是悄悄降级成热复位——那会汇报一次根本没发生的上电复位。
+- `cold` is excluded from the alias note it would otherwise trigger: it maps to the same
+  monitor command by design, because what makes it cold is the power sequence.
+
+### Power profiling / 功耗测量
+
+- New `hub(action=measure)` samples per-port voltage and current over a window and returns
+  the series plus min/max/mean. It is read-only and costs no target traffic, so it works
+  while the core is running — which is the point: an MCU that entered Stop and one that
+  only thinks it did are indistinguishable over SWD and differ by orders of magnitude
+  here. Reachable through `call_read`, and it carries `core_state` so a sample can be
+  read against what the core was doing.
+  新增 `hub(action=measure)`：按窗口采样每端口电压/电流并给出 min/max/mean。只读、不占用
+  目标端流量，因此可在核心运行时使用——真正进了 Stop 的 MCU 和自以为进了的，在 SWD 上看
+  完全一样，在这里差几个数量级。
+
 ## [0.8.1] - 2026-08-06
 
 Two fixes that only real hardware could have found, both about the same thing:

@@ -4,8 +4,8 @@ from mcp.types import TextContent, Tool
 
 from ..reset_strategy import resolve_reset_command
 from ..stop_event import was_already_halted, was_already_running
-from ..tool_response import content_success
-from ._helpers import core_state, recover_current_session
+from ..tool_response import content_error, content_success
+from ._helpers import core_state, hub_binding, recover_current_session
 from .context import ToolContext
 from .registry import register
 
@@ -27,12 +27,16 @@ def _stop_event_next_actions(event: dict) -> list[str]:
 
 @register(Tool(
     name="reset_target",
-    description="Resets the target device. Can optionally halt immediately after reset.",
+    description="Resets the target device. Can optionally halt immediately after reset. "
+                "strategy=\"cold\" removes target power through a configured programmable USB "
+                "hub before resetting, which is the only strategy that produces a true "
+                "power-on reset (RCC_CSR POR flag, cleared .noinit, drained RAM); it fails "
+                "rather than silently doing a warm reset when no hub channel is mapped.",
     inputSchema={
         "type": "object",
         "properties": {
             "halt": {"type": "boolean", "description": "If true, halts the CPU immediately after reset."},
-            "strategy": {"type": "string", "description": "Optional reset strategy, e.g. default, under_reset, or software."},
+            "strategy": {"type": "string", "description": "Optional reset strategy: default, under_reset, software, or cold (hub power cycle)."},
             "command": {"type": "string", "description": "Optional custom GDB monitor reset command."}
         },
         "required": ["halt"]
@@ -48,8 +52,43 @@ def reset_target(ctx: ToolContext, arguments: dict) -> list[TextContent]:
         strategy=arguments.get("strategy") or reset_config.get("strategy"),
         command=arguments.get("command") or reset_config.get("command"),
     )
+
+    data: dict = {"message": "Target reset", "reset": resolved}
+    if resolved.get("requires_power_cycle"):
+        binding = hub_binding(ctx)
+        if binding is None:
+            # Downgrading to a warm reset here would report success for something
+            # that did not happen -- the exact false-success shape reset_strategy
+            # already warns about for 'under_reset'.
+            return [content_error(
+                "strategy=\"cold\" needs a programmable USB hub channel for this session, and "
+                "none is mapped. A cold reset is not a command, it is removing power -- "
+                "silently doing a warm reset instead would report a power-on reset that never "
+                "happened. Map a channel, or use strategy=\"default\".",
+                code="cold_reset_unavailable",
+                suggested_next_actions=["hub(action=describe)",
+                                        "debug_profile(action=set, hub=...)",
+                                        "reset_target(strategy=\"default\")"],
+            )]
+        manager, channel = binding
+        cycle_config = (profile.get("hub") or {}).get("power_cycle") or {}
+        try:
+            data["power_cycle"] = manager.power_cycle(
+                channel,
+                off_ms=int(cycle_config.get("off_ms", 400)),
+                settle_ms=int(cycle_config.get("settle_ms", 1500)),
+                confirm=True,  # the caller asked for a cold reset by name
+            )
+        except Exception as exc:  # noqa: BLE001 - report, never half-reset silently
+            return [content_error(
+                f"cold reset could not power-cycle hub channel {channel}: {exc}",
+                code="cold_reset_failed",
+                suggested_next_actions=["hub(action=describe)", "reset_target(strategy=\"default\")"],
+            )]
+        data["message"] = "Target power-cycled and reset"
+
     resp = ctx.gdb_client.reset_halt(command=resolved["command"])
-    return [content_success({"message": "Target reset", "reset": resolved}, raw_response=resp)]
+    return [content_success(data, raw_response=resp)]
 
 
 @register(Tool(

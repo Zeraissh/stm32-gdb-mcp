@@ -130,10 +130,11 @@ MERGED = {
         "server_logs returns the GDB server's stderr."),
     "hub": ("action",
         {"describe": "describe_hub", "power": "set_hub_power", "data": "set_hub_data",
-         "cycle": "power_cycle_target"},
-        "Programmable USB hub: per-port power, USB2 data lines, and cold boot.",
+         "cycle": "power_cycle_target", "measure": "measure_hub_channel"},
+        "Programmable USB hub: per-port power, USB2 data lines, cold boot, and V/I sampling.",
         "action=describe | power(state[,channel,confirm]) | data(state[,channel,exclusive,confirm]) | "
-        "cycle([channel,off_ms,settle_ms,confirm]). "
+        "cycle([channel,off_ms,settle_ms,confirm]) | "
+        "measure([channel,duration_sec,interval_sec,all_channels]). "
         "state=on|off; channel is 1-based and defaults to the session's mapped hub channel. "
         "Removing port power cold-boots that board and un-enumerates its probe."),
 }
@@ -163,6 +164,7 @@ READ_ONLY_TOOLS = {
 READ_ONLY_EXTRAS = {
     "get_debug_profile", "get_timeouts", "get_write_audit_log", "list_breakpoints",
     "get_gdb_events", "get_gdb_server_logs", "read_typed_memory", "describe_hub",
+    "measure_hub_channel",
 }
 
 HARDWARE_WRITE_TOOLS = {

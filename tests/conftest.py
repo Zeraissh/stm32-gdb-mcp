@@ -164,6 +164,10 @@ class FakeHub:
         self.names = {}
         self.voltage_mv = 5012
         self.current_ma = 43
+        # What the ADC reads on a port whose power is OFF. 0 is the normal case;
+        # raise it to model a board held up by a second supply, a coin cell, or
+        # bulk capacitance -- the case power_cycle has to detect and report.
+        self.residual_voltage_mv = 0
         self.adc = adc
         self.interlock = interlock
         self.fail_on = {}
@@ -235,8 +239,14 @@ class FakeHub:
         self._check("get_channel_measurements")
         if not self.adc:
             raise RuntimeError("model has no ADC")
-        return {ch: {"voltage": self.voltage_mv, "current": self.current_ma,
-                     "fresh": True, "stale": False, "valid": True} for ch in channels}
+        return {
+            ch: {
+                "voltage": self.voltage_mv if self.power.get(ch) else self.residual_voltage_mv,
+                "current": self.current_ma if self.power.get(ch) else 0,
+                "fresh": True, "stale": False, "valid": True,
+            }
+            for ch in channels
+        }
 
     def register_disconnect_callback(self, callback):
         self.disconnect_callback = callback

@@ -12,6 +12,7 @@ from mcp.types import TextContent, Tool
 
 from ..hub import HubBusyError, HubGuardError, HubUnavailableError
 from ..tool_response import content_error, content_success
+from ._helpers import core_state
 from .context import ToolContext
 from .registry import register
 
@@ -166,6 +167,46 @@ def set_hub_data(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     except (HubUnavailableError, HubBusyError, HubGuardError) as exc:
         return _error(exc)
     except ValueError as exc:
+        return [content_error(str(exc), code="invalid_argument")]
+
+
+@register(Tool(
+    name="measure_hub_channel",
+    description=(
+        "Samples a hub port's voltage and current over a window and returns the series plus "
+        "min/max/mean per channel. Read-only, and costs no target traffic -- so it works while "
+        "the core is running, which is the point: it is the only instrument here that sees "
+        "actual power draw, and an MCU that entered Stop and one that only thinks it did look "
+        "identical over SWD. Requires a model with an ADC."
+    ),
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "channel": _CHANNEL,
+            "duration_sec": {"type": "number", "description": "Sampling window; 0 (default) takes one snapshot."},
+            "interval_sec": {"type": "number", "description": "Delay between samples (default 0.05)."},
+            "all_channels": {"type": "boolean", "description": "Sample every channel instead of just one."},
+        },
+    }
+))
+def measure_hub_channel(ctx: ToolContext, arguments: dict) -> list[TextContent]:
+    try:
+        manager = _manager(ctx)
+        channels = None
+        source = "all_channels"
+        if not arguments.get("all_channels"):
+            _manager_unused, channel, source = _resolve(ctx, arguments)
+            channels = (channel,)
+        result = manager.measure(
+            channels,
+            duration_sec=float(arguments.get("duration_sec", 0.0)),
+            interval_sec=float(arguments.get("interval_sec", 0.05)),
+        )
+        result["channel_source"] = source
+        return [content_success(result, core_state=core_state(ctx.gdb_client))]
+    except (HubUnavailableError, HubBusyError, HubGuardError) as exc:
+        return _error(exc)
+    except (TypeError, ValueError) as exc:
         return [content_error(str(exc), code="invalid_argument")]
 
 

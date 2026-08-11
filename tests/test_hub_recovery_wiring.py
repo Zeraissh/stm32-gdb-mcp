@@ -181,7 +181,7 @@ def _manager(hub, spec):
 def test_power_cycle_switches_off_then_on_and_measures(fake_hub):
     slept = []
     manager = _manager(fake_hub, {"channel": 1, "guard": "allow"})
-    fake_hub.voltage_mv = 8
+    fake_hub.residual_voltage_mv = 8
 
     result = manager.power_cycle(1, off_ms=400, settle_ms=100,
                                  sleep=slept.append, monotonic=lambda: 0.0)
@@ -195,7 +195,7 @@ def test_power_cycle_switches_off_then_on_and_measures(fake_hub):
 
 def test_power_cycle_flags_a_rail_that_never_collapsed(fake_hub):
     manager = _manager(fake_hub, {"channel": 1, "guard": "allow"})
-    fake_hub.voltage_mv = 3300  # a second supply keeps the board alive
+    fake_hub.residual_voltage_mv = 3300  # a second supply keeps the board alive
 
     result = manager.power_cycle(1, settle_ms=0, sleep=lambda _s: None, monotonic=lambda: 0.0)
 
@@ -224,7 +224,7 @@ def test_power_cycle_honours_the_guard(fake_hub):
 
 def test_power_cycle_tool_reports_a_failed_brownout_with_a_longer_retry(hub_session):
     _set_profile({"channel": 1, "guard": "allow"})
-    hub_session.hub.voltage_mv = 3300
+    hub_session.hub.residual_voltage_mv = 3300
 
     payload = _call("hub", {"action": "cycle", "settle_ms": 0, "off_ms": 0})
 

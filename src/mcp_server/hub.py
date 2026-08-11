@@ -566,6 +566,60 @@ class HubManager:
                 )
         return result
 
+    def measure(self, channels: tuple[int, ...] | None = None, duration_sec: float = 0.0,
+                interval_sec: float = 0.05, sleep=None, monotonic=None) -> dict:
+        """Sample per-port voltage and current over a window.
+
+        This is the only instrument in this server that sees the target's actual
+        power draw, which is what makes a low-power claim checkable: an MCU that
+        "entered Stop" and one that only thinks it did read the same over SWD and
+        differ by orders of magnitude here.
+
+        Returns the ``{series, summary, timing}`` shape used elsewhere for sampled
+        data. A zero duration takes exactly one snapshot.
+        """
+        sleep = sleep or time.sleep
+        monotonic = monotonic or time.monotonic
+
+        hub = self._ensure()
+        targets = tuple(channels) if channels else self._channels
+        for channel in targets:
+            self._validated(channel)
+
+        series: dict[int, list[dict]] = {ch: [] for ch in targets}
+        started = monotonic()
+        deadline = started + max(duration_sec, 0.0)
+        samples = 0
+        while True:
+            elapsed = monotonic() - started
+            snapshot = self._measurements(hub, targets)
+            if snapshot is None:
+                raise HubUnavailableError(
+                    "hub measurement unavailable: this model has no ADC, or the read timed out. "
+                    "Use hub(action=describe) to check which features the device reports."
+                )
+            for channel, sample in snapshot.items():
+                series[channel].append({
+                    "t_ms": int(round(elapsed * 1000)),
+                    "voltage_mv": sample.get("voltage"),
+                    "current_ma": sample.get("current"),
+                })
+            samples += 1
+            if monotonic() >= deadline:
+                break
+            sleep(max(interval_sec, 0.0))
+
+        return {
+            "series": {str(ch): points for ch, points in series.items()},
+            "summary": {str(ch): _summarize(points) for ch, points in series.items()},
+            "timing": {
+                "samples": samples,
+                "duration_sec": duration_sec,
+                "interval_sec": interval_sec,
+                "elapsed_ms": int(round((monotonic() - started) * 1000)),
+            },
+        }
+
     def _sample_voltage(self, channel: int) -> int | None:
         hub = self._hub
         if hub is None:
@@ -631,6 +685,21 @@ def _normalize_map(raw: Any) -> dict[int, dict]:
         elif isinstance(value, str):
             entries[channel] = {"label": value}
     return entries
+
+
+def _summarize(points: list[dict]) -> dict:
+    """min/max/mean per measured field, skipping samples the device marked invalid."""
+    summary: dict = {"samples": len(points)}
+    for field in ("voltage_mv", "current_ma"):
+        values = [p[field] for p in points if isinstance(p.get(field), (int, float))]
+        if not values:
+            continue
+        summary[field] = {
+            "min": min(values),
+            "max": max(values),
+            "mean": round(sum(values) / len(values), 3),
+        }
+    return summary
 
 
 def _min_optional(*values: int | None) -> int | None:
