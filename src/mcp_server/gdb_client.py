@@ -1,5 +1,6 @@
 import time
 from collections import OrderedDict
+from typing import Literal
 
 from pygdbmi.gdbcontroller import GdbController
 
@@ -35,6 +36,42 @@ def gdb_path(path: str) -> str:
     """
     normalized = str(path).replace("\\", "/").replace('"', '\\"')
     return f'"{normalized}"'
+
+
+# Cortex-M accesses memory little-endian, and the read path decodes with the same
+# assumption (see _le_hex_word_to_int). Naming it once keeps the encode and decode
+# sides from drifting: a big-endian target is one edit here, never a half-swapped pair.
+TARGET_BYTE_ORDER: Literal["little", "big"] = "little"
+
+
+def parse_int_literal(value):
+    """Return ``value`` as an int if it is a plain numeric literal, else ``None``.
+
+    ``None`` means "this is an expression, not a number" (``g_flag + 1``,
+    ``sizeof(cfg)``, ``0100`` — Python rejects the leading zero GDB would read as
+    octal, so that one deliberately routes to GDB rather than being reinterpreted).
+    """
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    try:
+        return int(str(value).strip(), 0)
+    except (TypeError, ValueError):
+        return None
+
+
+def encode_memory_bytes(
+    value: int, width_bits: int, byte_order: Literal["little", "big"] = TARGET_BYTE_ORDER
+) -> str:
+    """Render an integer as the hex string ``-data-write-memory-bytes`` expects.
+
+    Contents travel in *target memory order*, so width and byte order both matter:
+    16-bit 0x1234 is "3412" on a little-endian target and "1234" on a big-endian one,
+    and a 32-bit write is always 4 bytes wide even for a value that fits in one.
+    Values are taken modulo the width, so -1 at 32 bits is 0xffffffff — the same
+    truncation ``set {uint32_t}addr = -1`` performed.
+    """
+    masked = int(value) & ((1 << width_bits) - 1)
+    return masked.to_bytes(width_bits // 8, byte_order).hex()
 
 
 def gdb_expr(expr: str) -> str:
@@ -676,14 +713,39 @@ class GdbClientManager:
         return self.read_memory(address, byte_count)
 
     def write_typed_memory(self, address: str, value: str, width_bits: int = 32):
+        """Write ``value`` at ``address`` with an explicit element width.
+
+        A numeric value goes out as raw bytes via ``-data-write-memory-bytes``, the
+        mirror of how reads already use ``-data-read-memory-bytes``. The old path,
+        ``set {uint32_t}<addr> = <value>``, could not do this: ``uint32_t`` is a
+        typedef GDB only knows from a loaded symbol table, so on a bare board every
+        numeric poke failed with "No symbol table is loaded" — and a peripheral poke
+        (RCC_CSR RMVF, a DBGMCU freeze bit, a peripheral unlock) is precisely the case
+        that needs no symbols at all. Reads of the same address worked, so reads and
+        writes disagreed about whether an ELF was required. This also un-breaks the
+        DWT enable writes, which poke fixed addresses the same way.
+
+        A symbolic value (``g_flag + 1``, ``sizeof(cfg)``) genuinely needs the symbol
+        table, so it still goes through GDB's expression evaluator.
+        """
         self._validate_memory_width(width_bits)
-        c_type = {
-            8: "uint8_t",
-            16: "uint16_t",
-            32: "uint32_t",
-            64: "uint64_t",
-        }[width_bits]
-        resp = self.execute_cli_command(f"set {{{c_type}}}{address} = {value}")
+        literal = parse_int_literal(value)
+        if literal is None:
+            c_type = {
+                8: "uint8_t",
+                16: "uint16_t",
+                32: "uint32_t",
+                64: "uint64_t",
+            }[width_bits]
+            resp = self.execute_cli_command(f"set {{{c_type}}}{address} = {value}")
+        else:
+            # The address stays an expression ("&buf", "main + 4") and argv-splits
+            # exactly like the read side, so it needs the same quoting.
+            resp = self.execute_command(
+                f"-data-write-memory-bytes {gdb_expr(address)} "
+                f"{encode_memory_bytes(literal, width_bits)}",
+                timeout_sec=self.timeouts.get("memory"),
+            )
         return ensure_ok(resp, f"write to {address}")
 
     def get_responses(self, timeout_sec: float = 0.1):

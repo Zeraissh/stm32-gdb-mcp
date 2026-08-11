@@ -146,14 +146,77 @@ def test_formerly_hardcoded_timeouts_are_overridable():
     ]
 
 
-def test_write_typed_memory_uses_explicit_c_width():
+def test_write_typed_memory_writes_raw_bytes_in_target_order():
     client = GdbClientManager()
     client.gdb = FakeGdb()
 
     client.write_typed_memory("0x20000000", "0x12345678", width_bits=32)
 
+    # Contents go out in target memory order (little-endian on Cortex-M), and the
+    # address is quoted because -data-write-memory-bytes argv-splits like the read side.
     assert client.gdb.commands == [
-        ("set {uint32_t}0x20000000 = 0x12345678", 1.0)
+        ('-data-write-memory-bytes "0x20000000" 78563412', 2.0)
+    ]
+
+
+@pytest.mark.parametrize(("width_bits", "value", "contents"), [
+    (8, "0xff", "ff"),
+    (16, "0x1234", "3412"),
+    (32, "0x1", "01000000"),          # a small value still occupies the full width
+    (64, "0x1122334455667788", "8877665544332211"),
+    (32, "-1", "ffffffff"),           # negatives truncate like set {uint32_t} did
+    (32, "4096", "00100000"),         # decimal literals too
+])
+def test_write_typed_memory_encodes_each_width(width_bits, value, contents):
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+
+    client.write_typed_memory("0x40023834", value, width_bits=width_bits)
+
+    assert client.gdb.commands == [
+        (f'-data-write-memory-bytes "0x40023834" {contents}', 2.0)
+    ]
+
+
+def test_encode_memory_bytes_honors_byte_order():
+    # The only knob a big-endian target would need: width handling is identical,
+    # the byte order flips. Kept explicit so the two directions can't drift apart.
+    assert gdb_client_module.encode_memory_bytes(0x12345678, 32, "little") == "78563412"
+    assert gdb_client_module.encode_memory_bytes(0x12345678, 32, "big") == "12345678"
+    assert gdb_client_module.encode_memory_bytes(0x1234, 16, "big") == "1234"
+    assert gdb_client_module.TARGET_BYTE_ORDER == "little"
+
+
+def test_write_typed_memory_succeeds_with_no_symbol_table_loaded():
+    # issue #51: `set {uint32_t}0x40023834 = ...` needs an ELF for the uint32_t
+    # typedef, so poking a peripheral on a bare board failed with "No symbol table
+    # is loaded" — while reading the very same address worked. A numeric write must
+    # never touch the expression evaluator.
+    client = GdbClientManager()
+    client.gdb = ScriptedGdb({
+        "set {": [
+            {"type": "log", "payload": "No symbol table is loaded.  Use the \"file\" command."},
+            {"type": "result", "message": "done", "payload": None},
+        ]
+    })
+
+    client.write_typed_memory("0x40023834", "0x1000000", width_bits=32)
+
+    assert client.gdb.commands == [
+        ('-data-write-memory-bytes "0x40023834" 00000001', 2.0)
+    ]
+
+
+def test_write_typed_memory_still_evaluates_symbolic_values():
+    # A value that is not a literal genuinely needs the symbol table, so it keeps
+    # going through GDB's expression evaluator rather than being encoded here.
+    client = GdbClientManager()
+    client.gdb = FakeGdb()
+
+    client.write_typed_memory("&g_flags", "g_seed + 1", width_bits=16)
+
+    assert client.gdb.commands == [
+        ("set {uint16_t}&g_flags = g_seed + 1", 1.0)
     ]
 
 
@@ -263,7 +326,9 @@ def test_flash_raises_when_the_download_never_reports_completion():
         client.load_firmware("fw.elf")
 
 
-def test_typed_memory_write_raises_when_no_symbol_table_is_loaded():
+def test_symbolic_memory_write_raises_when_no_symbol_table_is_loaded():
+    # A symbolic value is the one write that legitimately needs symbols, and GDB's
+    # complaint about their absence must still surface instead of reporting ok:true.
     client = GdbClientManager()
     client.gdb = ScriptedGdb({
         "set {": [
@@ -273,7 +338,7 @@ def test_typed_memory_write_raises_when_no_symbol_table_is_loaded():
     })
 
     with pytest.raises(GdbCommandError, match="No symbol table"):
-        client.write_typed_memory("0x20000000", "1", width_bits=32)
+        client.write_typed_memory("0x20000000", "g_counter", width_bits=32)
 
 
 def test_windows_backslash_paths_are_normalized_for_gdb():
