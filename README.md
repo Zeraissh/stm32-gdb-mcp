@@ -129,6 +129,52 @@ mid-flash is how a board becomes a brick. Set `guard: allow` for scripted CI. /
 模式下，或该端口上有活跃 GDB 服务时，电源与数据线操作都必须显式传 `confirm=true`
 ——烧录中途断电正是把板子变砖的方式。CI 脚本可设 `guard: allow`。
 
+#### Selecting a channel on a multi-board rack / 多板机架下的通道选择
+
+`hub: {channel: N}` above pins one session to one port. With several boards, map the
+whole rack once instead and let each session pick its own channel: /
+上面的 `hub: {channel: N}` 把一个会话钉在一个端口上。多块板时改为一次性描述整个机架，
+让每个会话各自选中自己的通道：
+
+```yaml
+# bench_hub.yaml
+hub:
+  port: COM7          # omit to auto-scan / 省略则自动扫描
+  guard: confirm
+  map:
+    3: {label: TC}
+    4: {label: AGS}
+```
+
+```json
+{"action": "load", "path": "bench_hub.yaml"}
+```
+
+Two things about this that are easy to get wrong: /
+其中有两点很容易搞错：
+
+- **A `label` is matched against the debug session name, exactly.** It is not a free-form
+  nickname: the channel is selected only when the session was started as
+  `session="TC"`. This is the only way to select a channel for a **serial-less probe** —
+  `hub(action=discover, apply=true)` keys those by USB port, which *identifies* a channel
+  but cannot *select* one. /
+  **`label` 是与调试会话名精确比对的**，不是自由昵称：只有会话以 `session="TC"` 启动时才会
+  选中该通道。对于**无序列号的探针**这是唯一可行的选择方式——`hub(action=discover, apply=true)`
+  只能按 USB 端口给它们建 key，那能*认出*通道，却无法*选中*通道。
+- **The debug profile is per-session.** Loading the config into one session does not make
+  the map visible to another; the hub call then fails with
+  `hub_unavailable: hub channel unmapped`. Load it into **each** session:
+  `debug_config(action=load, path="bench_hub.yaml", session="TC")`. The profile is also
+  in-memory only, so this is re-run after every server restart. /
+  **调试 profile 是按会话隔离的。** 在一个会话里加载配置，另一个会话看不到该映射，此时 hub
+  调用会以 `hub_unavailable: hub channel unmapped` 失败。需要给**每个**会话都加载一次：
+  `debug_config(action=load, path="bench_hub.yaml", session="TC")`。profile 还是纯内存的，
+  因此服务器每次重启后都要重新加载。
+
+When it works, the result carries `channel_source: "map_label"` — check that field rather
+than assuming the right port was chosen. /
+生效时结果会带 `channel_source: "map_label"`——请以该字段为准，不要想当然认为选对了端口。
+
 ## Response shape / 响应结构
 
 Every tool returns a stable JSON envelope inside the MCP `TextContent` transport:

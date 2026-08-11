@@ -65,15 +65,33 @@ python scripts/hil_rack.py restore --config examples/configs/rack_hub.yaml
 
 1. Plug every board's probe into a hub channel and copy `examples/configs/rack_hub.yaml`.
 2. Set a `label` per channel matching the board profile names (`l151`, `l431`, `u535`).
+   The label is matched against the **debug session name, exactly**, so those profile
+   names are also the names each session must be started with (`session="l431"`).
 3. Fill the serials automatically — with all boards attached, run `hub(action=discover, apply=true)`
    once. It drops each channel's data lines in turn and records which probe disappeared.
    This is slow on Windows (`detect_probe` walks the whole USB device tree, ~8.5 s per
    channel), which is why it is opt-in and run once rather than at every session start.
+   Discovery never overwrites a `label` you set by hand. **Serial-less probes** (clone
+   ST-Links reporting no serial and an identical `location`) are keyed by USB port
+   instead, which identifies a channel but cannot select one — those channels *must*
+   be selected by `label` or an explicit `hub: {channel: N}`.
 4. Add `hub: {channel: N}` to each board's own config so `recover_session`,
    `reset_target(strategy="cold")`, and `hub(action=measure)` know which port that board is on.
+5. **Load the rack config into every session that needs it** — the debug profile is
+   per-session, so a map loaded into one session is invisible to the next, and the hub
+   call fails with `hub_unavailable: hub channel unmapped`. The profile is in-memory
+   only, so this is also re-run after each server restart. A successful selection
+   reports `channel_source: "map_label"`; check that field rather than assuming.
 
 插好所有板后跑一次 `hub(action=discover, apply=true)` 即可自动填好 serial；该调用在 Windows 上
 较慢，因此是显式选项而非每次会话启动都做。
+
+注意两点：`label` 是与**调试会话名精确比对**的，因此板卡 profile 名同时也是各会话必须使用的
+名字；而**调试 profile 按会话隔离**，在一个会话里加载的映射对另一个会话不可见，此时会以
+`hub_unavailable: hub channel unmapped` 失败，需要给每个会话都加载一次（profile 是纯内存的，
+服务器重启后同样要重新加载）。选中成功时结果会带 `channel_source: "map_label"`，请以该字段为准。
+无序列号的克隆 ST-Link 只能按 USB 端口建 key，那能认出通道却无法选中通道，因此这类通道**必须**
+靠 `label` 或显式 `hub: {channel: N}` 选择。
 
 ### What the hub makes testable / Hub 让哪些测试成为可能
 

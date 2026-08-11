@@ -32,6 +32,25 @@ hub:
     off_ms: 400          # raise if a board's bulk capacitance holds VDD up
     settle_ms: 1500      # USB re-enumeration budget after power returns
 
+  # A `label` is matched against the DEBUG SESSION NAME, exactly -- it is not a
+  # free-form nickname. The labels below are therefore also the names each session
+  # must be started with: session="l431". A probe with no serial (clone ST-Links
+  # report none, and an identical `location`) can ONLY be selected this way, or by
+  # an explicit hub: {channel: N}: discovery keys those by USB port, which
+  # identifies a channel but cannot select one.
+  # `label` 是与**调试会话名精确比对**的，不是自由昵称：下面的 label 同时也是各会话必须
+  # 使用的名字。无序列号的探针（克隆 ST-Link 无序列号且 location 相同）只能靠 label 或
+  # 显式 hub: {channel: N} 选择——discovery 只能按 USB 端口给它们建 key，那能认出通道，
+  # 却无法选中通道。
+  #
+  # The debug profile is PER-SESSION: load this file into every session that needs
+  # it (debug_config(action=load, path=..., session="l431")), or the hub call fails
+  # with hub_unavailable: hub channel unmapped. It is in-memory only, so this is
+  # re-run after each server restart. A successful selection reports
+  # channel_source: "map_label" -- check that field rather than assuming.
+  # 调试 profile 按会话隔离：每个会话都要各自加载一次，否则 hub 调用会以
+  # hub_unavailable: hub channel unmapped 失败；profile 是纯内存的，服务器重启后需重新
+  # 加载。选中成功时结果带 channel_source: "map_label"，请以该字段为准。
   map:
     1:
       label: l151

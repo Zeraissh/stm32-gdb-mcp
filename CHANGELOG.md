@@ -1,5 +1,25 @@
 # Changelog / 更新日志
 
+## [Unreleased]
+
+### Docs: how a rack channel actually gets selected / 文档：机架通道到底如何被选中
+
+- **`label` is matched against the debug session name, exactly.** Nothing said so. It reads
+  like a free-form nickname, and for a **serial-less probe** it is the only way to select a
+  channel at all — `hub(action=discover, apply=true)` keys those by USB port, which
+  identifies a channel but cannot select one. Documented in the README, `docs/hil-validation.md`,
+  and `examples/configs/rack_hub.yaml`. /
+  **`label` 是与调试会话名精确比对的**，此前完全没有文档说明。
+- **The debug profile is per-session.** Loading a rack config into one session leaves the map
+  invisible to the next, and the hub call then fails `hub_unavailable: hub channel unmapped`
+  — which reads like a broken map rather than a per-session load that never happened. It is
+  also in-memory only, so it must be re-loaded after every server restart. /
+  **调试 profile 按会话隔离**，且是纯内存的，服务器重启后需重新加载。
+- Both were found by driving a real two-board rack; the failure surfaces only when a *second*
+  session is used, which no single-board walkthrough reaches. `channel_source: "map_label"` is
+  now called out as the field to check instead of assuming the right port was chosen. /
+  两者均在真实双板机架上发现——只有用到*第二个*会话时才会暴露。
+
 ## [0.9.0] - 2026-08-11
 
 ### sample_pc: usable by default, and no longer invents hot spots / 修复 PC 采样
