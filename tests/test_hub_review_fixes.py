@@ -33,14 +33,18 @@ def _set_profile(hub_block):
 
 
 class _Client:
-    """GdbClientManager stand-in whose CPUID read is controllable."""
+    """GdbClientManager stand-in whose CPUID read and run state are controllable."""
 
-    def __init__(self, cpuid=0x412FC230, raises=None):
+    def __init__(self, cpuid=0x412FC230, raises=None, running=False):
         self.cpuid = cpuid
         self.raises = raises
+        self.running = running
 
     def is_alive(self):
         return True
+
+    def is_running(self):
+        return self.running
 
     def read_word(self, address):
         if self.raises:
@@ -62,7 +66,7 @@ def test_a_live_target_reports_responsive_with_its_cpuid(monkeypatch, default_se
     health = _health(monkeypatch, _Client(cpuid=0x412FC230))
 
     assert health["target_responsive"] is True
-    assert health["identity"] == {"cpuid": "0x412fc230", "valid": True}
+    assert health["identity"] == {"cpuid": "0x412fc230", "verified": True}
 
 
 def test_an_all_zero_read_is_not_reported_as_responsive(monkeypatch, default_session):
@@ -72,8 +76,25 @@ def test_an_all_zero_read_is_not_reported_as_responsive(monkeypatch, default_ses
     assert health["target_responsive"] is False
     assert health["identity"]["cpuid"] == "0x00000000"
     assert "not a Cortex-M signature" in health["identity"]["reason"]
-    assert "start_debug_session" in _call(
+    assert "recover_session" in _call(
         "session_diagnostics", {"what": "health"})["suggested_next_actions"]
+
+
+def test_a_running_core_is_not_reported_as_a_broken_link(monkeypatch, default_session):
+    # Measured on hardware: a RUNNING core also reads CPUID back as zeros. That is
+    # expected, not a dead probe -- and sending an agent to recover_session here
+    # would tear down a perfectly good session.
+    import mcp_server.server as server_module
+
+    client = _Client(cpuid=0x00000000, running=True)
+    monkeypatch.setattr(server_module, "gdb_client", client)
+    payload = _call("session_diagnostics", {"what": "health"})
+
+    assert payload["core_state"] == "running"
+    assert "core is RUNNING" in payload["data"]["identity"]["reason"]
+    assert "NOT evidence of a dead link" in payload["data"]["identity"]["reason"]
+    assert payload["suggested_next_actions"][0] == "halt_execution"
+    assert "recover_session" not in payload["suggested_next_actions"]
 
 
 def test_a_byte_swapped_read_is_also_caught(monkeypatch, default_session):

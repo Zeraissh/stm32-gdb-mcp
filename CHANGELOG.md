@@ -196,6 +196,11 @@ only VDD actually collapsing clears that field.
   健康检查此前只问"GDB 有没有应答"，而 GDB 即使底层链路已死也会用自己的状态应答。实测：
   探针端口断电后它仍报 `target_responsive=true`，而所有读都返回 `0x00000000`。现在改为
   读 CPUID 并套用 `self_check` 的 Cortex-M 签名校验，并给出证据与失败原因。
+  A **running** core also reads identity back as zeros (measured), which is expected and is
+  not a dead link — that case is reported separately, carries `core_state`, and suggests
+  `halt_execution` rather than `recover_session`, so "the core is busy" and "the probe is
+  gone" stop looking identical. 运行中的核心同样把身份寄存器读成 0，这是正常现象而非链路
+  死亡；该情况单独上报并建议 `halt_execution` 而不是 `recover_session`。
 - **`channel_for` could leak one session's hub channel into another's.** `HubManager` is a
   process-wide singleton by design, and a session that had a profile but no `hub` block
   fell back to whatever the last session configured — on a rack that resolves to a
