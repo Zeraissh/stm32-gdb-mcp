@@ -397,12 +397,18 @@ def read_cycle_counter(ctx: ToolContext, arguments: dict) -> list[TextContent]:
                 "the core RUNS (non-intrusive, over SWD — no SWO pin or firmware change). "
                 "Returns a symbolized hot-spot histogram (top functions by %), not raw hex — "
                 "the fast way to find where firmware spends time or what loop it is stuck in. "
-                "A high 'unsampleable' count means the core is halted/asleep.",
+                "A high 'unsampleable' count means the core is halted/asleep; a high "
+                "'zero_samples' count means nothing was profiled at all. Leave enable=true: "
+                "GDB cannot write the enable bit while the core runs, so this halts briefly to "
+                "set it and resumes, and only when it is not already set. Note some links "
+                "cannot serve memory reads while the core runs at all (measured: OpenOCD + "
+                "ST-Link + STM32L1) — there PC sampling is unavailable and the result says so "
+                "rather than inventing a hot spot.",
     inputSchema={
         "type": "object",
         "properties": {
             "count": {"type": "integer", "description": "Number of samples (default 128; more = better statistics, slower)."},
-            "enable": {"type": "boolean", "description": "Enable DWT trace before sampling (default true)."}
+            "enable": {"type": "boolean", "description": "Enable DWT trace before sampling (default true). With false, a target whose trace unit is off yields nothing."}
         }
     }
 ))
@@ -412,7 +418,26 @@ def sample_pc(ctx: ToolContext, arguments: dict) -> list[TextContent]:
         enable=arguments.get("enable", True),
     )
     top = profile["hotspots"][0]["function"] if profile["hotspots"] else None
-    if profile["sampled"] == 0:
+    if profile["sampled"] == 0 and profile.get("zero_samples"):
+        # All-zero PCSR reads used to be counted as PCs and reported as a 100% hot
+        # spot at address 0 — a confident wrong answer, and worse than saying
+        # nothing. Which of the two causes it is depends on whether we know the
+        # trace unit got enabled.
+        zeros = profile["zero_samples"]
+        if profile.get("trace", {}).get("enabled"):
+            msg = (f"Nothing was profiled: all {zeros} samples read back 0x00000000 even though "
+                   f"the trace unit IS enabled. This probe/target cannot serve memory reads "
+                   f"while the core runs — measured on OpenOCD + ST-Link + STM32L1, where every "
+                   f"read returns 0 while running and the correct value the moment the core "
+                   f"halts. PC sampling is not available on this link; use breakpoints, or "
+                   f"halt-and-inspect, to find where the firmware is.")
+            actions = ["capture_state", "read_call_stack"]
+        else:
+            msg = (f"Nothing was profiled: all {zeros} samples read back 0x00000000, which is "
+                   f"not a program counter. The trace unit was not enabled (enable=false). "
+                   f"Re-run with enable=true (the default).")
+            actions = ["sample_pc", "capture_state"]
+    elif profile["sampled"] == 0:
         # Nothing sampled: the core was halted or asleep the whole time, not running.
         msg = ("No PC samples hit running code — the core is halted, in WFI/sleep, or "
                "stuck in a low-power state. Resume it (continue_execution) or check why "

@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+### sample_pc: usable by default, and no longer invents hot spots / 修复 PC 采样
+
+- **The default could never work.** Profiling needs a RUNNING core, but the DWT enable
+  writes DEMCR, and GDB refuses a memory write while the target runs — so the sequence the
+  tool's own description recommends (resume, then `sample_pc`) always failed with "Cannot
+  execute this command while the target is running". It now reads DEMCR first (reads are
+  allowed), and only when TRCENA is genuinely unset does it halt briefly, write, and resume
+  — so an already-enabled target is never perturbed, keeping the "non-intrusive" claim true.
+  采样需要核心在运行，而使能位的写入在运行时会被 GDB 拒绝，因此工具自己文档推荐的顺序必然失败。
+  现在先读 DEMCR，只有确实没使能时才短暂暂停、写入、再恢复；已使能的目标完全不被打扰。
+- **Zeros were sold as a 100% hot spot at address `0x00000000`.** `DWT_PCSR` reads 0 when
+  nothing is sampleable, and `build_pc_profile` only rejected `0xFFFFFFFF`, so 48 zero reads
+  became a symbolized histogram claiming the firmware executes at the vector table. Both
+  architecturally impossible values are now rejected and counted as `zero_samples`. A sample
+  set that is entirely ONE real address is deliberately still accepted — that is the
+  signature of a tight loop or a `b .` park, which is exactly what this profiler is for.
+  `DWT_PCSR` 在无法采样时读回 0，而聚合逻辑只排除了 `0xFFFFFFFF`，于是 48 个 0 被符号化成
+  "100% 热点在地址 0"。现在两个不可能值都被排除；而全部落在**同一个真实地址**仍然接受——那正是
+  紧循环/`b .` 卡死的特征，也正是这个 profiler 的用途。
+- Measured while fixing it, and now reported instead of guessed at: on OpenOCD + ST-Link +
+  STM32L1 **every** memory read returns `0x00000000` while the core runs — DEMCR included,
+  though it reads `0x01000000` the instant the core halts. PC sampling is therefore
+  unavailable on that link, and with the trace unit verified enabled the tool says so and
+  points at breakpoints/halt-and-inspect, rather than blaming the trace unit and sending the
+  caller in circles.
+  修复过程中实测：在 OpenOCD + ST-Link + STM32L1 上，核心运行时**所有**内存读都返回 0（包括
+  DEMCR，而核心一停它就读回 0x01000000）。因此该链路上 PC 采样根本不可用；在已确认使能的情况下
+  工具会直说这一点并建议改用断点/暂停检查，而不是让人反复去"开启 trace 单元"。
+
 ### Memory writes / 内存写入
 
 - `write_memory` / `write_typed_memory` no longer need a symbol table for a numeric

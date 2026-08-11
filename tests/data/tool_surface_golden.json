@@ -1640,7 +1640,7 @@
     "openWorldHint": false,
     "readOnlyHint": true
    },
-   "description": "Statistical PC profiler: enables DWT and samples the program counter while the core RUNS (non-intrusive, over SWD \u2014 no SWO pin or firmware change). Returns a symbolized hot-spot histogram (top functions by %), not raw hex \u2014 the fast way to find where firmware spends time or what loop it is stuck in. A high 'unsampleable' count means the core is halted/asleep.",
+   "description": "Statistical PC profiler: enables DWT and samples the program counter while the core RUNS (non-intrusive, over SWD \u2014 no SWO pin or firmware change). Returns a symbolized hot-spot histogram (top functions by %), not raw hex \u2014 the fast way to find where firmware spends time or what loop it is stuck in. A high 'unsampleable' count means the core is halted/asleep; a high 'zero_samples' count means nothing was profiled at all. Leave enable=true: GDB cannot write the enable bit while the core runs, so this halts briefly to set it and resumes, and only when it is not already set. Note some links cannot serve memory reads while the core runs at all (measured: OpenOCD + ST-Link + STM32L1) \u2014 there PC sampling is unavailable and the result says so rather than inventing a hot spot.",
    "inputSchema": {
     "properties": {
      "count": {
@@ -1648,7 +1648,7 @@
       "type": "integer"
      },
      "enable": {
-      "description": "Enable DWT trace before sampling (default true).",
+      "description": "Enable DWT trace before sampling (default true). With false, a target whose trace unit is off yields nothing.",
       "type": "boolean"
      },
      "session": {

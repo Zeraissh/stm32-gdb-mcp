@@ -20,6 +20,20 @@ DWT_CTRL_CYCCNTENA = 1 << 0
 
 PCSR_UNSAMPLEABLE = 0xFFFFFFFF  # DWT_PCSR reads this when the PC can't be sampled
 
+# A zero PCSR read is never a program counter, and has two very different causes,
+# both measured on hardware:
+#   * the trace unit is not clocked (DEMCR.TRCENA clear), or
+#   * the debug link cannot service memory reads while the core runs at all -- on
+#     OpenOCD + ST-Link + STM32L151 EVERY read returns 0x00000000 while running,
+#     DEMCR included, even though it reads 0x01000000 the moment the core halts.
+# Either way nothing was sampled. Counting these as PCs produced a 100% hot spot
+# at address 0 -- a confident wrong answer that would have an agent conclude the
+# firmware executes at the vector table.
+PCSR_ZERO = 0x00000000
+
+# Never a PC on a Cortex-M executing real code.
+PCSR_INVALID = (PCSR_UNSAMPLEABLE, PCSR_ZERO)
+
 
 def enable_pc_sampling_writes():
     """Writes that turn on the trace clock so ``DWT_PCSR`` samples while the core runs.
@@ -33,18 +47,26 @@ def enable_pc_sampling_writes():
 def build_pc_profile(samples, symbolize):
     """Aggregate raw ``DWT_PCSR`` samples into a symbolized hot-spot histogram.
 
-    ``samples``  : list[int] of PCSR reads (``0xFFFFFFFF`` = core not running code).
+    ``samples``  : list[int] of PCSR reads (``0xFFFFFFFF`` = core not running code,
+                   ``0x00000000`` = nothing readable; neither is a PC).
     ``symbolize``: callable(pc:int) -> function/symbol name ("" if unknown).
 
     Returns total/sampled/unsampleable counts, a ``hotspots`` list (by function,
     descending %), and the hottest raw addresses — so the agent reads "78% in
     foo()" instead of a wall of hex it has to symbolize itself.
+
+    Note what is deliberately NOT rejected: a sample set that is entirely ONE
+    address. That is the signature of a core spinning in a tight loop or parked on
+    a ``b .`` — precisely the "what is it stuck in" question this profiler exists
+    to answer — so only the two architecturally impossible values are dropped.
     """
     from collections import Counter
 
     total = len(samples)
-    valid = [s & 0xFFFFFFFF for s in samples if (s & 0xFFFFFFFF) != PCSR_UNSAMPLEABLE]
-    unsampleable = total - len(valid)
+    normalized = [s & 0xFFFFFFFF for s in samples]
+    valid = [s for s in normalized if s not in PCSR_INVALID]
+    unsampleable = sum(1 for s in normalized if s == PCSR_UNSAMPLEABLE)
+    zero_samples = sum(1 for s in normalized if s == PCSR_ZERO)
 
     addr_counts = Counter(valid)
     sym = {addr: (symbolize(addr) or "") for addr in addr_counts}
@@ -67,6 +89,9 @@ def build_pc_profile(samples, symbolize):
         "total_samples": total,
         "sampled": sampled,
         "unsampleable": unsampleable,  # high => core often halted / in WFI / sleeping
+        # high => nothing was profiled: trace unit off, OR the link cannot
+        # read memory while the core runs (see PCSR_ZERO).
+        "zero_samples": zero_samples,
         "hotspots": hotspots,
         "hot_addresses": hot_addresses,
     }

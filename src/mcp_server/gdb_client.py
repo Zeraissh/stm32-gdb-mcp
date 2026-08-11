@@ -661,9 +661,39 @@ class GdbClientManager:
     def sample_pc(self, count: int = 64):
         return dwt.sample_pc(self.read_word, count)
 
-    def enable_pc_sampling(self):
-        for address, value in dwt.enable_pc_sampling_writes():
-            self.write_typed_memory(hex(address), hex(value), width_bits=32)
+    def enable_pc_sampling(self) -> dict:
+        """Turn on the trace clock, halting only if GDB forces us to.
+
+        The ordering matters and used to be impossible: profiling needs the core
+        RUNNING, but GDB refuses a memory WRITE while it runs ("Cannot execute
+        this command while the target is running"), so the default
+        ``sample_pc(enable=True)`` on a running core always failed — the very
+        sequence its own description recommends.
+
+        Where reads work while running, the common case costs nothing: TRCENA
+        already set means no write and no halt, and the profiler stays as
+        non-intrusive as it claims to be. Where they do not -- some links return
+        0 for every read while the core runs -- the check reads as "not set" and
+        we halt briefly and write anyway, which is harmless: the bit is simply
+        set again. Either way the caller's run state is restored afterwards.
+        """
+        try:
+            already_on = bool(self.read_word(dwt.DEMCR) & dwt.DEMCR_TRCENA)
+        except Exception:  # noqa: BLE001 - fall through to the write path
+            already_on = False
+        if already_on:
+            return {"enabled": True, "wrote": False, "halted_for_enable": False}
+
+        was_running = bool(self.is_running())
+        if was_running:
+            self.halt_execution()
+        try:
+            for address, value in dwt.enable_pc_sampling_writes():
+                self.write_typed_memory(hex(address), hex(value), width_bits=32)
+        finally:
+            if was_running:
+                self.continue_execution()
+        return {"enabled": True, "wrote": True, "halted_for_enable": was_running}
 
     def symbolize_pc(self, pc: int) -> str:
         """Best-effort function name for a PC via `info symbol` (e.g. 'vTaskDelay')."""
@@ -701,9 +731,13 @@ class GdbClientManager:
     def profile_pc(self, count: int = 128, enable: bool = True):
         """Statistical PC-sample profiler -> symbolized hot-spot histogram."""
         if enable:
-            self.enable_pc_sampling()
+            trace = self.enable_pc_sampling()
+        else:
+            trace = {"enabled": None, "wrote": False, "halted_for_enable": False}
         samples = dwt.sample_pc(self.read_word, count)
-        return dwt.build_pc_profile(samples, self.symbolize_pc)
+        profile = dwt.build_pc_profile(samples, self.symbolize_pc)
+        profile["trace"] = trace
+        return profile
 
     def read_register_value(self, expr: str) -> int:
         """Evaluate a register/convenience expression (e.g. '$lr', '$msp') to an int."""
