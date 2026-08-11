@@ -167,3 +167,45 @@ def set_hub_data(ctx: ToolContext, arguments: dict) -> list[TextContent]:
         return _error(exc)
     except ValueError as exc:
         return [content_error(str(exc), code="invalid_argument")]
+
+
+@register(Tool(
+    name="power_cycle_target",
+    description=(
+        "Removes power from a hub port and restores it: a true cold boot of whatever is on that "
+        "port, and the only in-band way to clear a wedged probe USB endpoint. On models with an "
+        "ADC the voltage during the off window is measured and reported, so a rail that never "
+        "actually collapsed (bulk capacitance, a second supply, a coin cell) is flagged instead "
+        "of being reported as a cold boot that did not happen. Requires confirm=true while the "
+        "guard is in confirm mode or a session has a live GDB server on the port."
+    ),
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "channel": _CHANNEL,
+            "off_ms": {"type": "integer", "description": "Milliseconds to hold power off (default 400)."},
+            "settle_ms": {"type": "integer", "description": "Milliseconds to wait after restoring power (default 1500)."},
+            "confirm": _CONFIRM,
+        },
+    }
+))
+def power_cycle_target(ctx: ToolContext, arguments: dict) -> list[TextContent]:
+    try:
+        manager, channel, source = _resolve(ctx, arguments)
+        profile_cycle = (ctx.debug_profile.get().get("hub") or {}).get("power_cycle") or {}
+        result = manager.power_cycle(
+            channel,
+            off_ms=int(arguments.get("off_ms", profile_cycle.get("off_ms", 400))),
+            settle_ms=int(arguments.get("settle_ms", profile_cycle.get("settle_ms", 1500))),
+            confirm=bool(arguments.get("confirm")),
+            live_session=_live_session(ctx, channel),
+        )
+        result["channel_source"] = source
+        next_actions = ["recover_session", "self_check"]
+        if result.get("browned_out") is False:
+            next_actions = ["hub(action=cycle, off_ms=2000)", "hub(action=describe)"]
+        return [content_success(result, suggested_next_actions=next_actions)]
+    except (HubUnavailableError, HubBusyError, HubGuardError) as exc:
+        return _error(exc)
+    except ValueError as exc:
+        return [content_error(str(exc), code="invalid_argument")]

@@ -20,7 +20,13 @@ the vendor API and the labels silkscreened on the hardware.
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any, Protocol
+
+# Below this, the rail is considered collapsed and the board really did cold-boot.
+# Matches the spirit of error_taxonomy._POWERED_VOLTS (1.6 V), kept well under the
+# brown-out reset level of every STM32 this server targets.
+BROWNOUT_MV = 500
 
 GUARD_MODES = ("allow", "confirm", "dry_run")
 DEFAULT_GUARD_MODE = "confirm"
@@ -510,6 +516,66 @@ class HubManager:
         result["data_off_channels"] = turned_off
         return result
 
+    def power_cycle(self, channel: int, off_ms: int = 400, settle_ms: int = 1500,
+                    confirm: bool = False, live_session: str | None = None,
+                    sleep=None, monotonic=None) -> dict:
+        """Remove port power for ``off_ms``, restore it, and report what was measured.
+
+        The measurement is not decoration. Bulk capacitance, a coin cell, or a
+        VBAT domain can hold VDD up across a short cut, in which case the board
+        never actually cold-booted -- and a "cold boot" that silently did nothing
+        is exactly the false-success shape this server keeps getting bitten by.
+        On a model with an ADC the off-window voltage is sampled and reported, so
+        the caller can see whether the rail really collapsed.
+
+        ``sleep``/``monotonic`` are injectable so tests run on a fake clock.
+        """
+        sleep = sleep or time.sleep
+        monotonic = monotonic or time.monotonic
+
+        started = monotonic()
+        self.power(channel, "off", confirm=confirm, live_session=live_session)
+
+        off_voltage = self._sample_voltage(channel)
+        sleep(off_ms / 1000.0)
+        # Sample again at the end of the window: a slowly draining rail reads high
+        # immediately after the cut and only collapses later.
+        late_voltage = self._sample_voltage(channel)
+        measured = _min_optional(off_voltage, late_voltage)
+
+        self.power(channel, "on", confirm=True)
+        if settle_ms:
+            sleep(settle_ms / 1000.0)
+
+        result: dict = {
+            "channel": channel,
+            "action": "power_cycle",
+            "off_ms": off_ms,
+            "settle_ms": settle_ms,
+            "elapsed_ms": int(round((monotonic() - started) * 1000)),
+        }
+        if measured is not None:
+            result["measured_off_voltage_mv"] = measured
+            result["browned_out"] = measured < BROWNOUT_MV
+            if not result["browned_out"]:
+                result["warning"] = (
+                    f"channel {channel} still read {measured} mV with power removed, so the board "
+                    f"did NOT cold-boot. It is powered from somewhere else (a second supply, a "
+                    f"coin cell, or the probe's own VBUS), or bulk capacitance held it up -- "
+                    f"try a longer off_ms."
+                )
+        return result
+
+    def _sample_voltage(self, channel: int) -> int | None:
+        hub = self._hub
+        if hub is None:
+            return None
+        sample = self._measurements(hub, (channel,))
+        if not sample or channel not in sample:
+            return None
+        value = sample[channel].get("voltage")
+        return value if isinstance(value, int) else None
+
     def _switch(self, kind: str, channel: int, state: str, confirm: bool,
                 live_session: str | None) -> dict:
         if state not in ("on", "off"):
@@ -565,6 +631,11 @@ def _normalize_map(raw: Any) -> dict[int, dict]:
         elif isinstance(value, str):
             entries[channel] = {"label": value}
     return entries
+
+
+def _min_optional(*values: int | None) -> int | None:
+    present = [value for value in values if value is not None]
+    return min(present) if present else None
 
 
 def _on_off(value: Any) -> str | None:

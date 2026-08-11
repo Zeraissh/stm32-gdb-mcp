@@ -349,9 +349,17 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Recovers a dropped or wedged session: cleanly tears down the GDB client and server, then restarts the server (with retry/backoff for a busy probe) using the last start_debug_session arguments and reconnects. Use after a probe_unavailable or connection_lost error.",
+   "description": "Recovers a dropped or wedged session: cleanly tears down the GDB client and server, then restarts the server (with retry/backoff for a busy probe) using the last start_debug_session arguments and reconnects. Use after a probe_unavailable or connection_lost error. When a programmable USB hub is configured (debug_profile hub.channel), a retry that cannot fix the probe escalates to toggling its USB data lines and then power-cycling the port -- the only in-band cure for a wedged endpoint. Any hub action taken is reported in recovery_steps.",
    "inputSchema": {
     "properties": {
+     "deep": {
+      "description": "Add a long (2 s) power-off rung to drain bulk capacitance.",
+      "type": "boolean"
+     },
+     "escalate": {
+      "description": "Allow hub data-line/power escalation when a plain retry fails (default true).",
+      "type": "boolean"
+     },
      "session": {
       "description": "Optional debug-session name. Omit for the default target.",
       "type": "string"
@@ -3548,7 +3556,7 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Programmable USB hub: per-port power and USB2 data-line control. action=describe | power(state[,channel,confirm]) | data(state[,channel,exclusive,confirm]). state=on|off; channel is 1-based and defaults to the session's mapped hub channel. Powering a port off removes VBUS, so it cold-boots that board and un-enumerates its probe.",
+   "description": "Programmable USB hub: per-port power, USB2 data lines, and cold boot. action=describe | power(state[,channel,confirm]) | data(state[,channel,exclusive,confirm]) | cycle([channel,off_ms,settle_ms,confirm]). state=on|off; channel is 1-based and defaults to the session's mapped hub channel. Removing port power cold-boots that board and un-enumerates its probe.",
    "inputSchema": {
     "oneOf": [
      {
@@ -3585,6 +3593,17 @@
        "state"
       ],
       "title": "data"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "cycle"
+       }
+      },
+      "required": [
+       "action"
+      ],
+      "title": "cycle"
      }
     ],
     "properties": {
@@ -3593,7 +3612,8 @@
       "enum": [
        "describe",
        "power",
-       "data"
+       "data",
+       "cycle"
       ],
       "type": "string"
      },
@@ -3609,9 +3629,17 @@
       "description": "With state=on, disconnect every other port's data line.",
       "type": "boolean"
      },
+     "off_ms": {
+      "description": "Milliseconds to hold power off (default 400).",
+      "type": "integer"
+     },
      "session": {
       "description": "Optional debug-session name. Omit for the default target.",
       "type": "string"
+     },
+     "settle_ms": {
+      "description": "Milliseconds to wait after restoring power (default 1500).",
+      "type": "integer"
      },
      "state": {
       "description": "Target state for the port.",

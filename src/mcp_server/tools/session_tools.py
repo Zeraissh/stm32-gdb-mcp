@@ -7,7 +7,7 @@ from ..error_taxonomy import classify_error, refine_target_unreachable
 from ..reliability import retry_call
 from ..self_check import evaluate_self_check
 from ..tool_response import content_error, content_success
-from ._helpers import autoload_symbols, recover_current_session
+from ._helpers import autoload_symbols, hub_binding, recover_current_session
 from .context import ToolContext
 from .registry import register
 
@@ -342,8 +342,24 @@ def set_adapter_speed(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     description="Recovers a dropped or wedged session: cleanly tears down the GDB client and "
                 "server, then restarts the server (with retry/backoff for a busy probe) using "
                 "the last start_debug_session arguments and reconnects. Use after a "
-                "probe_unavailable or connection_lost error.",
-    inputSchema={"type": "object", "properties": {}}
+                "probe_unavailable or connection_lost error. When a programmable USB hub is "
+                "configured (debug_profile hub.channel), a retry that cannot fix the probe "
+                "escalates to toggling its USB data lines and then power-cycling the port -- "
+                "the only in-band cure for a wedged endpoint. Any hub action taken is reported "
+                "in recovery_steps.",
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "escalate": {
+                "type": "boolean",
+                "description": "Allow hub data-line/power escalation when a plain retry fails (default true).",
+            },
+            "deep": {
+                "type": "boolean",
+                "description": "Add a long (2 s) power-off rung to drain bulk capacitance.",
+            },
+        },
+    }
 ))
 def recover_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     if not ctx.last_session.get("server_type"):
@@ -352,14 +368,24 @@ def recover_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
             code="no_session",
             suggested_next_actions=["start_debug_session"],
         )]
-    recovered = recover_current_session(ctx.gdb_client, ctx.gdb_manager, ctx.last_session, ctx.sess)
+    binding = hub_binding(ctx) if arguments.get("escalate", True) else None
+    hub, channel = binding if binding else (None, None)
+    recovered = recover_current_session(
+        ctx.gdb_client, ctx.gdb_manager, ctx.last_session, ctx.sess,
+        hub=hub, channel=channel,
+        escalate=arguments.get("escalate", True),
+        deep=bool(arguments.get("deep")),
+    )
+    data = {
+        "message": recovered["message"],
+        "server_type": recovered["server_type"],
+        "port": recovered["port"],
+        "symbols_loaded": recovered["symbols_loaded"],
+    }
+    if "recovery_steps" in recovered:
+        data["recovery_steps"] = recovered["recovery_steps"]
     return [content_success(
-        {
-            "message": recovered["message"],
-            "server_type": recovered["server_type"],
-            "port": recovered["port"],
-            "symbols_loaded": recovered["symbols_loaded"],
-        },
+        data,
         raw_response=recovered["raw_response"],
         suggested_next_actions=["self_check", "check_session_health"],
     )]
@@ -392,8 +418,33 @@ def check_session_health(ctx: ToolContext, arguments: dict) -> list[TextContent]
         "port": ctx.gdb_manager.port,
         "reconnected": reconnected,
     }
+    hub_state = _hub_health(ctx)
+    if hub_state:
+        health["hub"] = hub_state
     next_actions = [] if health["target_responsive"] else ["start_debug_session", "get_gdb_server_logs"]
+    if not health["target_responsive"] and hub_state:
+        next_actions.append("recover_session")
     return [content_success(health, suggested_next_actions=next_actions)]
+
+
+def _hub_health(ctx: ToolContext) -> dict | None:
+    """One ~13 ms hub snapshot for this session's port. Costs no target traffic.
+
+    An unresponsive target and a port reading 0 mV are the same story told twice;
+    seeing both at once is what turns "the link died" into "the board lost power".
+    """
+    binding = hub_binding(ctx)
+    if binding is None:
+        return None
+    manager, channel = binding
+    try:
+        described = manager.describe()
+    except Exception:  # noqa: BLE001 - health must never fail because of the hub
+        return None
+    for port in described.get("ports", []):
+        if port.get("channel") == channel:
+            return dict(port)
+    return {"channel": channel}
 
 
 @register(Tool(

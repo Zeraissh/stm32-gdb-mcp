@@ -129,11 +129,13 @@ MERGED = {
         "what=health([reconnect]) | events | server_logs. events returns recent GDB/MI records; "
         "server_logs returns the GDB server's stderr."),
     "hub": ("action",
-        {"describe": "describe_hub", "power": "set_hub_power", "data": "set_hub_data"},
-        "Programmable USB hub: per-port power and USB2 data-line control.",
-        "action=describe | power(state[,channel,confirm]) | data(state[,channel,exclusive,confirm]). "
+        {"describe": "describe_hub", "power": "set_hub_power", "data": "set_hub_data",
+         "cycle": "power_cycle_target"},
+        "Programmable USB hub: per-port power, USB2 data lines, and cold boot.",
+        "action=describe | power(state[,channel,confirm]) | data(state[,channel,exclusive,confirm]) | "
+        "cycle([channel,off_ms,settle_ms,confirm]). "
         "state=on|off; channel is 1-based and defaults to the session's mapped hub channel. "
-        "Powering a port off removes VBUS, so it cold-boots that board and un-enumerates its probe."),
+        "Removing port power cold-boots that board and un-enumerates its probe."),
 }
 
 MERGED_AWAY = {old for _, mapping, *_ in MERGED.values() for old in mapping.values()}

@@ -215,7 +215,12 @@ def run_for_duration(ctx: ToolContext, arguments: dict) -> list[TextContent]:
         capture=arguments.get("capture"),
         sample=arguments.get("sample"),
         resume_after=arguments.get("resume_after", False),
-        recover=lambda: recover_current_session(ctx.gdb_client, ctx.gdb_manager, ctx.last_session, ctx.sess),
+        # escalate=False on purpose: this is an automatic mid-run recovery, and
+        # power-cycling the board would destroy the very run being measured.
+        # Escalation stays where the agent explicitly asked to fix a link
+        # (recover_session).
+        recover=lambda: recover_current_session(ctx.gdb_client, ctx.gdb_manager, ctx.last_session,
+                                                ctx.sess, escalate=False),
     )
     next_actions = ["capture_state", "read_memory"]
     if result.get("resume_after"):

@@ -49,6 +49,36 @@
   MCP server does not leave a bench board dark.
   本进程关掉的端口会在退出时自动恢复供电，避免客户端杀掉服务后把板子留在断电状态。
 
+### Recovery escalation / 恢复阶梯
+
+- `recover_session` now escalates when a plain retry cannot fix the probe:
+  retry → toggle the port's USB data lines → power-cycle the port → (with `deep=true`)
+  a 2 s power-off that drains bulk capacitance. Each rung is followed by a bounded
+  re-attach, and whatever was done to the hardware is reported in `recovery_steps` —
+  a tool that physically power-cycled a board has to say so.
+  `recover_session` 在普通重试救不回探针时开始升级：重试 → 断开该端口 USB 数据线 →
+  端口断电重上电 →（`deep=true` 时）2 秒长断电放干大电容。每一级之后都做有界重连，
+  并在 `recovery_steps` 里如实上报对硬件做过什么。
+- Escalation is gated by its own table, not by the taxonomy's `retryable` flag.
+  `retryable` answers "will waiting help?"; the new gate answers "will physically
+  re-enumerating the device help?" — different questions, so `reliability.py` and
+  `error_taxonomy.py` are untouched. `probe_locked` is deliberately excluded: the lock
+  is held by a live PID and cutting power cannot delete it, so escalating would brown
+  out a board for nothing.
+  升级门槛用独立的表而非 `retryable`：两者回答的是不同问题，因此这两个模块一行未改。
+  `probe_locked` 被刻意排除——锁由活着的进程持有，断电删不掉它。
+- With no hub configured the path is byte-for-byte the pre-existing one: the same single
+  `retry_call` with the same attempts and backoff, and no `recovery_steps` in the
+  response. The automatic mid-run recovery inside `run_for_duration` opts out explicitly
+  — power-cycling there would destroy the very run being measured.
+  没有配置 Hub 时，代码路径与之前逐字节相同。`run_for_duration` 里的自动恢复显式退出升级：
+  在测量中途断电会毁掉正在测的那次运行。
+- New `hub(action=cycle)` performs a cold boot on demand, and `check_session_health` now
+  carries the session's hub port state (power/data/voltage/current) — an unresponsive
+  target next to a port reading 0 mV is the same story told twice, and seeing both at
+  once is what turns "the link died" into "the board lost power".
+  新增 `hub(action=cycle)`；`check_session_health` 现在带上本会话 Hub 端口的状态。
+
 ## [0.8.1] - 2026-08-06
 
 Two fixes that only real hardware could have found, both about the same thing:

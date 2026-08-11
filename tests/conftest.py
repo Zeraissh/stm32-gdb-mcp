@@ -45,6 +45,20 @@ class FakeGdbClient:
     def is_alive(self):
         return True
 
+    def probe_target(self):
+        self.calls.append(("probe_target",))
+        return True
+
+    def start_gdb(self):
+        self.calls.append(("start_gdb",))
+
+    def stop_gdb(self):
+        self.calls.append(("stop_gdb",))
+
+    def connect(self, host, port):
+        self.calls.append(("connect", host, port))
+        return [{"message": "connected"}]
+
     def set_breakpoint(self, location, condition=None, temporary=False, ignore_count=None):
         self.calls.append(("set_breakpoint", location, condition, temporary, ignore_count))
         return [{"message": "bp"}]
