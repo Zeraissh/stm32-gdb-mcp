@@ -47,13 +47,17 @@ def autoload_symbols(sess: Any) -> bool:
     except Exception:
         return False
     # Non-throwing consistency check: log a warning if symbols don't match flash.
+    # Read-only sections only -- writable ones hold the ELF's initial values and
+    # differ on any target that has run, which would make this fire on almost
+    # every connect and teach readers to ignore it.
     try:
-        report = sess.gdb_client.compare_sections_report()
+        report = sess.gdb_client.compare_sections_report(read_only=True)
         if report["checked"]:
             if report["mismatched"]:
                 _logger.warning(
-                    "Auto-loaded symbols from %s do NOT match target flash — %d section(s) mismatched: %s. "
-                    "Values read through these symbols will be meaningless. Re-flash or use the matching ELF.",
+                    "Auto-loaded symbols from %s do NOT match target flash — %d read-only section(s) "
+                    "mismatched: %s. Values read through these symbols will be meaningless. "
+                    "Re-flash or use the matching ELF.",
                     elf_path,
                     len(report["mismatched"]),
                     "; ".join(report["mismatched"]),

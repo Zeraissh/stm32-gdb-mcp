@@ -124,7 +124,10 @@ def load_symbols(ctx: ToolContext, arguments: dict) -> list[TextContent]:
         )]
     resp = ctx.gdb_client.load_symbols(elf_path)
     # Non-throwing consistency check: flag when the ELF doesn't match target flash.
-    report = ctx.gdb_client.compare_sections_report()
+    # Read-only sections only -- a writable section holds the ELF's INITIAL values
+    # and always differs once the firmware has run, so including it would call
+    # perfectly good symbols meaningless and advise re-flashing a healthy board.
+    report = ctx.gdb_client.compare_sections_report(read_only=True)
     symbols_match = None  # None = could not check
     mismatched_sections: list[str] = []
     mismatch_reason: str | None = None
@@ -136,7 +139,7 @@ def load_symbols(ctx: ToolContext, arguments: dict) -> list[TextContent]:
             mismatched_sections = report["mismatched"]
             warning_text = (
                 "WARNING: Loaded symbols do NOT match target flash — "
-                f"{len(mismatched_sections)} section(s) mismatched. "
+                f"{len(mismatched_sections)} read-only section(s) mismatched. "
                 "Values read through these symbols WILL BE MEANINGLESS. "
                 "Re-flash the matching firmware (flash_firmware) or load a different ELF."
             )
@@ -151,6 +154,9 @@ def load_symbols(ctx: ToolContext, arguments: dict) -> list[TextContent]:
         "elf_path": elf_path,
         "symbols_match": symbols_match,
         "mismatched_sections": mismatched_sections,
+        # Say which question was answered. Writable/RAM sections are deliberately
+        # not compared -- see compare_sections_report.
+        "compared_sections": report.get("scope", "read_only"),
     }
     if mismatch_reason:
         data["symbols_mismatch_reason"] = mismatch_reason
@@ -358,19 +364,31 @@ def flash_and_run(ctx: ToolContext, arguments: dict) -> list[TextContent]:
 
 @register(Tool(
     name="verify_flash",
-    description="Verifies that target flash matches an ELF by comparing loaded sections "
-                "(GDB compare-sections).",
+    description="Verifies that target flash matches an ELF (GDB compare-sections). Compares "
+                "read-only sections, which is what lives in flash; writable sections hold the "
+                "ELF's initial RAM values and always differ once the firmware has run, so "
+                "including them would fail every healthy target. Pass include_writable=true "
+                "only right after a load, before the target has executed.",
     inputSchema={
         "type": "object",
         "properties": {
-            "file_path": {"type": "string", "description": "Path to the ELF to verify against."}
+            "file_path": {"type": "string", "description": "Path to the ELF to verify against."},
+            "include_writable": {
+                "type": "boolean",
+                "description": "Also compare writable (RAM) sections. Only meaningful immediately after a load.",
+            },
         },
         "required": ["file_path"]
     }
 ))
 def verify_flash(ctx: ToolContext, arguments: dict) -> list[TextContent]:
-    resp = ctx.gdb_client.verify_flash(arguments["file_path"])
+    include_writable = bool(arguments.get("include_writable"))
+    resp = ctx.gdb_client.verify_flash(arguments["file_path"], include_writable=include_writable)
     return [content_success(
-        {"message": "Flash verified", "file_path": arguments["file_path"]},
+        {
+            "message": "Flash verified",
+            "file_path": arguments["file_path"],
+            "compared_sections": "all" if include_writable else "read_only",
+        },
         raw_response=resp,
     )]

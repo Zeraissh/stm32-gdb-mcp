@@ -1214,7 +1214,7 @@ def test_load_symbols_falls_back_to_profile_elf(monkeypatch):
             loaded.append(path)
             return [{"message": "ok"}]
 
-        def compare_sections_report(self):
+        def compare_sections_report(self, read_only=True):
             return {"checked": True, "mismatched": [], "reason": None}
 
     class FakeProfile:
@@ -3799,7 +3799,7 @@ def test_load_symbols_reports_symbols_match_true_when_all_sections_match(monkeyp
             loaded.append(path)
             return [{"message": "ok"}]
 
-        def compare_sections_report(self):
+        def compare_sections_report(self, read_only=True):
             return {"checked": True, "mismatched": [], "reason": None}
 
     class FakeProfile:
@@ -3826,7 +3826,7 @@ def test_load_symbols_reports_mismatch_with_alert_and_actions(monkeypatch):
         def load_symbols(self, path):
             return [{"message": "ok"}]
 
-        def compare_sections_report(self):
+        def compare_sections_report(self, read_only=True):
             return {
                 "checked": True,
                 "mismatched": ["Section .text, range 0x8000000 -- 0x8001234: MIS-MATCHED!"],
@@ -3859,7 +3859,7 @@ def test_load_symbols_reports_null_when_compare_cannot_run(monkeypatch):
         def load_symbols(self, path):
             return [{"message": "ok"}]
 
-        def compare_sections_report(self):
+        def compare_sections_report(self, read_only=True):
             return {"checked": False, "mismatched": [], "reason": "target not connected"}
 
     class FakeProfile:

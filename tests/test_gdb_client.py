@@ -142,7 +142,7 @@ def test_formerly_hardcoded_timeouts_are_overridable():
         ("-exec-next", 3.5),
         ("-exec-until main.c:10", 42.0),
         ('-file-exec-and-symbols "fw.axf"', 7.0),
-        ("compare-sections", 99.0),
+        ("compare-sections -r", 99.0),
     ]
 
 

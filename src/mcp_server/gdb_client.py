@@ -554,7 +554,7 @@ class GdbClientManager:
         self._symbol_cache.clear()
         return self.execute_cli_command(f"core-file {gdb_path(path)}", timeout_sec=self.timeouts.get("coredump_load"))
 
-    def compare_sections_report(self) -> dict:
+    def compare_sections_report(self, read_only: bool = True) -> dict:
         """Run compare-sections and return structured findings — never raises.
 
         GDB's compare-sections reports mismatches as "MIS-MATCHED!" in console
@@ -563,41 +563,85 @@ class GdbClientManager:
         machine-readable report without throwing, so callers that cannot afford a
         crash (like load_symbols) can detect mismatches safely.
 
+        ``read_only`` (the default) passes ``-r`` so only read-only sections are
+        compared, and that default is the whole point. A writable section
+        (``.data`` / ``RW_IRAM1``) holds the ELF's INITIAL values; the moment the
+        firmware runs it writes to its own variables, so comparing it against the
+        file mismatches on any target that has executed. Measured on hardware with
+        firmware verified byte-identical to the image on the board::
+
+            compare-sections       ER_IROM1 matched / RW_IRAM1 MIS-MATCHED!
+            compare-sections -r    ER_IROM1 matched            (clean)
+
+        Comparing everything therefore told users their symbols were meaningless
+        and advised re-flashing — a destructive remedy for a non-problem. For "do
+        these symbols describe the firmware on this target", read-only sections
+        are the correct and complete question.
+
+        Pass ``read_only=False`` to compare every loadable section, which is only
+        meaningful right after a load, before the target has run.
+
         Returns:
-            {checked: bool, mismatched: list[str], reason: str | None, records: list}.
-            *checked* is True only when the command ran and the records were parsed.
-            *mismatched* lists the payload strings of every MIS-MATCHED section.
-            *reason* carries the first error message when checked is False.
-            *records* is the raw MI record list, so callers can keep it as evidence
-            in their own response (verify_flash does).
+            {checked, mismatched, reason, records, scope}. *checked* is True only
+            when the command ran and the records were parsed. *mismatched* lists
+            the payload strings of every MIS-MATCHED section. *reason* carries the
+            first error message when checked is False. *records* is the raw MI
+            record list, so callers can keep it as evidence in their own response
+            (verify_flash does). *scope* is "read_only" or "all" — never leave a
+            caller guessing which question was answered.
         """
+        report = self._compare_sections_once(read_only)
+        if read_only and not report["checked"]:
+            # A GDB too old for -r would otherwise lose the check entirely. Fall
+            # back to the full comparison rather than report nothing, and say so.
+            fallback = self._compare_sections_once(False)
+            if fallback["checked"]:
+                fallback["degraded_from_read_only"] = report["reason"]
+                return fallback
+        return report
+
+    def _compare_sections_once(self, read_only: bool) -> dict:
+        command = "compare-sections -r" if read_only else "compare-sections"
+        scope = "read_only" if read_only else "all"
         try:
-            records = self.execute_cli_command("compare-sections", timeout_sec=self.timeouts.get("verify"))
+            records = self.execute_cli_command(command, timeout_sec=self.timeouts.get("verify"))
         except Exception as exc:
-            return {"checked": False, "mismatched": [], "reason": str(exc), "records": []}
+            return {"checked": False, "mismatched": [], "reason": str(exc), "records": [], "scope": scope}
         # GDB may report errors as stream text without an ^error record.
         mi_error = find_mi_error(records)
         if mi_error:
-            return {"checked": False, "mismatched": [], "reason": mi_error, "records": records}
+            return {"checked": False, "mismatched": [], "reason": mi_error, "records": records, "scope": scope}
         # Parse MIS-MATCHED sections from console/text payloads.
         mismatched = [
             record.get("payload").strip()
             for record in records
             if isinstance(record.get("payload"), str) and "MIS-MATCHED" in record["payload"]
         ]
-        return {"checked": True, "mismatched": mismatched, "reason": None, "records": records}
+        return {"checked": True, "mismatched": mismatched, "reason": None, "records": records, "scope": scope}
 
-    def verify_flash(self, file_path: str):
+    def verify_flash(self, file_path: str, include_writable: bool = False):
+        """Verify target FLASH against an ELF.
+
+        Read-only sections by default, and the name is the reason: writable
+        sections live in RAM, so they say nothing about what is in flash, and on
+        a target that has run they always differ. Pass ``include_writable=True``
+        immediately after a load, where comparing the initial RAM image is
+        meaningful.
+        """
         responses = []
         responses.extend(self.load_symbols(file_path))
-        report = self.compare_sections_report()
+        report = self.compare_sections_report(read_only=not include_writable)
         if not report["checked"]:
             raise GdbCommandError(
                 f"verify_flash({file_path}) could not compare sections: {report['reason']}"
             )
         if report["mismatched"]:
+            scope_note = (
+                "" if report["scope"] == "read_only" else
+                " (writable sections were included; those differ on any target that has run)"
+            )
             raise GdbCommandError(
-                f"verify_flash({file_path}) failed: target flash does not match the ELF — "
+                f"verify_flash({file_path}) failed: target flash does not match the ELF{scope_note} — "
                 + "; ".join(report["mismatched"])
             )
         # Keep the comparison records in the response: they are the evidence that

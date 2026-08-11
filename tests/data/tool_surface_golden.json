@@ -1525,12 +1525,16 @@
     "openWorldHint": false,
     "readOnlyHint": true
    },
-   "description": "Verifies that target flash matches an ELF by comparing loaded sections (GDB compare-sections).",
+   "description": "Verifies that target flash matches an ELF (GDB compare-sections). Compares read-only sections, which is what lives in flash; writable sections hold the ELF's initial RAM values and always differ once the firmware has run, so including them would fail every healthy target. Pass include_writable=true only right after a load, before the target has executed.",
    "inputSchema": {
     "properties": {
      "file_path": {
       "description": "Path to the ELF to verify against.",
       "type": "string"
+     },
+     "include_writable": {
+      "description": "Also compare writable (RAM) sections. Only meaningful immediately after a load.",
+      "type": "boolean"
      },
      "session": {
       "description": "Optional debug-session name. Omit for the default target.",

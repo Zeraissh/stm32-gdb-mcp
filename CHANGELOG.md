@@ -26,6 +26,33 @@
   （`g_seed + 1`、`sizeof(cfg)`）确实需要符号，仍走 GDB 求值器。`read_cycle_counter` /
   `sample_pc` 背后的 DWT 使能写入走同一个函数，因此也不再需要 ELF。写入护栏策略与审计日志
   行为不变。
+### Symbols are no longer declared meaningless on healthy boards / 不再对正常板子宣告符号无效
+
+- `load_symbols` cried wolf on essentially every running target. The consistency check ran
+  bare `compare-sections`, which includes writable sections — and a writable section holds
+  the ELF's INITIAL values, so the moment firmware runs and writes to its own variables it
+  differs from the file. Measured on hardware whose flash was byte-identical to the loaded
+  ELF: `ER_IROM1 matched` / `RW_IRAM1 MIS-MATCHED!`, while `compare-sections -r` was clean.
+  一致性检查用的是裸 `compare-sections`，它会比较可写段；而可写段存的是 ELF 里的**初始值**，
+  固件一旦运行、写过自己的变量，就必然与文件不同。实测：代码段完全匹配，只有 RAM 段不匹配。
+- The consequence was the mirror image of a false success: a false FAILURE that told users
+  "Values read through these symbols WILL BE MEANINGLESS" and advised `flash_firmware` —
+  recommending a destructive action on the basis of a non-problem, which on a production or
+  wafer board is actively dangerous. The symbols were perfectly valid throughout;
+  `resolve_address`, `read_call_stack` and a symbolized PC profile all returned correct
+  results.
+  后果是"假成功"的镜像——**假失败**：告诉用户符号无效，并建议重新烧录固件，也就是基于一个
+  不存在的问题去推荐破坏性操作；在生产板/晶圆板上这相当危险。
+- `compare_sections_report` now takes `read_only` (default true) and passes `-r`, which is
+  the correct and complete question for "do these symbols describe the firmware on this
+  target". The report carries `scope`, and `load_symbols` reports `compared_sections`, so
+  it is never ambiguous which question was answered. A GDB too old for `-r` falls back to
+  the full comparison rather than losing the check, and says so.
+- `verify_flash` gets the same default, for the reason its own name gives: writable
+  sections live in RAM and say nothing about flash. `include_writable=true` restores the
+  full comparison for use right after a load, and its failure message now explains that
+  those sections differ on any target that has run.
+  `verify_flash` 采用同样的默认值——可写段在 RAM 里，本来就说明不了 flash 的内容。
 
 ## [0.8.1] - 2026-08-06
 
