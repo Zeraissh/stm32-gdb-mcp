@@ -124,6 +124,39 @@
   the wiring.
   HIL workflow 的人工下拉框换成板卡矩阵；每个分支先隔离本板，结尾无条件恢复机架。
 
+### Fixes from first real-hardware validation / 首次实机验证修复
+
+Validated on a SmartUSBHub HBP_USB2_4CH (COM7) with two serial-less ST-Link/V2 on
+channels 3 and 4. Two things only hardware could have found.
+在 4CH Hub + 两个无序列号 ST-Link/V2 的真实台架上验证，发现两个只有硬件能暴露的问题。
+
+- **`hub(action=discover, apply=true)` wrote empty map entries.** Both ST-Links report
+  VID:PID 0483:3748 with **no serial number**, and the apply step persisted only
+  `serial`/`label` — so it stored `{"3": {}, "4": {}}` and silently threw the whole
+  discovery result away. It now persists the port-derived `key` when there is no serial,
+  keeps any human-chosen `label`, and says in a `note` that port-keyed channels need a
+  label before they can be selected. `hub.map[N].key` is validated like the other fields.
+  两个 ST-Link 都没有序列号，而写回时只保留 `serial`/`label`，结果存成空对象，把发现结果
+  静默丢弃。现在无序列号时持久化按 USB 端口派生的 `key`，保留人工设置的 `label`，
+  并明确告知这类通道需要 label 才能被选中。
+- **The brown-out verdict is now gated on the port having drawn current.** An *empty*
+  switched-off port does not read 0 V — it floats, and was measured at 3112 mV once and
+  0 mV a few minutes later, while the same hub read 166 mV on a port with an ST-Link on
+  it. Unconditioned, every power cycle of an idle port would have warned that the board
+  refused to cold-boot. When the pre-cut draw is under 1 mA, `browned_out` is now `null`
+  with a warning explaining that the reading cannot confirm a cold boot either way,
+  instead of a confident wrong answer.
+  空置端口断电后并不读 0 V 而是浮空（实测一次 3112 mV、几分钟后 0 mV），而接了 ST-Link
+  的端口读 166 mV。因此断电前电流低于 1 mA 时，`browned_out` 返回 `null` 并说明该读数
+  无法证实冷启动，而不是给一个自信的错误结论。
+
+Also confirmed working on hardware: `exclusive` data isolation turns the unsafe
+two-probe case (`count=2`, no `suggested_probe`) into the safe single-probe auto-select
+case (`count=1`, `suggested_probe=stlink`), and discovery mapped both channels with zero
+ambiguity in 60 s.
+实机确认：`exclusive` 隔离把 `count=2` 无法自动选择的状态变成 `count=1` 可安全自动选择；
+discovery 在 60 秒内零歧义地映射出两个通道。
+
 ### Power profiling / 功耗测量
 
 - New `hub(action=measure)` samples per-port voltage and current over a window and returns

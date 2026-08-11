@@ -220,7 +220,47 @@ def test_discover_applies_the_map_to_the_profile(monkeypatch, hub_session):
     assert payload["data"]["map"]["2"]["serial"] == "0671FF565251"
 
     profile = _call("debug_profile", {"action": "get"})
-    assert profile["data"]["hub"]["map"]["2"] == {"serial": "0671FF565251"}
+    assert profile["data"]["hub"]["map"]["2"]["serial"] == "0671FF565251"
+    assert "note" not in payload["data"]  # every probe had a serial
+
+
+def test_an_unserialised_probe_is_persisted_by_port_key_not_dropped(monkeypatch, hub_session):
+    # Found on real hardware: two ST-Link/V2 clones both report VID:PID 0483:3748
+    # with NO serial. Persisting only serial/label wrote {} and silently threw the
+    # discovery result away.
+    import mcp_server.server as server_module
+
+    hub = hub_session.hub
+    monkeypatch.setattr("mcp_server.tools.hub_tools.time", _NoSleep)
+    monkeypatch.setattr(server_module, "detect_probe",
+                        lambda **_kw: {"probes": [NOSERIAL_A] if hub.data[2] else []})
+
+    payload = _call("hub", {"action": "discover", "apply": True, "settle_sec": 0})
+
+    entry = _call("debug_profile", {"action": "get"})["data"]["hub"]["map"]["2"]
+    assert entry != {}
+    assert entry["key"] == "instance_id:USB\\VID_0D28&PID_0204\\6&1A2B"
+    assert "serial" not in entry
+    # And it says so, rather than leaving an entry that cannot select anything.
+    assert "no serial number" in payload["data"]["note"]
+    assert "label" in payload["data"]["note"]
+
+
+def test_applying_a_map_never_drops_a_human_chosen_label(monkeypatch, hub_session):
+    import mcp_server.server as server_module
+
+    hub = hub_session.hub
+    monkeypatch.setattr("mcp_server.tools.hub_tools.time", _NoSleep)
+    monkeypatch.setattr(server_module, "detect_probe",
+                        lambda **_kw: {"probes": [STLINK_A] if hub.data[2] else []})
+    asyncio.run(handle_call_tool("debug_profile", {
+        "action": "set", "hub": {"guard": "allow", "map": {"2": {"label": "l431"}}}}))
+
+    _call("hub", {"action": "discover", "apply": True, "settle_sec": 0})
+
+    entry = _call("debug_profile", {"action": "get"})["data"]["hub"]["map"]["2"]
+    assert entry["label"] == "l431"
+    assert entry["serial"] == "0671FF565251"
 
 
 def test_an_applied_map_resolves_the_channel_on_the_next_call(monkeypatch, hub_session):

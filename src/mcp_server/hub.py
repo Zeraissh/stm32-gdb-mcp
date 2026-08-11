@@ -28,6 +28,12 @@ from typing import Any, Protocol
 # brown-out reset level of every STM32 this server targets.
 BROWNOUT_MV = 500
 
+# Minimum pre-cut draw for the brown-out verdict to mean anything. Below this the
+# port has no measurable load, and a switched-off port with nothing on it floats
+# rather than reading zero (3112 mV measured on an empty channel of a real 4CH
+# hub, versus 167 mV on the same hub with an ST-Link attached).
+LOAD_CURRENT_MA = 1
+
 GUARD_MODES = ("allow", "confirm", "dry_run")
 DEFAULT_GUARD_MODE = "confirm"
 
@@ -531,12 +537,19 @@ class HubManager:
         On a model with an ADC the off-window voltage is sampled and reported, so
         the caller can see whether the rail really collapsed.
 
+        The verdict is conditioned on the port having drawn current BEFORE the cut.
+        Measured on real hardware: a port with an ST-Link on it read 167 mV during
+        the off window, but an EMPTY port read 3112 mV -- an undriven node floats,
+        it is not a board staying alive. Without the pre-cut load check, every
+        power cycle of an idle port would warn that the board refused to cold-boot.
+
         ``sleep``/``monotonic`` are injectable so tests run on a fake clock.
         """
         sleep = sleep or time.sleep
         monotonic = monotonic or time.monotonic
 
         started = monotonic()
+        pre_current = self._sample_current(channel)
         self.power(channel, "off", confirm=confirm, live_session=live_session)
 
         off_voltage = self._sample_voltage(channel)
@@ -557,16 +570,33 @@ class HubManager:
             "settle_ms": settle_ms,
             "elapsed_ms": int(round((monotonic() - started) * 1000)),
         }
+        if pre_current is not None:
+            result["pre_current_ma"] = pre_current
         if measured is not None:
             result["measured_off_voltage_mv"] = measured
-            result["browned_out"] = measured < BROWNOUT_MV
-            if not result["browned_out"]:
+
+            if pre_current is not None and pre_current < LOAD_CURRENT_MA:
+                # An undriven port floats -- measured at 3112 mV on an empty channel
+                # of a real 4CH hub. Calling that "the board stayed powered" would be
+                # a confident wrong answer, so say what is actually known.
+                result["browned_out"] = None
                 result["warning"] = (
-                    f"channel {channel} still read {measured} mV with power removed, so the board "
-                    f"did NOT cold-boot. It is powered from somewhere else (a second supply, a "
-                    f"coin cell, or the probe's own VBUS), or bulk capacitance held it up -- "
-                    f"try a longer off_ms."
+                    f"channel {channel} drew {pre_current} mA before the cut, so nothing "
+                    f"measurable was powered from this port and the {measured} mV read during "
+                    f"the off window is a floating node, not a live board. Power was removed "
+                    f"either way; this reading simply cannot confirm a cold boot. (A target in "
+                    f"deep sleep can also draw under {LOAD_CURRENT_MA} mA.)"
                 )
+            else:
+                result["browned_out"] = measured < BROWNOUT_MV
+                if not result["browned_out"]:
+                    result["warning"] = (
+                        f"channel {channel} still read {measured} mV with power removed while "
+                        f"drawing {pre_current} mA before the cut, so the board did NOT "
+                        f"cold-boot. It is powered from somewhere else (a second supply, a coin "
+                        f"cell, or the probe's own VBUS), or bulk capacitance held it up -- try "
+                        f"a longer off_ms."
+                    )
         return result
 
     def measure(self, channels: tuple[int, ...] | None = None, duration_sec: float = 0.0,
@@ -624,13 +654,19 @@ class HubManager:
         }
 
     def _sample_voltage(self, channel: int) -> int | None:
-        hub = self._hub
+        return self._sample_field(channel, "voltage")
+
+    def _sample_current(self, channel: int) -> int | None:
+        return self._sample_field(channel, "current")
+
+    def _sample_field(self, channel: int, field: str) -> int | None:
+        hub = self._hub or (self._ensure() if self._hub is None else None)
         if hub is None:
             return None
         sample = self._measurements(hub, (channel,))
         if not sample or channel not in sample:
             return None
-        value = sample[channel].get("voltage")
+        value = sample[channel].get(field)
         return value if isinstance(value, int) else None
 
     def _switch(self, kind: str, channel: int, state: str, confirm: bool,

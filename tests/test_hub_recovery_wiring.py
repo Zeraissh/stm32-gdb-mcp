@@ -204,6 +204,35 @@ def test_power_cycle_flags_a_rail_that_never_collapsed(fake_hub):
     assert BROWNOUT_MV == 500
 
 
+def test_an_unloaded_port_gives_an_inconclusive_verdict_not_a_wrong_one(fake_hub):
+    # Measured on real hardware: an EMPTY switched-off port floats at ~3100 mV while
+    # the same hub reads 167 mV on a port with an ST-Link on it. Without the pre-cut
+    # load check, every power cycle of an idle port would claim the board refused
+    # to cold-boot.
+    manager = _manager(fake_hub, {"channel": 1, "guard": "allow"})
+    fake_hub.current_ma = 0            # nothing attached
+    fake_hub.residual_voltage_mv = 3112
+
+    result = manager.power_cycle(1, settle_ms=0, sleep=lambda _s: None, monotonic=lambda: 0.0)
+
+    assert result["pre_current_ma"] == 0
+    assert result["browned_out"] is None, "an unloaded port must not produce a verdict"
+    assert "floating node" in result["warning"]
+    assert "cannot confirm a cold boot" in result["warning"]
+
+
+def test_a_loaded_port_still_gets_a_real_verdict(fake_hub):
+    manager = _manager(fake_hub, {"channel": 1, "guard": "allow"})
+    fake_hub.current_ma = 84           # an ST-Link, as measured on the bench
+    fake_hub.residual_voltage_mv = 167
+
+    result = manager.power_cycle(1, settle_ms=0, sleep=lambda _s: None, monotonic=lambda: 0.0)
+
+    assert result["pre_current_ma"] == 84
+    assert result["browned_out"] is True
+    assert "warning" not in result
+
+
 def test_power_cycle_on_a_model_without_an_adc_omits_the_claim(fake_hub):
     manager = _manager(fake_hub, {"channel": 1, "guard": "allow"})
     fake_hub.adc = False

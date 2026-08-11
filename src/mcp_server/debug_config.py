@@ -221,7 +221,10 @@ def _validate_hub(hub, errors: list[str]):
                 if not isinstance(entry, dict):
                     errors.append(f"hub.map[{number}] must be an object with serial and/or label")
                     continue
-                for field in ("serial", "label"):
+                # `key` is what hub(action=discover) writes for a probe with no
+                # serial number: a USB-port-derived identity, stable while the
+                # probe stays in that port.
+                for field in ("serial", "label", "key"):
                     value = entry.get(field)
                     if value is not None and (not isinstance(value, str) or not value.strip()):
                         errors.append(f"hub.map[{number}].{field} must be a non-empty string")

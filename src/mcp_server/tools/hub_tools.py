@@ -209,11 +209,30 @@ def discover_hub_map(ctx: ToolContext, arguments: dict) -> list[TextContent]:
             sleep=time.sleep, settle_sec=float(arguments.get("settle_sec", 1.0)),
         )
 
+        # Probes with no serial number are common (ST-Link/V2 clones all share
+        # VID:PID 0483:3748 and report none), and for those `key` -- derived from
+        # the Windows instance id, i.e. the physical port -- is the ONLY identity
+        # there is. Persisting only serial/label would write an empty entry and
+        # silently throw it away.
+        unserialised = sorted(ch for ch, entry in result["map"].items() if not entry.get("serial"))
+        if unserialised:
+            result["note"] = (
+                f"channels {unserialised} hold probes with no serial number, so their map entries "
+                f"are keyed by USB port instead. A port key identifies the channel but cannot "
+                f"select it: give those channels a `label` (and select with it), or set "
+                f"hub.channel per board."
+            )
+
         if arguments.get("apply") and result["map"]:
             spec = dict(ctx.debug_profile.get().get("hub") or {})
-            merged = {str(k): v for k, v in (spec.get("map") or {}).items()}
+            merged = {str(k): dict(v) for k, v in (spec.get("map") or {}).items()}
             for channel, entry in result["map"].items():
-                merged[str(channel)] = {k: v for k, v in entry.items() if k in ("serial", "label")}
+                existing = merged.get(str(channel), {})
+                persisted = {k: v for k, v in entry.items() if k in ("serial", "key")}
+                # Never drop a label a human chose; discovery only fills in identity.
+                if existing.get("label"):
+                    persisted["label"] = existing["label"]
+                merged[str(channel)] = persisted
             spec["map"] = merged
             ctx.debug_profile.update({"hub": spec})
             manager.configure(spec)
