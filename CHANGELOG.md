@@ -1,6 +1,6 @@
 # Changelog / 更新日志
 
-## [Unreleased]
+## [0.9.0] - 2026-08-11
 
 ### sample_pc: usable by default, and no longer invents hot spots / 修复 PC 采样
 
