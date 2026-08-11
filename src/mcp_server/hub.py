@@ -369,7 +369,12 @@ class HubManager:
         if explicit is not None:
             return self._validated(explicit), "argument"
 
-        spec = dict((profile or {}).get("hub") or {}) or self._spec
+        # Fall back to the manager's own spec ONLY when the caller passed no
+        # profile at all (a script driving HubManager directly). A session that
+        # HAS a profile but no hub block must not inherit another session's
+        # channel: this singleton is shared across sessions, and on a rack that
+        # would resolve to a neighbouring board and power-cycle the wrong one.
+        spec = dict((profile or {}).get("hub") or {}) if profile is not None else dict(self._spec)
         channel = spec.get("channel")
         if channel is not None:
             return self._validated(channel), "profile"
@@ -548,6 +553,10 @@ class HubManager:
         sleep = sleep or time.sleep
         monotonic = monotonic or time.monotonic
 
+        # Connect before the pre-cut sample: it runs ahead of the first power()
+        # call, which is what would otherwise have triggered the connect.
+        self._ensure()
+
         started = monotonic()
         pre_current = self._sample_current(channel)
         self.power(channel, "off", confirm=confirm, live_session=live_session)
@@ -660,7 +669,7 @@ class HubManager:
         return self._sample_field(channel, "current")
 
     def _sample_field(self, channel: int, field: str) -> int | None:
-        hub = self._hub or (self._ensure() if self._hub is None else None)
+        hub = self._hub
         if hub is None:
             return None
         sample = self._measurements(hub, (channel,))

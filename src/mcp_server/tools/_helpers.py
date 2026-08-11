@@ -122,8 +122,19 @@ def recover_current_session(gdb_client: Any, gdb_manager: Any, last_session: dic
 
     steps: list[dict] = []
     if hub is not None and escalate:
+        # Honour the profile's power_cycle timings, same as reset_target(cold).
+        # A board that needs 800 ms to brown out needs it on every path, and
+        # having the ladder quietly use 400 ms instead is the kind of split
+        # behaviour that makes a flaky rig look like a flaky tool.
+        cycle: dict = {}
         try:
-            port, steps = hub_escalate(start, hub, channel, deep=deep, sleep=sleep)
+            cycle = (sess.debug_profile.get().get("hub") or {}).get("power_cycle") or {}
+        except Exception:  # noqa: BLE001 - timings are an optimization, not a requirement
+            cycle = {}
+        try:
+            port, steps = hub_escalate(start, hub, channel, deep=deep, sleep=sleep,
+                                       off_ms=cycle.get("off_ms"),
+                                       settle_ms=cycle.get("settle_ms"))
         except HubRecoveryError as exc:
             # Surface the original failure, not a wrapper: callers classify on it.
             raise exc.cause if exc.cause is not None else exc from None

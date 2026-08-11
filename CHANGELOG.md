@@ -184,6 +184,41 @@ only VDD actually collapsing clears that field.
 在 STM32L151 上用 RCC_CSR 证明冷启动：热复位会**加上** `SFTRST`，而冷复位后该位**消失**
 ——粘滞复位标志位消失是任何 SWD 复位都做不到的，只有 VDD 真正掉电才会清掉这个字段。
 
+### Review pass against the real rig / 对照实机的复查
+
+- **`check_session_health` reported `target_responsive: true` about a dead link.**
+  `probe_target` only asked whether GDB answered at all, and GDB answers from its own
+  state even when the link underneath is gone. Measured: with the probe's port powered
+  off, health said responsive while every read returned `0x00000000`. It now reads CPUID
+  and applies the same Cortex-M signature test `self_check` uses (implementer `0x41`,
+  architecture constant `0xF`), reports the evidence under `identity`, and explains why
+  when it fails. All-zero, all-ones, and byte-swapped reads are all caught.
+  健康检查此前只问"GDB 有没有应答"，而 GDB 即使底层链路已死也会用自己的状态应答。实测：
+  探针端口断电后它仍报 `target_responsive=true`，而所有读都返回 `0x00000000`。现在改为
+  读 CPUID 并套用 `self_check` 的 Cortex-M 签名校验，并给出证据与失败原因。
+- **`channel_for` could leak one session's hub channel into another's.** `HubManager` is a
+  process-wide singleton by design, and a session that had a profile but no `hub` block
+  fell back to whatever the last session configured — on a rack that resolves to a
+  neighbouring board and power-cycles the wrong one. The fallback now applies only when
+  the caller passes no profile at all (a script driving `HubManager` directly).
+  会话若有 profile 但没有 `hub` 块，会继承上一个会话配置的通道——在机架上就是对着邻座的板
+  子断电。现在只有完全不传 profile 的直接调用才走该回退。
+- **The recovery ladder ignored the profile's `power_cycle` timings** while
+  `reset_target(strategy="cold")` honoured them. A board needing 800 ms to brown out got
+  400 ms from the ladder, which makes a flaky rig look like a flaky tool. Both paths now
+  read the same config.
+  恢复阶梯此前不读 profile 的 `power_cycle` 时序，而冷复位读——两条路径现在一致。
+
+The full ladder was then exercised on hardware for the first time: with the probe's port
+switched off, `recover_session` reported
+`[soft=false, data_toggle=false, power_cycle=true]` and came back to
+`target_responsive=true, cpuid=0x412fc230`. The live-session interlock also proved itself
+unprompted — the first attempt to cut power to a port with a running GDB server was
+refused until `confirm=true`.
+随后在实机上首次完整跑通了恢复阶梯：探针端口被断电后，`recover_session` 依次尝试
+软重试→数据线开合→断电重上电并在最后一级成功恢复。活跃会话联锁也自证有效：对着有活跃
+GDB 服务的端口断电的第一次尝试被拒绝，直到显式传 `confirm=true`。
+
 ### Power profiling / 功耗测量
 
 - New `hub(action=measure)` samples per-port voltage and current over a window and returns

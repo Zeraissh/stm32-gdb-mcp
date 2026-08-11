@@ -410,14 +410,17 @@ def check_session_health(ctx: ToolContext, arguments: dict) -> list[TextContent]
         ctx.gdb_client.start_gdb()
         ctx.gdb_client.connect("localhost", ctx.gdb_manager.port)
         reconnected = True
+    responsive, identity = _target_evidence(ctx.gdb_client)
     health = {
         "gdb_alive": ctx.gdb_client.is_alive(),
         "server_alive": ctx.gdb_manager.is_alive(),
-        "target_responsive": ctx.gdb_client.probe_target(),
+        "target_responsive": responsive,
         "server_type": ctx.gdb_manager.server_type,
         "port": ctx.gdb_manager.port,
         "reconnected": reconnected,
     }
+    if identity:
+        health["identity"] = identity
     hub_state = _hub_health(ctx)
     if hub_state:
         health["hub"] = hub_state
@@ -425,6 +428,38 @@ def check_session_health(ctx: ToolContext, arguments: dict) -> list[TextContent]
     if not health["target_responsive"] and hub_state:
         next_actions.append("recover_session")
     return [content_success(health, suggested_next_actions=next_actions)]
+
+
+def _target_evidence(gdb_client) -> tuple[bool, dict | None]:
+    """Is the target really answering? Judge by evidence, not by "no exception".
+
+    ``probe_target`` only asked whether GDB answered at all, which it does from
+    its own state even when the link underneath is dead. Measured on hardware
+    after a hub power cycle dropped the probe: it reported responsive=true while
+    every memory read returned 0x00000000 and self_check reported
+    cpuid=0x00000000. A health check that says "healthy" about a dead link is
+    worse than one that says nothing.
+
+    So read CPUID and apply the same signature test self_check uses: a real
+    Cortex-M has implementer 0x41 and the architecture constant 0xF. All-zero,
+    all-ones, or byte-swapped reads all fail it.
+    """
+    try:
+        cpuid = gdb_client.read_word(0xE000ED00)
+    except Exception as exc:  # noqa: BLE001 - an unanswered read IS the answer
+        return False, {"cpuid": None, "reason": f"CPUID read failed: {exc}"[:200]}
+
+    implementer = (cpuid >> 24) & 0xFF
+    constant = (cpuid >> 16) & 0xF
+    ok = implementer == 0x41 and constant == 0xF
+    evidence: dict = {"cpuid": f"0x{cpuid:08x}", "valid": ok}
+    if not ok:
+        evidence["reason"] = (
+            f"CPUID 0x{cpuid:08x} is not a Cortex-M signature (implementer 0x{implementer:02x}, "
+            f"expected 0x41). The link answered but the answer is not the target: the probe may "
+            f"have re-enumerated, or the core is running (identity reads need a halted core)."
+        )
+    return ok, evidence
 
 
 def _hub_health(ctx: ToolContext) -> dict | None:

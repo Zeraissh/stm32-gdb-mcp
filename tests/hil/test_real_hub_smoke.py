@@ -111,4 +111,5 @@ def test_power_cycle_actually_collapses_the_rail(rig):
         f"rail held at {result['measured_off_voltage_mv']} mV (threshold {BROWNOUT_MV} mV) -- the "
         f"board is powered from somewhere else, or bulk capacitance needs a longer off_ms. "
         f"{result.get('warning', '')}")
-    assert manager.describe()["ports"][channel - 1]["power"] == "on"
+    ports = {port["channel"]: port for port in manager.describe()["ports"]}
+    assert ports[channel]["power"] == "on"
