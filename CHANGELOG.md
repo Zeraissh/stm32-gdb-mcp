@@ -1,5 +1,32 @@
 # Changelog / 更新日志
 
+## [Unreleased]
+
+### Memory writes / 内存写入
+
+- `write_memory` / `write_typed_memory` no longer need a symbol table for a numeric
+  write. The old implementation built `set {uint32_t}<address> = <value>`, and
+  `uint32_t` is a typedef GDB can only resolve from a loaded ELF — so on a bare board
+  every raw poke failed with `No symbol table is loaded.  Use the "file" command.`
+  while `read_memory` on the very same address worked. That made the symbol-free case
+  the one case that could not work: clearing RCC_CSR RMVF, setting a DBGMCU freeze bit,
+  unlocking a peripheral. Numeric values now go out as raw bytes via
+  `-data-write-memory-bytes`, mirroring how reads already use
+  `-data-read-memory-bytes`, with no expression evaluation involved. A symbolic value
+  (`g_seed + 1`, `sizeof(cfg)`) genuinely needs symbols and still routes through GDB's
+  evaluator. The DWT enable writes behind `read_cycle_counter` / `sample_pc` poke fixed
+  addresses through the same helper, so they stop requiring an ELF too. Guard policy
+  and the write audit log are unchanged. /
+  `write_memory` / `write_typed_memory` 写入数值时不再需要符号表。旧实现拼的是
+  `set {uint32_t}<address> = <value>`，而 `uint32_t` 是 GDB 只能从已加载 ELF 中解析的
+  typedef——于是裸板上每次裸写都会失败并报 `No symbol table is loaded.`，而对同一地址的
+  `read_memory` 却正常。这恰恰让本就无需符号的场景成了唯一不可用的场景：清 RCC_CSR RMVF、
+  设置 DBGMCU freeze 位、解锁外设。现在数值写入经 `-data-write-memory-bytes` 以原始字节
+  下发，与读路径已在用的 `-data-read-memory-bytes` 对称，完全不经表达式求值；符号化取值
+  （`g_seed + 1`、`sizeof(cfg)`）确实需要符号，仍走 GDB 求值器。`read_cycle_counter` /
+  `sample_pc` 背后的 DWT 使能写入走同一个函数，因此也不再需要 ELF。写入护栏策略与审计日志
+  行为不变。
+
 ## [0.8.1] - 2026-08-06
 
 Two fixes that only real hardware could have found, both about the same thing:
