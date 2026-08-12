@@ -17,7 +17,7 @@ def test_load_symbols_uses_file_exec_and_symbols_without_download():
 
     client.load_symbols("fw.axf")
 
-    assert client.gdb.commands == [('-file-exec-and-symbols "fw.axf"', 2.0)]
+    assert issued(client.gdb) == [('-file-exec-and-symbols "fw.axf"', 2.0)]
 
 
 def test_symbolize_pc_reads_console_output_not_the_command_echo():
@@ -113,7 +113,7 @@ def test_read_core_registers_uses_gdb_cli_info_registers():
     response = client.read_core_registers()
 
     assert response == [{"type": "result", "message": "done", "payload": None}]
-    assert client.gdb.commands == [("info registers", 2.0)]
+    assert issued(client.gdb) == [("info registers", 2.0)]
 
 
 def test_halt_execution_uses_configured_halt_timeout():
@@ -137,7 +137,7 @@ def test_formerly_hardcoded_timeouts_are_overridable():
     client.run_to_line("main.c:10")
     client.verify_flash("fw.axf")
 
-    assert client.gdb.commands == [
+    assert issued(client.gdb) == [
         ('-file-exec-and-symbols "fw.axf"', 7.0),
         ("-exec-next", 3.5),
         ("-exec-until main.c:10", 42.0),
@@ -154,7 +154,7 @@ def test_write_typed_memory_writes_raw_bytes_in_target_order():
 
     # Contents go out in target memory order (little-endian on Cortex-M), and the
     # address is quoted because -data-write-memory-bytes argv-splits like the read side.
-    assert client.gdb.commands == [
+    assert issued(client.gdb) == [
         ('-data-write-memory-bytes "0x20000000" 78563412', 2.0)
     ]
 
@@ -173,7 +173,7 @@ def test_write_typed_memory_encodes_each_width(width_bits, value, contents):
 
     client.write_typed_memory("0x40023834", value, width_bits=width_bits)
 
-    assert client.gdb.commands == [
+    assert issued(client.gdb) == [
         (f'-data-write-memory-bytes "0x40023834" {contents}', 2.0)
     ]
 
@@ -202,7 +202,7 @@ def test_write_typed_memory_succeeds_with_no_symbol_table_loaded():
 
     client.write_typed_memory("0x40023834", "0x1000000", width_bits=32)
 
-    assert client.gdb.commands == [
+    assert issued(client.gdb) == [
         ('-data-write-memory-bytes "0x40023834" 00000001', 2.0)
     ]
 
@@ -215,7 +215,7 @@ def test_write_typed_memory_still_evaluates_symbolic_values():
 
     client.write_typed_memory("&g_flags", "g_seed + 1", width_bits=16)
 
-    assert client.gdb.commands == [
+    assert issued(client.gdb) == [
         ("set {uint16_t}&g_flags = g_seed + 1", 1.0)
     ]
 
@@ -226,7 +226,7 @@ def test_read_typed_memory_reads_byte_count_for_width_and_count():
 
     client.read_typed_memory("0x20000000", width_bits=16, count=4)
 
-    assert client.gdb.commands == [
+    assert issued(client.gdb) == [
         ('-data-read-memory-bytes "0x20000000" 8', 2.0)  # routed through the 'memory' timeout
     ]
 
@@ -264,6 +264,18 @@ def test_extract_first_memory_word_prefers_structured_memory_over_stop_console()
 # --- issue #21: ok:true despite raw GDB errors -------------------------------
 
 
+def issued(gdb):
+    """Commands a test cares about, minus the target-write lockdown's own traffic.
+
+    write_window brackets every genuine write with -gdb-set/-gdb-show on the
+    may-write-* permissions. Those are GDB-local settings, not target traffic, and
+    pinning them in every write test would mean the lockdown could never be tuned
+    without rewriting a dozen unrelated assertions. Everything else stays exact.
+    """
+    return [c for c in gdb.commands
+            if not c[0].startswith(("-gdb-set may-", "-gdb-show may-"))]
+
+
 class ScriptedGdb:
     """Answers each write from a {command-prefix: records} script."""
 
@@ -274,12 +286,28 @@ class ScriptedGdb:
             {"type": "result", "message": "done", "payload": None}
         ]
         self._pending = list(pending or [])
+        # start_gdb applies the target-write lockdown and refuses to run if GDB
+        # cannot honour it, so this has to model the switches to stand in for a
+        # usable GDB at all. They start "on" like a real GDB's default; a script
+        # entry still wins, so a test can force a refusal.
+        self.permissions = {
+            "may-write-memory": "on",
+            "may-write-registers": "on",
+            "may-call-functions": "on",
+        }
 
     def write(self, command, timeout_sec=1.0, raise_error_on_timeout=True):
         self.commands.append((command, timeout_sec))
         for prefix, records in self._script.items():
             if command.startswith(prefix):
                 return list(records)
+        parts = command.split()
+        if len(parts) == 3 and parts[0] == "-gdb-set" and parts[1] in self.permissions:
+            self.permissions[parts[1]] = parts[2]
+            return [{"type": "result", "message": "done", "payload": None}]
+        if len(parts) == 2 and parts[0] == "-gdb-show" and parts[1] in self.permissions:
+            return [{"type": "result", "message": "done",
+                     "payload": {"value": self.permissions[parts[1]]}}]
         return list(self._default)
 
     def get_gdb_response(self, timeout_sec=0.1, raise_error_on_timeout=False):
@@ -349,7 +377,7 @@ def test_windows_backslash_paths_are_normalized_for_gdb():
 
     client.load_symbols(r"C:\proj\build\fw.elf")
 
-    assert client.gdb.commands[0][0] == '-file-exec-and-symbols "C:/proj/build/fw.elf"'
+    assert issued(client.gdb)[0][0] == '-file-exec-and-symbols "C:/proj/build/fw.elf"'
 
 
 # --- issue #22: missed stops and leaked SIGINT --------------------------------
@@ -393,7 +421,7 @@ def test_wait_for_stop_timeout_sends_no_command_to_the_target():
     event = client.wait_for_stop(timeout_sec=0.05)
 
     assert event["stopped"] is False and event["reason"] == "timeout"
-    assert client.gdb.commands == [], f"timeout path sent {client.gdb.commands}"
+    assert issued(client.gdb) == [], f"timeout path sent {issued(client.gdb)}"
 
 
 def test_run_and_wait_drops_stale_stop_records_before_resuming():
@@ -436,7 +464,7 @@ def test_wait_for_stop_catches_a_late_stopped_notification():
     assert event["reason"] == "breakpoint-hit"
     assert event["frame"]["func"] == "trigger_divzero"
     assert event["frame"]["line"] == 21
-    assert client.gdb.commands == [], "the straggler must be read, not commanded for"
+    assert issued(client.gdb) == [], "the straggler must be read, not commanded for"
 
 
 def test_verify_flash_raises_when_sections_are_mis_matched():
@@ -592,8 +620,14 @@ def test_start_gdb_survives_a_gdb_without_mi_async():
             super().__init__({})
 
         def write(self, command, timeout_sec=1.0, **kw):
-            super().write(command, timeout_sec=timeout_sec, **kw)
-            raise RuntimeError("Undefined command: mi-async")
+            # Refuse ONLY mi-async. A GDB that also refused the may-write-*
+            # switches must NOT start -- that is the target-write lockdown being
+            # fail-closed on purpose -- so refusing everything here would be
+            # testing a different thing than this test's name claims.
+            if "mi-async" in command:
+                super().write(command, timeout_sec=timeout_sec, **kw)
+                raise RuntimeError("Undefined command: mi-async")
+            return super().write(command, timeout_sec=timeout_sec, **kw)
 
     original = gdb_client_module.GdbController
     gdb_client_module.GdbController = RefusingController
@@ -690,9 +724,21 @@ class SplitBatchGdb:
     def __init__(self, batches_before_result=2):
         self.commands = []
         self._remaining = batches_before_result
+        self.permissions = {"may-write-memory": "on", "may-write-registers": "on",
+                            "may-call-functions": "on"}
 
     def write(self, command, timeout_sec=1.0):
         self.commands.append((command, timeout_sec))
+        # load_firmware now brackets the download in a write window, which asks GDB
+        # to set and read back the may-write-* permissions. Answer those normally;
+        # only the download itself withholds its terminal result.
+        parts = command.split()
+        if len(parts) == 3 and parts[0] == "-gdb-set" and parts[1] in self.permissions:
+            self.permissions[parts[1]] = parts[2]
+            return [{"type": "result", "message": "done", "payload": None}]
+        if len(parts) == 2 and parts[0] == "-gdb-show" and parts[1] in self.permissions:
+            return [{"type": "result", "message": "done",
+                     "payload": {"value": self.permissions[parts[1]]}}]
         # Progress records only - deliberately no terminal result yet.
         return [{"type": "output", "message": "download", "payload": "+download,{section=\".text\"}"}]
 
@@ -739,7 +785,7 @@ def test_flash_download_still_fails_when_no_result_ever_arrives():
 
 def _only_command(client):
     assert len(client.gdb.commands) == 1, client.gdb.commands
-    return client.gdb.commands[0][0]
+    return issued(client.gdb)[0][0]
 
 
 def test_read_variable_quotes_an_expression_containing_spaces():
@@ -769,8 +815,8 @@ def test_sizeof_and_address_of_quote_the_whole_expression():
     client.sizeof("struct boot_record")
     client.address_of("g_state")
 
-    assert client.gdb.commands[0][0] == '-data-evaluate-expression "sizeof(struct boot_record)"'
-    assert client.gdb.commands[1][0] == '-data-evaluate-expression "&g_state"'
+    assert issued(client.gdb)[0][0] == '-data-evaluate-expression "sizeof(struct boot_record)"'
+    assert issued(client.gdb)[1][0] == '-data-evaluate-expression "&g_state"'
 
 
 def test_read_register_value_quotes_its_expression():
@@ -921,10 +967,13 @@ def test_start_gdb_pins_the_charset_so_char_reads_cannot_fail(monkeypatch):
 def test_a_gdb_that_rejects_the_charset_setting_does_not_break_startup(monkeypatch):
     class GrumpyGdb(FakeGdb):
         def write(self, command, timeout_sec=1.0):
-            super().write(command, timeout_sec)
             if "charset" in command:
+                super().write(command, timeout_sec)
                 raise RuntimeError("Undefined command")
-            return [{"type": "result", "message": "done", "payload": None}]
+            # Delegate, so the may-write-* switches are still answered: a GDB that
+            # refused those would legitimately fail to start, which is a different
+            # test than this one.
+            return super().write(command, timeout_sec)
 
     fake = GrumpyGdb()
     monkeypatch.setattr(gdb_client_module, "GdbController", lambda command: fake)
@@ -942,7 +991,7 @@ def test_continue_execution_is_a_no_op_when_the_target_is_already_running():
     resp = client.continue_execution()
 
     assert was_already_running(resp)
-    assert client.gdb.commands == []  # no -exec-continue, so no "not halted" error
+    assert issued(client.gdb) == []  # no -exec-continue, so no "not halted" error
 
 
 def test_continue_execution_resumes_a_halted_target():
@@ -975,7 +1024,7 @@ def test_flash_erase_pads_to_the_drivers_sector_boundaries():
 
     # 'pad' is what stops "address range ... is not sector-aligned"; the sector
     # size belongs to the OpenOCD driver, not to a table in this server.
-    assert client.gdb.commands == [("monitor flash erase_address pad 0x8016000 4096", 30.0)]
+    assert issued(client.gdb) == [("monitor flash erase_address pad 0x8016000 4096", 30.0)]
 
 
 def test_flash_erase_raises_when_the_erase_reports_an_error():
@@ -1044,7 +1093,7 @@ def test_continue_execution_still_short_circuits_a_genuinely_running_target():
     resp = client.continue_execution()
 
     assert was_already_running(resp)
-    assert client.gdb.commands == []
+    assert issued(client.gdb) == []
 
 
 def test_list_source_returns_the_window_around_the_location_not_only_after_it():

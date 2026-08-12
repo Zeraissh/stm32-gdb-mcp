@@ -1,3 +1,5 @@
+import contextlib
+import threading
 import time
 from collections import OrderedDict
 from typing import Literal
@@ -74,6 +76,17 @@ def encode_memory_bytes(
     return masked.to_bytes(width_bits // 8, byte_order).hex()
 
 
+TARGET_WRITE_PERMISSIONS = ("may-write-memory", "may-write-registers")
+# may-call-functions is deliberately NOT liftable and has no window: nothing in
+# this server calls a target function, so the one expression side effect that
+# RESUMES the core stays closed permanently.
+_LOCKED_PERMISSIONS = TARGET_WRITE_PERMISSIONS + ("may-call-functions",)
+
+
+class TargetWriteLockdownError(RuntimeError):
+    """The lockdown could not be applied, asserted, or restored."""
+
+
 def gdb_expr(expr: str) -> str:
     """Render a C expression as a single GDB/MI command argument.
 
@@ -125,16 +138,28 @@ class GdbClientManager:
         # the target halts, which offsets every later response by one and wedges
         # the session (found on real L151 hardware).
         self._running: bool | None = None
+        # Serializes GDB traffic. An RLock because a write window may nest inside
+        # another and a lifted caller still issues reads.
+        self._gdb_lock = threading.RLock()
+        # >0 while a write window is open. A counter, not a flag: windows nest.
+        self._write_window_depth = 0
+        self._write_window_registers = 0
 
     def start_gdb(self, gdb_path="arm-none-eabi-gdb"):
         if self.gdb:
             self.stop_gdb()
         self._symbol_cache.clear()
         self._running = None
+        self._write_window_depth = 0
+        self._write_window_registers = 0
         # Use mi3 for latest GDB machine interface features
         self.gdb = GdbController(command=[gdb_path, "--interpreter=mi3"])
         self._enable_async()
         self._pin_charset()
+        # Last, and deliberately NOT wrapped in try/except like the two above.
+        # Their failure is a comfort regression; this one's failure is the
+        # security property going missing while the server believes it is there.
+        self._apply_target_write_lockdown()
 
     def _enable_async(self):
         """Turn on MI async mode, which must happen BEFORE a target is attached.
@@ -172,6 +197,130 @@ class GdbClientManager:
             self.execute_command("-gdb-set charset ASCII", timeout_sec=self.timeouts.get("default"))
         except Exception:
             pass
+
+    # ---- target-write lockdown -------------------------------------------------
+    #
+    # Every read-only tool forwards a caller-supplied C expression to
+    # -data-evaluate-expression, and a C expression can assign
+    # (*(unsigned int *)0x40003000 = 0x5555, the IWDG key register that
+    # write_memory's MemoryWriteGuard refuses) or call a function, which RESUMES
+    # the core. Lexical filtering loses that fight: sizeof(1) + (g = 888) and
+    # x/2i main + 0*(g = 1010) both land the assignment.
+    #
+    # GDB's own permission switches do not lose, because the refusal happens
+    # inside GDB's target layer BEFORE a packet is emitted. Measured against an
+    # RSP stub: with the switches off, the wire log for every one of those
+    # expressions contains only read packets (g, m) and no X/M/P at all.
+
+    def _set_permission(self, name: str, value: str) -> None:
+        resp = self._execute_until_result(f"-gdb-set {name} {value}",
+                                          self.timeouts.get("default"))
+        ensure_ok(resp, f"set {name} {value}")
+
+    def _show_permission(self, name: str) -> str:
+        resp = self._execute_until_result(f"-gdb-show {name}", self.timeouts.get("default"))
+        ensure_ok(resp, f"show {name}")
+        for record in resp or []:
+            payload = record.get("payload")
+            if record.get("type") == "result" and isinstance(payload, dict):
+                return str(payload.get("value", "")).strip()
+        raise TargetWriteLockdownError(f"GDB did not report a value for {name}")
+
+    def _apply_target_write_lockdown(self) -> None:
+        """Deny target writes and inferior calls by default. FAIL-CLOSED.
+
+        A GDB that cannot honour these leaves every read-only tool able to write
+        target memory while this server reports itself guarded, which is strictly
+        worse than refusing to start -- so this raises, and tears the process down
+        rather than leaving a half-configured GDB behind.
+        """
+        for name in _LOCKED_PERMISSIONS:
+            try:
+                self._set_permission(name, "off")
+            except Exception as exc:
+                self.stop_gdb()
+                raise TargetWriteLockdownError(
+                    f"GDB refused '{name}' ({exc}). Refusing to run without the target-write "
+                    "lockdown: without it every read-only tool can write target memory through "
+                    "an expression side effect. Needs a GDB with set may-write-memory / "
+                    "may-write-registers / may-call-functions (GNU gdb 7.2+)."
+                ) from exc
+        self.assert_target_write_lockdown()
+
+    def assert_target_write_lockdown(self) -> None:
+        """Verify the lockdown is in force. Cheap; called at connect.
+
+        -gdb-set emits no =cmd-param-changed for these, so there is no event to
+        watch for a lift that was never restored: the state has to be polled.
+        """
+        if self._write_window_depth:
+            return  # a legitimate window is open by design
+        wrong = {name: value
+                 for name, value in ((n, self._show_permission(n)) for n in _LOCKED_PERMISSIONS)
+                 if value != "off"}
+        if wrong:
+            raise TargetWriteLockdownError(
+                f"Target-write lockdown is NOT in force: {wrong}. Refusing to continue.")
+
+    def gdb_lock(self):
+        """The mutex serializing GDB traffic. Background pollers must hold it.
+
+        The permission switches are GDB-process-global, so an unlocked evaluator
+        running while a write window is open would evaluate its caller-supplied
+        expression with the guard OFF. VariableTracker is such a poller.
+        """
+        return self._gdb_lock
+
+    @contextlib.contextmanager
+    def write_window(self, reason: str, *, registers: bool = False):
+        """Permit target writes for the duration of a genuine write operation.
+
+        Holds the GDB lock for the whole window, nests by depth, and asserts the
+        lift actually took effect BEFORE yielding -- not paranoia: ``load`` sends
+        vFlashErase to the target and only then hits the permission check, so a
+        download that meets the guard mid-flight leaves the first flash block
+        erased and unprogrammed. The guard must never be discovered mid-operation.
+
+        Restore is an unconditional re-set to "off" in ``finally``, never "put
+        back what I remembered", so a nested or concurrent mistake cannot leave
+        the session unlocked. A restore failure tears the session down -- but it
+        must never mask the body's own exception, because the body's error is the
+        one that explains what happened.
+        """
+        with self._gdb_lock:
+            outermost = self._write_window_depth == 0
+            self._write_window_depth += 1
+            if registers:
+                self._write_window_registers += 1
+            try:
+                if outermost:
+                    self._set_permission("may-write-memory", "on")
+                if registers and self._write_window_registers == 1:
+                    self._set_permission("may-write-registers", "on")
+                if outermost:
+                    if self._show_permission("may-write-memory") != "on":
+                        raise TargetWriteLockdownError(
+                            f"write_window({reason}) could not enable target writes; "
+                            "refusing to start the operation.")
+                    if registers and self._show_permission("may-write-registers") != "on":
+                        raise TargetWriteLockdownError(
+                            f"write_window({reason}) could not enable register writes; "
+                            "refusing to start the operation.")
+                yield
+            finally:
+                if registers:
+                    self._write_window_registers = max(0, self._write_window_registers - 1)
+                self._write_window_depth = max(0, self._write_window_depth - 1)
+                if self._write_window_depth == 0 and self.gdb:
+                    try:
+                        for name in TARGET_WRITE_PERMISSIONS:
+                            self._set_permission(name, "off")
+                    except Exception:
+                        # Do NOT raise here: an exception in finally replaces the
+                        # body's, hiding the real failure. Tear the session down
+                        # instead -- a dead session is safe, a silently unlocked
+                        # one is the vulnerability back.
+                        self.stop_gdb()
 
     def stop_gdb(self):
         if self.gdb:
@@ -335,8 +484,17 @@ class GdbClientManager:
         """
         responses = []
         responses.extend(self.load_symbols(filepath))
-        # Download (flash) the firmware to target memory
-        download = self._execute_until_result("-target-download", self.timeouts.get("download"))
+        # Registers as well as memory: after the last vFlashWrite GDB sets the PC to
+        # the ELF entry point with a P packet, so with may-write-registers off the
+        # flash completes and the command still reports "Writing to registers is not
+        # allowed (regno 15)" -- a false failure on a real flash.
+        #
+        # The window opens BEFORE -target-download, and write_window asserts the lift
+        # landed before yielding. That ordering is not stylistic: GDB delivers
+        # vFlashErase and only THEN consults the permission, so a download that meets
+        # the guard mid-flight leaves the first flash block erased and unprogrammed.
+        with self.write_window(f"flash download({filepath})", registers=True):
+            download = self._execute_until_result("-target-download", self.timeouts.get("download"))
         responses.extend(ensure_ok(download, f"flash download({filepath})", require_result=True))
         return responses
 
@@ -844,22 +1002,27 @@ class GdbClientManager:
         """
         self._validate_memory_width(width_bits)
         literal = parse_int_literal(value)
-        if literal is None:
-            c_type = {
-                8: "uint8_t",
-                16: "uint16_t",
-                32: "uint32_t",
-                64: "uint64_t",
-            }[width_bits]
-            resp = self.execute_cli_command(f"set {{{c_type}}}{address} = {value}")
-        else:
-            # The address stays an expression ("&buf", "main + 4") and argv-splits
-            # exactly like the read side, so it needs the same quoting.
-            resp = self.execute_command(
-                f"-data-write-memory-bytes {gdb_expr(address)} "
-                f"{encode_memory_bytes(literal, width_bits)}",
-                timeout_sec=self.timeouts.get("memory"),
-            )
+        # The one and only target-memory-write primitive in this class: write_memory,
+        # typed_memory(action=write), setup_swo, configure_debug_freeze and the DWT
+        # enables all arrive here. Scoping the lift to this method keeps the permitted
+        # window exactly one MI command wide.
+        with self.write_window(f"write to {address}"):
+            if literal is None:
+                c_type = {
+                    8: "uint8_t",
+                    16: "uint16_t",
+                    32: "uint32_t",
+                    64: "uint64_t",
+                }[width_bits]
+                resp = self.execute_cli_command(f"set {{{c_type}}}{address} = {value}")
+            else:
+                # The address stays an expression ("&buf", "main + 4") and argv-splits
+                # exactly like the read side, so it needs the same quoting.
+                resp = self.execute_command(
+                    f"-data-write-memory-bytes {gdb_expr(address)} "
+                    f"{encode_memory_bytes(literal, width_bits)}",
+                    timeout_sec=self.timeouts.get("memory"),
+                )
         return ensure_ok(resp, f"write to {address}")
 
     def get_responses(self, timeout_sec: float = 0.1):

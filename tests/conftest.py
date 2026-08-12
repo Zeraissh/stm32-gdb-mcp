@@ -27,9 +27,26 @@ class FakeGdb:
         self._response = response if response is not None else [
             {"type": "result", "message": "done", "payload": None}
         ]
+        # start_gdb applies the target-write lockdown and REFUSES TO RUN if GDB
+        # cannot honour it, so a double that ignores -gdb-show is not a stand-in
+        # for GDB -- it is a stand-in for a GDB the server would reject. These
+        # start "on" because that is a real GDB's default; the lockdown turns
+        # them off, and a test can read them back to prove it did.
+        self.permissions = {
+            "may-write-memory": "on",
+            "may-write-registers": "on",
+            "may-call-functions": "on",
+        }
 
     def write(self, command, timeout_sec=1.0):
         self.commands.append((command, timeout_sec))
+        parts = command.split()
+        if len(parts) == 3 and parts[0] == "-gdb-set" and parts[1] in self.permissions:
+            self.permissions[parts[1]] = parts[2]
+            return [{"type": "result", "message": "done", "payload": None}]
+        if len(parts) == 2 and parts[0] == "-gdb-show" and parts[1] in self.permissions:
+            return [{"type": "result", "message": "done",
+                     "payload": {"value": self.permissions[parts[1]]}}]
         return list(self._response)
 
     def get_gdb_response(self, timeout_sec=0.1, raise_error_on_timeout=False):

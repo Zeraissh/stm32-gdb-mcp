@@ -15,8 +15,16 @@ class VariableTracker:
         while self.tracking:
             start = time.time()
             try:
-                # Live memory read via GDB
-                resp = self.gdb_client.read_variable(self.variable)
+                # Live memory read via GDB.
+                #
+                # The lock is load-bearing, not tidiness. GDB's may-write-* switches
+                # are process-global, so any window in which write_memory or
+                # flash_firmware has writes enabled is a window in which THIS thread
+                # would evaluate a caller-supplied expression with the guard OFF --
+                # i.e. track_variable(variable="*(unsigned int*)0x40003000 = 0x5555")
+                # would land its write by waiting for someone else's flash.
+                with self.gdb_client.gdb_lock():
+                    resp = self.gdb_client.read_variable(self.variable)
                 self.data.append({
                     "time": start,
                     "response": resp
