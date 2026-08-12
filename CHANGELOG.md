@@ -1,6 +1,6 @@
 # Changelog / 更新日志
 
-## [Unreleased]
+## [0.12.0] - 2026-08-12
 
 The v0.11.0 lockdown denies target writes through GDB. These close the two write
 paths that lockdown does not cover, because they are the server's OWN write paths --
