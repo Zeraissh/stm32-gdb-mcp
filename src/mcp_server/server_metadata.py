@@ -66,7 +66,10 @@ Key rules (the target must cooperate):
   is configured (debug_profile hub.channel), hub(action=power, state=off/on) is the only
   in-band way to force a re-enumeration - and hub(action=data) un-enumerates a probe
   without rebooting its board. Called directly, both need confirm=true - always in the
-  default confirm guard mode, and in ANY mode while a GDB server is live on that port.
+  default confirm guard mode, and in ANY mode while THIS session's own GDB server is live
+  on that port. That check sees only the calling session, so on a rack it will not notice
+  another session mid-flash on the same channel; isolate first with
+  hub(action=data, exclusive=true).
   reset_target(strategy="cold") and recover_session's hub ladder are the one deliberate
   exception: they cut power with no confirm argument, because naming them is the
   confirmation, and they stop the session before the cut. Every decision is audited
@@ -160,6 +163,13 @@ def server_info() -> dict:
     info: dict[str, str | bool] = {
         "name": "stm32-gdb-mcp",
         "version": __version__,
+        # Where the code REALLY is. install_root is three levels up from this file,
+        # which is the repo root for the src-layout checkout but the parent of
+        # site-packages for a plain `pip install` -- a directory that does not
+        # contain mcp_server at all. It is still worth reporting because it is the
+        # root the git probe uses, but package_dir is the one an agent should look
+        # at, so it must not be the one that is sometimes wrong.
+        "package_dir": os.path.dirname(os.path.abspath(__file__)),
         "install_root": root,
         "compact_mode": bool(os.environ.get("STM32_GDB_MCP_COMPACT")),
     }

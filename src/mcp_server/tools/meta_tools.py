@@ -14,8 +14,9 @@ from .registry import register
 @register(Tool(
     name="mcp_info",
     description="Identifies THIS running stm32-gdb-mcp server: release version, git commit, the "
-                "directory the code was imported from, whether compact mode is hiding tools, and "
-                "how many tools this build advertises. Needs NO debug session, NO probe and NO "
+                "package directory the code was imported from (plus the install root the git "
+                "probe used), whether compact mode is hiding tools, and how many tools this "
+                "build advertises versus how many exist. Needs NO debug session, NO probe and NO "
                 "target — call it the moment a tool you expect is missing or behaves like an older "
                 "build, instead of guessing which checkout the client actually launched.",
     inputSchema={"type": "object", "properties": {}}

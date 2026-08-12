@@ -12,7 +12,7 @@ from ..debug_config import (
     validate_debug_config as validate_debug_config_data,
 )
 from ..project_inspector import inspect_project as inspect_project_dir
-from ..tool_response import content_success
+from ..tool_response import content_error, content_success
 from .context import ToolContext
 from .registry import register
 
@@ -58,8 +58,22 @@ from .registry import register
 def set_debug_profile(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     # merge is a control flag, not a profile field: forwarding it would trip the
     # store's unknown-field check (ALLOWED_FIELDS).
+    merge = arguments.get("merge", False)
+    if not isinstance(merge, bool):
+        # Refuse rather than coerce. bool("false") is True, so guessing turns the
+        # flag ON for a caller who spelled out "off" -- and both directions are
+        # destructive here: a wrong True keeps a stale hub.map channel that can
+        # power-cycle the wrong board, a wrong False discards the probe identity
+        # this flag exists to protect.
+        return [content_error(
+            f"merge must be a boolean, got {type(merge).__name__} {merge!r}. It is not "
+            "coerced: bool(\"false\") is True, and guessing wrong either keeps a stale "
+            "hub.map entry or destroys the discovered probe identity.",
+            code="invalid_argument",
+            suggested_next_actions=["debug_profile(action=get)"],
+        )]
     values = {key: value for key, value in arguments.items() if key != "merge"}
-    profile = ctx.debug_profile.update(values, merge=bool(arguments.get("merge")))
+    profile = ctx.debug_profile.update(values, merge=merge)
     svd_path = profile.get("svd_path")
     if svd_path:
         ctx.svd_parser.load(svd_path)

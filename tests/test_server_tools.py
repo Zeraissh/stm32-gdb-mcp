@@ -4090,3 +4090,28 @@ def test_read_only_families_still_resolve_by_name():
     assert read_only_dispatch_target("hub", {"action": "cycle"}) is None
     assert read_only_dispatch_target("call_read", {}) is None
 
+
+
+def test_set_debug_profile_refuses_a_non_boolean_merge_instead_of_coercing():
+    # bool("false") is True, so coercion turns the flag ON for a caller who spelled out
+    # "off". Both directions are destructive: a wrong True keeps a stale hub.map channel
+    # that can power-cycle the wrong board, a wrong False discards the probe identity.
+    payload = _payload(asyncio.run(handle_call_tool(
+        "debug_profile", {"action": "set", "mcu": "STM32L431", "merge": "false"})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "invalid_argument"
+    assert "bool(\"false\") is True" in payload["error"]["message"]
+
+
+def test_mcp_info_reports_the_package_directory_that_really_holds_the_code():
+    # install_root is three levels up from server_metadata.py: the repo root for a
+    # src-layout checkout, but the PARENT of site-packages for a plain pip install --
+    # a directory that does not contain mcp_server at all. package_dir always does.
+    from pathlib import Path
+
+    payload = _payload(asyncio.run(handle_call_tool("mcp_info", {})))
+
+    package_dir = Path(payload["data"]["package_dir"])
+    assert (package_dir / "server_metadata.py").is_file()
+    assert package_dir.name == "mcp_server"

@@ -40,6 +40,8 @@ class DebugProfileStore:
         for key, value in values.items():
             if value is None:
                 continue
+            if key == "hub":
+                value = _canonical_hub(value)
             current = self._profile.get(key)
             if merge and isinstance(current, dict) and isinstance(value, dict):
                 self._profile[key] = deep_merge(current, value)
@@ -49,6 +51,34 @@ class DebugProfileStore:
 
     def get(self) -> dict:
         return dict(self._profile)
+
+
+def _canonical_hub(hub):
+    """Store ``hub.map`` under one spelling of the channel key.
+
+    The key is a channel number, but how it is spelled depends on where the block
+    came from: YAML writes ints (``3:``, as examples/configs/rack_hub.yaml does),
+    while anything arriving over MCP writes strings, because JSON object keys are
+    always strings. ``deep_merge`` matches keys exactly, so a stored ``{3: ...}``
+    and an incoming ``{"3": ...}`` would NOT merge -- they would coexist as two
+    entries for one channel, and ``merge=True`` would silently fail at the single
+    job it exists for, leaving the label on an entry with no probe identity.
+
+    Canonicalising on write fixes it at the one point every writer passes through;
+    ``hub._normalize_map`` already accepts either spelling on read, so nothing
+    downstream changes. Keys that are not channel numbers are left exactly as they
+    are -- validation is ``debug_config``'s job, and silently dropping them here
+    would hide a typo instead of reporting it.
+    """
+    if not isinstance(hub, dict) or not isinstance(hub.get("map"), dict):
+        return hub
+    canonical = {}
+    for key, entry in hub["map"].items():
+        try:
+            canonical[str(int(key))] = entry
+        except (TypeError, ValueError):
+            canonical[key] = entry
+    return {**hub, "map": canonical}
 
 
 def deep_merge(base: dict, overlay: dict) -> dict:

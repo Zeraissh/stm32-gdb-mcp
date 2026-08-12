@@ -123,8 +123,11 @@ Then point a session at its port (1-based, matching the hub's silkscreen):
 
 `hub(action=describe)` is read-only and also reports per-port voltage/current on models
 with an ADC. `hub(action=power/data/cycle)` requires `confirm=true` while the guard is in
-its default `confirm` mode, and — in every mode, `guard: allow` included — whenever a GDB
-server is live on that port: cutting power mid-flash is how a board becomes a brick.
+its default `confirm` mode, and — in every mode, `guard: allow` included — whenever **the
+calling session's own** GDB server is live on that port: cutting power mid-flash is how a
+board becomes a brick. Note the scope: the check sees only the session making the call, so
+on a rack it will **not** notice that a *different* session is mid-flash on that channel.
+Isolate with `hub(action=data, exclusive=true)` before touching a neighbour's port.
 One exception is deliberate, and it is not a hole. The tools whose whole purpose is
 removing power — `reset_target(strategy="cold")` and `recover_session`'s escalation
 ladder — confirm on their own behalf, because naming them *is* the confirmation, and both
@@ -132,8 +135,10 @@ stop the GDB session before the cut instead of yanking VBUS out from under it. T
 decisions land in the same audit trail `hub(action=describe)` returns. Set `guard: allow`
 for scripted CI. /
 `hub(action=describe)` 是只读的，带 ADC 的型号还会返回每端口电压/电流。默认 `confirm`
-模式下，`hub(action=power/data/cycle)` 必须显式传 `confirm=true`；该端口上有活跃 GDB 服务时，
-任何模式（含 `guard: allow`）下都强制要求——烧录中途断电正是把板子变砖的方式。
+模式下，`hub(action=power/data/cycle)` 必须显式传 `confirm=true`；**调用方自己的会话**在该端口
+上有活跃 GDB 服务时，任何模式（含 `guard: allow`）下都强制要求——烧录中途断电正是把板子变砖的
+方式。注意这条检查的范围：它只看发起调用的那个会话，因此在机架上**不会**发现另一个会话正在该
+通道上烧录。要动邻居的端口，请先用 `hub(action=data, exclusive=true)` 做隔离。
 有一处例外是刻意设计的，但它不是漏洞：以断电为本职的工具——`reset_target(strategy="cold")`
 与 `recover_session` 的恢复阶梯——会自行确认，因为点名调用它们本身就是确认；两者都会先停掉
 GDB 会话再断电，而不是从活跃会话脚下拔掉 VBUS。它们的决定同样进入 `hub(action=describe)`

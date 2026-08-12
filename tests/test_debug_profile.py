@@ -90,3 +90,35 @@ def test_debug_profile_store_merge_still_rejects_unknown_fields():
     else:
         raise AssertionError("Expected ValueError")
 
+
+
+def test_merge_survives_a_yaml_loaded_map_with_integer_channel_keys():
+    # The bug this pins: YAML writes hub.map keys as ints (examples/configs/rack_hub.yaml
+    # uses `1:`), while anything arriving over MCP writes strings, because JSON object
+    # keys are always strings. deep_merge matches keys exactly, so before canonicalising
+    # the two spellings coexisted as SEPARATE entries -- the label landed on a new entry
+    # with no probe identity, which is precisely the loss merge=True exists to prevent.
+    store = DebugProfileStore()
+    store.update({"hub": {"map": {3: {"serial": "AAA", "key": "instance_id:USB-3"}}}})
+
+    store.update({"hub": {"map": {"3": {"label": "TC"}}}}, merge=True)
+
+    channel_map = store.get()["hub"]["map"]
+    assert list(channel_map) == ["3"], "one channel must stay one entry, whatever the key type"
+    assert channel_map["3"] == {"serial": "AAA", "key": "instance_id:USB-3", "label": "TC"}
+
+
+def test_replacing_a_yaml_loaded_map_also_canonicalises_the_keys():
+    # Replace must canonicalise too, or the NEXT merge hits the same mismatch.
+    store = DebugProfileStore()
+    store.update({"hub": {"map": {3: {"label": "TC"}}}})
+
+    assert list(store.get()["hub"]["map"]) == ["3"]
+
+
+def test_a_non_numeric_map_key_is_left_alone_rather_than_silently_dropped():
+    # Validation belongs to debug_config; swallowing a typo here would hide it.
+    store = DebugProfileStore()
+    store.update({"hub": {"map": {"spare": {"label": "x"}}}})
+
+    assert list(store.get()["hub"]["map"]) == ["spare"]
