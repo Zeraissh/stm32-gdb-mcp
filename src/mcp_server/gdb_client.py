@@ -216,6 +216,24 @@ class GdbClientManager:
     def execute_command(self, cmd: str, timeout_sec: float | None = None):
         if not self.gdb:
             raise RuntimeError("GDB is not running.")
+        # pygdbmi writes the string verbatim plus one trailing newline, so an
+        # embedded newline splits ONE command into two and GDB runs the remainder
+        # as a fresh CLI line -- and GDB's CLI has `shell`. Verified against
+        # arm-none-eabi-gdb 15.2.90: a location of 'list main\nshell echo ... > f'
+        # spawned a host process and wrote the file. Every caller string this class
+        # interpolates -- expressions, linespecs, regexes, monitor arguments, file
+        # paths -- funnels through here, which is why the check belongs here and
+        # not in one wrapper per call site: the tpiu_name interpolated into a
+        # `monitor` command in logging_tools is not covered by any expression
+        # helper, and neither is the next one somebody adds.
+        #
+        # Quoting does not help: gdb_expr escapes backslash and quote for argv
+        # splitting, and a raw newline passes straight through it.
+        if any(ch in cmd for ch in "\n\r\x00"):
+            raise ValueError(
+                "GDB command may not contain a newline or NUL byte -- one command per "
+                f"write. This is a command-injection guard, not a formatting rule: {cmd!r}"
+            )
         if timeout_sec is None:
             timeout_sec = self.timeouts.get("default")
         return self._note_state(self.gdb.write(cmd, timeout_sec=timeout_sec))
