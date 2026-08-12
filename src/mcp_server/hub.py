@@ -307,12 +307,14 @@ class HubManager:
     # Releasing on idle fixes that without anyone having to remember: the next
     # call reconnects transparently, because connection was always lazy.
 
-    def _arm_idle_release_locked(self) -> None:
+    def _arm_idle_release_locked(self, delay: float | None = None) -> None:
         if not self._idle_release_sec:
             return
         if self._idle_timer is not None:
             self._idle_timer.cancel()
-        self._idle_timer = threading.Timer(self._idle_release_sec, self._release_if_idle)
+        self._idle_timer = threading.Timer(
+            self._idle_release_sec if delay is None else max(delay, 0.001),
+            self._release_if_idle)
         self._idle_timer.daemon = True
         self._idle_timer.start()
 
@@ -320,8 +322,16 @@ class HubManager:
         with self._lock:
             if self._hub is None:
                 return
-            if time.monotonic() - self._touched_at < self._idle_release_sec:
-                return  # a call landed while the timer was in flight
+            remaining = self._idle_release_sec - (time.monotonic() - self._touched_at)
+            if remaining > 0:
+                # Re-arm for what is left; do NOT just return. threading.Timer waits
+                # on an Event, whose clock is not guaranteed to agree with
+                # time.monotonic(), so a timer can fire a hair early -- and a plain
+                # return would then leave nothing scheduled and hold the port
+                # forever, which is the exact failure this feature exists to
+                # prevent. Windows CI caught it; this machine's timing did not.
+                self._arm_idle_release_locked(remaining)
+                return
             if self._we_turned_off:
                 # NEVER release while this process owes a port its power back.
                 # Holding the handle is exactly what lets shutdown restore it, and

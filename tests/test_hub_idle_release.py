@@ -15,14 +15,14 @@ from conftest import FakeHub
 from mcp_server.hub import HubManager
 
 
-def _manager(hub, idle_sec=0.05):
+def _manager(hub, idle_sec=0.2):
     manager = HubManager(backend_factory=lambda exclude_ports=None: hub)
     manager._idle_release_sec = idle_sec
     manager.configure({"port": "COM7"})
     return manager
 
 
-def _wait_until(predicate, timeout=2.0):
+def _wait_until(predicate, timeout=5.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
@@ -77,7 +77,7 @@ def test_it_never_releases_while_it_owes_a_channel_its_power_back(fake_hub):
     manager.power(1, "off", confirm=True)
     assert manager._we_turned_off == {1}
 
-    time.sleep(0.25)   # well past the idle window
+    time.sleep(0.6)   # well past the idle window
 
     assert manager._hub is not None, "must keep the handle that can restore power"
 
@@ -85,7 +85,7 @@ def test_it_never_releases_while_it_owes_a_channel_its_power_back(fake_hub):
 def test_it_releases_again_once_the_power_is_restored(fake_hub):
     manager = _manager(fake_hub)
     manager.power(1, "off", confirm=True)
-    time.sleep(0.2)
+    time.sleep(0.6)
     assert manager._hub is not None
 
     manager.power(1, "on", confirm=True)
@@ -121,7 +121,7 @@ def test_idle_release_can_be_disabled(fake_hub):
     manager = _manager(fake_hub, idle_sec=0)
     manager.describe()
 
-    time.sleep(0.2)
+    time.sleep(0.5)
 
     assert manager._hub is not None
     assert manager._idle_timer is None
@@ -130,3 +130,28 @@ def test_idle_release_can_be_disabled(fake_hub):
 @pytest.fixture
 def fake_hub():
     return FakeHub()
+
+
+def test_a_timer_that_fires_early_re_arms_instead_of_giving_up(fake_hub):
+    # threading.Timer waits on an Event whose clock need not agree with
+    # time.monotonic(), so it can fire a hair early. Returning without re-arming
+    # then leaves NOTHING scheduled and holds the port forever -- the exact failure
+    # this feature exists to prevent. Windows CI caught it; local timing did not.
+    #
+    # Driven directly rather than by sleeping, so it pins the logic instead of
+    # racing the clock.
+    manager = _manager(fake_hub, idle_sec=10.0)
+    manager.describe()
+    first = manager._idle_timer
+    assert first is not None
+
+    manager._release_if_idle()          # as if the timer fired 10 s early
+
+    assert manager._hub is not None, "must not release before the window elapses"
+    assert manager._idle_timer is not None, "must still have a timer scheduled"
+    assert manager._idle_timer is not first, "must have re-armed, not kept the fired one"
+
+    # And it still releases once the window really has passed.
+    manager._touched_at -= 20.0
+    manager._release_if_idle()
+    assert manager._hub is None
