@@ -5,7 +5,7 @@ from mcp.types import TextContent, Tool
 from ..reset_strategy import resolve_reset_command
 from ..stop_event import was_already_halted, was_already_running
 from ..tool_response import content_error, content_success
-from ._helpers import core_state, hub_binding, recover_current_session
+from ._helpers import core_state, recover_current_session, resolve_hub_binding
 from .context import ToolContext
 from .registry import register
 
@@ -65,7 +65,7 @@ def reset_target(ctx: ToolContext, arguments: dict) -> list[TextContent]:
 
     data: dict = {"message": "Target reset", "reset": resolved}
     if resolved.get("requires_power_cycle"):
-        binding = hub_binding(ctx)
+        binding, why = resolve_hub_binding(ctx)
         if binding is None:
             # Downgrading to a warm reset here would report success for something
             # that did not happen -- the exact false-success shape reset_strategy
@@ -84,12 +84,14 @@ def reset_target(ctx: ToolContext, arguments: dict) -> list[TextContent]:
                           f'session ({load}), or use strategy="default".')
                 actions = [load, 'reset_target(strategy="default")']
             else:
-                remedy = ('This session HAS a hub block, but no channel resolved from it. '
-                          'hub(action=describe) shows the map beside the live channel list, and '
-                          'hub(action=power, state="on") reports the precise reason. Or use '
-                          'strategy="default".')
-                actions = ["hub(action=describe)", "hub(action=discover, apply=true)",
-                           'reset_target(strategy="default")']
+                # Say what actually failed. The binding can be missing with a
+                # perfectly good map -- the hub extra not installed, the device
+                # unreachable, the channel outside the hub's range -- and sending
+                # someone to re-run discovery in those cases is the wrong way.
+                remedy = (f'This session HAS a hub block, but the binding could not be '
+                          f'resolved: {why}. hub(action=describe) shows the map beside the '
+                          f'live channel list. Or use strategy="default".')
+                actions = ["hub(action=describe)", 'reset_target(strategy="default")']
             return [content_error(
                 "strategy=\"cold\" needs a programmable USB hub channel for this session, and "
                 "none is mapped. A cold reset is not a command, it is removing power -- "

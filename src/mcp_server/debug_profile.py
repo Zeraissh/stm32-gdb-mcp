@@ -46,11 +46,34 @@ class DebugProfileStore:
             if merge and isinstance(current, dict) and isinstance(value, dict):
                 self._profile[key] = deep_merge(current, value)
             else:
-                self._profile[key] = value
+                # Copy, do not adopt. Storing the caller's dict by reference let a
+                # later mutation of THEIR object rewrite stored state -- and the
+                # state that matters most here is hub.map, which decides the
+                # channel power gets cut on.
+                self._profile[key] = _deep_copy(value)
         return self.get()
 
     def get(self) -> dict:
-        return dict(self._profile)
+        # Deep, not dict(): a shallow copy hands out the SAME nested dicts the
+        # store holds, so a caller editing the profile it just read would silently
+        # edit the profile. deep_merge already returns fresh dicts; this closes the
+        # other two doors.
+        return _deep_copy(self._profile)
+
+
+def _deep_copy(value):
+    """Copy dicts and lists all the way down; leave everything else alone.
+
+    Not ``copy.deepcopy``: profile values are JSON-shaped (they arrive over MCP and
+    go back out the same way), and deepcopy would also try to clone anything exotic
+    that ever finds its way in, which is a failure mode nobody wants in the middle
+    of a debug session.
+    """
+    if isinstance(value, dict):
+        return {key: _deep_copy(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_deep_copy(item) for item in value]
+    return value
 
 
 def _canonical_hub(hub):
