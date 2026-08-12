@@ -1,6 +1,6 @@
 # Changelog / 更新日志
 
-## [Unreleased]
+## [0.10.0] - 2026-08-12
 
 ### `mcp_info`: which build is actually serving you / `mcp_info`：到底是哪个构建在服务
 
