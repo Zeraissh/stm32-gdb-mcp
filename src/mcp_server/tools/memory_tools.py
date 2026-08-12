@@ -12,6 +12,7 @@ from ..debug_experiments import (
 from ..debug_experiments import (
     compare_expressions_after_action as run_expression_comparison,
 )
+from ..gdb_client import parse_int_literal
 from ..gdb_decode import decode_evaluated_value, decode_memory_bytes
 from ..mi_guard import find_mi_error
 from ..tool_response import content_error, content_success
@@ -364,16 +365,79 @@ def read_typed_memory(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     }
 ))
 def write_typed_memory(ctx: ToolContext, arguments: dict) -> list[TextContent]:
-    resp = ctx.gdb_client.write_typed_memory(arguments["address"], arguments["value"], arguments["width_bits"])
+    address = arguments["address"]
+    value = arguments["value"]
+    width_bits = arguments["width_bits"]
+    # This used to be a two-line passthrough that never consulted the guard, so
+    # typed_memory(action=write) reached the IWDG key register that write_memory
+    # refuses -- the same region DEFAULT_PROTECTED_REGIONS exists to protect --
+    # and left no audit entry. Two write tools, one of them guarded, is not a
+    # policy; it is a bypass with a different name.
+    resolved, resolve_error = _resolve_write_address(ctx, address)
+    if resolved is None:
+        # Fail closed. Refusing an unresolvable address is the only honest option:
+        # the alternative is writing to somewhere the policy was never asked about.
+        return [content_error(
+            f"Cannot check the write guard for address {address!r}: {resolve_error}. "
+            "typed_memory(action=write) resolves its address before writing so the "
+            "protected-region policy applies to it, and refuses when it cannot.",
+            code="address_unresolved",
+            suggested_next_actions=["read_memory", "inspect_symbol"],
+        )]
+    decision = ctx.memory_guard.evaluate(resolved, width_bits=width_bits)
+    ctx.memory_guard.audit("write_typed_memory", address, value, decision)
+    if decision["action"] == "blocked":
+        return [content_error(
+            f"Write to {address} (resolved 0x{resolved:08x}) blocked: {decision['reason']}",
+            code="memory_write_blocked",
+            raw_response=decision,
+            suggested_next_actions=["set_write_policy", "get_write_audit_log"],
+        )]
+    if decision["action"] == "simulated":
+        return [content_success({
+            "message": "Typed memory write simulated (dry_run)",
+            "address": address, "resolved_address": f"0x{resolved:08x}",
+            "value": value, "width_bits": width_bits, "guard": decision,
+        })]
+    resp = ctx.gdb_client.write_typed_memory(address, value, width_bits)
     return [content_success(
         {
             "message": "Typed memory written",
-            "address": arguments["address"],
-            "value": arguments["value"],
-            "width_bits": arguments["width_bits"],
+            "address": address,
+            "resolved_address": f"0x{resolved:08x}",
+            "value": value,
+            "width_bits": width_bits,
+            "guard": decision,
         },
         raw_response=resp,
     )]
+
+
+def _resolve_write_address(ctx: ToolContext, address):
+    """The numeric address a typed write will land on, or (None, why-not).
+
+    A plain literal is taken as-is. Anything else is an expression -- ``&buf``,
+    ``main + 4``, and equally ``(char *)0x40003000``, which is why a literal-only
+    check would be a bypass rather than a guard -- so GDB resolves it. That read is
+    permitted under the target-write lockdown; only writes are denied.
+    """
+    literal = parse_int_literal(address)
+    if literal is not None:
+        return literal, None
+    try:
+        resp = ctx.gdb_client.read_variable(f"(unsigned long)({address})")
+    except Exception as exc:  # noqa: BLE001 - reported to the caller, not swallowed
+        return None, f"{type(exc).__name__}: {exc}"
+    gdb_error = find_mi_error(resp)
+    if gdb_error:
+        return None, gdb_error
+    decoded = decode_evaluated_value(resp)
+    if decoded is None:
+        return None, "GDB returned no value for it"
+    resolved = parse_int_literal(decoded)
+    if resolved is None:
+        return None, f"GDB evaluated it to {decoded!r}, which is not an address"
+    return resolved, None
 
 
 @register(Tool(
