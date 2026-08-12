@@ -135,3 +135,61 @@ def test_every_arg_guarded_tool_is_actually_in_the_read_only_surface():
 
     assert READ_ONLY_ARG_GUARDS
     assert set(READ_ONLY_ARG_GUARDS) <= read_only_tool_names()
+
+
+# --- 3. the release review's findings ----------------------------------------
+
+def test_merge_true_does_not_adopt_the_callers_nested_dict():
+    # The first fix put the copy only on the replace branch; deep_merge's adopt
+    # branch still stored the caller's dict by reference -- and that branch runs
+    # whenever the key is NEW in the stored block, which is the common case for the
+    # one thing merge=True exists for: adding a hub.map entry.
+    from mcp_server.debug_profile import DebugProfileStore
+
+    store = DebugProfileStore()
+    store.update({"hub": {"port": "COM7"}})
+    caller = {"map": {"3": {"serial": "AAA"}}}
+
+    store.update({"hub": caller}, merge=True)
+    caller["map"]["3"]["serial"] = "TAMPERED"
+    caller["map"]["9"] = {"label": "injected"}
+
+    assert store.get()["hub"]["map"] == {"3": {"serial": "AAA"}}
+
+
+@pytest.mark.parametrize("tool", ["sample_pc", "read_cycle_counter"])
+def test_an_argument_guarded_tool_is_not_advertised_as_read_only(tool):
+    # The gate is per-call; the ANNOTATION is per-tool, and the client suppresses
+    # its approval prompt on that annotation for a DIRECT call the gate never sees.
+    # Promising readOnlyHint=True for a tool that can write DEMCR and halt a running
+    # core is a promise the tool cannot keep.
+    from mcp_server.tool_surface import _annotations
+
+    annotations = _annotations(tool)
+
+    assert annotations.readOnlyHint is False
+    # Not destructive either: it enables a trace bit, it does not erase anything.
+    assert annotations.destructiveHint is False
+
+
+def test_a_refused_arg_guarded_call_names_the_form_that_works():
+    # "'sample_pc' is not a read-only tool" was false -- it IS in READ_ONLY_TOOLS --
+    # and hid the fact that a form call_read accepts exists. In compact mode
+    # sample_pc is hidden, so call_read is the only route to it.
+    payload = _payload(asyncio.run(handle_call_tool(
+        "call_read", {"tool": "sample_pc", "args": {"count": 256}})))
+
+    message = payload["error"]["message"]
+    assert "is not a read-only tool" not in message
+    assert "enable=false" in message
+    assert "DEMCR" in message
+
+
+def test_the_accepted_actions_list_agrees_with_the_gate():
+    # read_only_actions classified by target-tool membership alone, so it reported
+    # 'cycle' as read-only while the gate refused that very call -- telling the
+    # agent the action it had just used was the one that would have worked.
+    from mcp_server.tool_surface import read_only_actions
+
+    assert "cycle" in read_only_actions("read_registers", {})
+    assert "cycle" not in read_only_actions("read_registers", {"enable": True})

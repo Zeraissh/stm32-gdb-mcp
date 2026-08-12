@@ -56,8 +56,11 @@ class DebugProfileStore:
     def get(self) -> dict:
         # Deep, not dict(): a shallow copy hands out the SAME nested dicts the
         # store holds, so a caller editing the profile it just read would silently
-        # edit the profile. deep_merge already returns fresh dicts; this closes the
-        # other two doors.
+        # edit the profile.
+        #
+        # All THREE doors have to be shut, and an earlier version of this comment
+        # claimed deep_merge already handled its own -- it did not. Copies live at:
+        # update()'s replace branch, deep_merge()'s adopt branch, and here.
         return _deep_copy(self._profile)
 
 
@@ -119,5 +122,11 @@ def deep_merge(base: dict, overlay: dict) -> dict:
         if isinstance(current, dict) and isinstance(value, dict):
             merged[key] = deep_merge(current, value)
         else:
-            merged[key] = value
+            # Copy here too. This branch runs whenever the key is NEW in the stored
+            # block or changes type -- which is the common case for the one thing
+            # merge=True exists for, adding a hub.map entry -- and adopting the
+            # caller's dict by reference reopens exactly the aliasing the copy on
+            # the replace path closes, on exactly the key that decides which
+            # channel gets power cut.
+            merged[key] = _deep_copy(value)
     return merged

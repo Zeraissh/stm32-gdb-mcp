@@ -59,6 +59,9 @@ from .tool_surface import (
     read_only_actions as _read_only_actions,
 )
 from .tool_surface import (
+    read_only_arg_hint as _read_only_arg_hint,
+)
+from .tool_surface import (
     read_only_dispatch_target as _read_only_dispatch_target,
 )
 from .tools import REGISTRY as _TOOL_REGISTRY
@@ -519,9 +522,17 @@ async def handle_call_tool(name: str, arguments: dict | None) -> CallToolResult:
         # back to `call` -- the approval-prompting path -- for pure reads, which
         # inverts the whole point of call_read. Unknown/missing action => refused.
         if _read_only_dispatch_target(inner, arguments.get("args")) is None:
-            readable = _read_only_actions(inner)
+            inner_args = arguments.get("args")
+            readable = _read_only_actions(inner, inner_args)
+            arg_hint = _read_only_arg_hint(inner, inner_args)
             if inner is None:
                 detail = "call_read needs a 'tool' name."
+            elif arg_hint:
+                # An argument-guarded tool IS read-only in another form. Saying
+                # only "not a read-only tool" would be false and would hide the
+                # form that works -- and in compact mode, where the tool is
+                # hidden, call_read is the only route to it.
+                detail = arg_hint
             elif readable:
                 detail = (f"'{inner}' is read-only only for "
                           f"{_MERGED[inner][0]}={'|'.join(readable)}; this call is not.")

@@ -1,5 +1,67 @@
 # Changelog / 更新日志
 
+## [Unreleased]
+
+The v0.11.0 lockdown denies target writes through GDB. These close the two write
+paths that lockdown does not cover, because they are the server's OWN write paths --
+the ones that legitimately lift the guard. / 以下两条修复的是服务器自身的写路径，
+即那些本就有权解锁的路径，锁定管不到它们。
+
+### BEHAVIOUR CHANGE: two calls that used to succeed can now be refused / 行为变更
+
+- **`typed_memory(action=write)` can now fail with `address_unresolved`.** It resolves
+  its address before writing so the protected-region policy applies, and refuses rather
+  than write somewhere the policy was never asked about. A plain hex literal is
+  unaffected; a symbolic address costs one extra GDB evaluation. /
+  `typed_memory(action=write)` 现在会先解析地址再写，无法解析则拒绝；十六进制字面量不受影响。
+- **`read_cycle_counter` and `sample_pc` are no longer advertised as read-only.** They
+  write `DEMCR.TRCENA`, and GDB cannot write it while the core runs, so they halt a
+  running target. Their `readOnlyHint` is now `false` — an annotation describes the TOOL,
+  and the client suppresses its prompt on that annotation for a direct call no
+  per-argument gate ever sees. `call_read` still admits the form that provably only
+  reads (`enable=false`), so a profiling run against an already-enabled DWT stays
+  prompt-free; the refusal for the other form names that escape instead of claiming the
+  tool is not read-only. / 这两个工具不再被标注为只读：标注描述的是**工具**，而客户端正是
+  据此免去提示的；`call_read` 仍接受可证明只读的 `enable=false` 形式。
+
+### Two write paths the lockdown does not cover / 锁定覆盖不到的两条写路径
+
+- **`typed_memory(action=write)` never consulted `MemoryWriteGuard`.** A two-line
+  passthrough, so it wrote the IWDG key register `write_memory` refuses — the same
+  `DEFAULT_PROTECTED_REGIONS` entry — with no audit entry. The defect was not "typed
+  writes are unguarded" in the abstract: the **same address got two different answers**
+  depending on which tool you reached for. A literal-only check would have been a bypass
+  rather than a guard, because `(char *)0x40003000` sails past `int(address, 0)`. /
+  同一地址在两个写工具下得到不同答案；只查字面量等于没查。
+- **An argument could smuggle a write past `call_read`.** The gate is now per-argument,
+  and the all-actions-read shortcut checks those guards too — `read_registers` maps
+  `core`/`fault`/`cycle`, all read-only, so it used to return the family name without
+  ever looking at the arguments. / 门禁改为按参数判定，并堵住了"全只读族"的捷径。
+
+### Three defects from the same audit / 同一次审计发现的三个缺陷
+
+- **A non-object `args` escaped as a crash.** `call_read(tool=..., args="oops")` raised
+  `AttributeError` *out of* `handle_call_tool`, so the client saw a protocol-level
+  failure where every other bad input gets a structured error. `call` had it too. /
+  非对象 `args` 会抛出未捕获异常而非结构化错误。
+- **`DebugProfileStore` shared its dicts with callers, in both directions.** `get()`
+  shallow-copied, so editing the profile you just read edited the profile; `update()`
+  stored the caller's dict by reference. The state that matters is `hub.map` — it decides
+  which channel gets power cut. / 存储与调用方双向共享字典，而 `hub.map` 决定给哪个通道断电。
+- **`reset_target`'s cold path blamed the map for every missing binding**, including a
+  pinned channel with an unreachable hub — sending the user to re-run discovery against a
+  map that was already correct. / 报错把用户指向错误方向。
+
+### Verified on hardware / 硬件验证
+
+The v0.11.0 lockdown was exercised end to end on real STM32L151 targets: 20 checks with
+no flash write (reads work, expression writes refused including the parenthesised escape,
+a permitted RAM write through the window with the guard restored, the DWT enable,
+symbols/breakpoint/step), and 11 more covering **a real flash under the lockdown** —
+which settles the two claims only a flash can: no false failure from the entry-point `P`
+packet, and no half-erased first block, with `compare-sections` clean afterwards. /
+锁定已在真实 STM32L151 上完整验证：20 项非破坏性检查 + 11 项真实烧录检查。
+
 ## [0.11.0] - 2026-08-12
 
 Three routes out of a "read-only" tool, found by auditing what `call_read` forwards
