@@ -62,7 +62,11 @@ def read_variable(ctx: ToolContext, arguments: dict) -> list[TextContent]:
 
 @register(Tool(
     name="read_memory",
-    description="Reads a block of memory from the target.",
+    description="Reads a block of memory from the target. Returns the raw bytes in memory "
+                "order, plus value_le -- the same bytes as one little-endian value -- for a "
+                "1/2/4/8-byte read. Use value_le for a peripheral register: the raw string "
+                "arrives least-significant-byte first, so reversing it by hand is where bit "
+                "positions get misread.",
     inputSchema={
         "type": "object",
         "properties": {
@@ -91,16 +95,46 @@ def read_memory(ctx: ToolContext, arguments: dict) -> list[TextContent]:
             suggested_next_actions=["halt_execution", "self_check", "capture_state"],
             core_state=core_state(ctx.gdb_client),
         )]
+    data = {
+        "message": "Memory read",
+        "address": arguments["address"],
+        "length": arguments["length"],
+        "bytes": contents,
+    }
+    word = _little_endian_word(contents, arguments["length"])
+    if word is not None:
+        data["value_le"] = word
     return [content_success(
-        {
-            "message": "Memory read",
-            "address": arguments["address"],
-            "length": arguments["length"],
-            "bytes": contents,
-        },
+        data,
         raw_response=resp,
         core_state=core_state(ctx.gdb_client),
     )]
+
+
+def _little_endian_word(hex_bytes, length):
+    """``hex_bytes`` re-read as one little-endian value, when they form a word.
+
+    Cortex-M is little-endian, so a register read as raw bytes comes back least
+    significant byte FIRST: RCC_CSR = 0x0C000000 arrives as "0000000c". Reversing
+    that by hand is easy to get wrong, and getting it wrong changes which BITS you
+    think are set -- on RCC_CSR that is the difference between "a sticky reset flag
+    cleared" and "nothing happened", i.e. between a proven power cycle and a
+    misread one.
+
+    Only 1/2/4/8-byte reads get this. For any other length a single scalar would be
+    an interpretation nobody asked for, so the field is simply absent rather than
+    guessed -- and a caller that wants raw order still has ``bytes``.
+    """
+    if length not in (1, 2, 4, 8) or not isinstance(hex_bytes, str):
+        return None
+    cleaned = hex_bytes.strip().replace(" ", "")
+    if len(cleaned) != length * 2:
+        return None
+    try:
+        raw = bytes.fromhex(cleaned)
+    except ValueError:
+        return None
+    return f"0x{int.from_bytes(raw, 'little'):0{length * 2}x}"
 
 
 @register(Tool(

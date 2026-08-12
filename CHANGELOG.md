@@ -1,5 +1,30 @@
 # Changelog / 更新日志
 
+## [0.10.1] - 2026-08-12
+
+### Two traps found while proving a cold boot on real hardware / 真机验证冷启动时踩到的两个坑
+
+- **`read_memory` now returns `value_le`.** Cortex-M is little-endian, so a peripheral
+  register arrives least-significant-byte first: RCC_CSR = `0x0C000000` reads back as
+  `"0000000c"`. Reversing that by hand is where bit positions get misread, and on RCC_CSR
+  that is the difference between "a sticky reset flag cleared" — a proven power cycle — and
+  "nothing happened". Only 1/2/4/8-byte reads get the field; for any other length a single
+  scalar would be an invented reading, so it is absent rather than guessed, and `bytes`
+  still carries the raw order. /
+  `read_memory` 新增 `value_le`：Cortex-M 是小端，外设寄存器按字节读回时最低字节在前，手工翻转
+  正是位序被读错的地方。仅 1/2/4/8 字节的读取会附带该字段。
+- **`strategy="software"` now warns that RCC_CSR will not record it.** It issues
+  `soft_reset_halt`, which resets the core through the debug unit without asserting
+  SYSRESETREQ — so the sticky reset flags never move. That silently breaks the standard
+  cold-boot proof, which is "a warm reset sets SFTRST, then a real power cut clears it
+  again": measured on an STM32L151, `software` left RCC_CSR at `0x0C000000` while `default`
+  moved it to `0x1C000000`, so the cold reset that follows looks like it did nothing. The
+  warning fires only where `soft_reset_halt` is actually used — stlink and jlink map
+  `software` onto `monitor reset halt`, where the claim would be false. /
+  `strategy="software"` 现在会提示 RCC_CSR 不会记录该复位：`soft_reset_halt` 经调试单元复位、
+  不触发 SYSRESETREQ，粘滞标志不动，会让随后的冷启动看起来毫无效果。该提示只在真正使用
+  `soft_reset_halt` 的组合下出现。
+
 ## [0.10.0] - 2026-08-12
 
 ### `mcp_info`: which build is actually serving you / `mcp_info`：到底是哪个构建在服务

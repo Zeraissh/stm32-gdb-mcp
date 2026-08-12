@@ -114,3 +114,28 @@ def test_a_single_word_write_inside_an_allowed_region_is_unaffected():
     guard.set_policy(add_allow=[{"name": "iwdg_ok", "start": 0x40003000, "end": 0x400033FF}])
 
     assert guard.evaluate(0x40003000, width_bits=32)["action"] == "write"
+
+
+def test_read_memory_decodes_a_word_as_little_endian():
+    # Cortex-M is little-endian, so RCC_CSR = 0x0C000000 comes back as "0000000c".
+    # Reversing that by hand is where bit positions get misread -- and on RCC_CSR that
+    # is the difference between "a sticky reset flag cleared" (a proven power cycle)
+    # and "nothing happened".
+    from mcp_server.tools.memory_tools import _little_endian_word
+
+    assert _little_endian_word("0000000c", 4) == "0x0c000000"
+    assert _little_endian_word("0000001c", 4) == "0x1c000000"
+    assert _little_endian_word("34122301", 4) == "0x01231234"
+    assert _little_endian_word("cd", 1) == "0xcd"
+    assert _little_endian_word("3412", 2) == "0x1234"
+
+
+def test_read_memory_omits_the_word_when_the_bytes_are_not_one():
+    # A 3-byte or 12-byte read has no single scalar reading; inventing one would be an
+    # interpretation nobody asked for, and `bytes` still carries the raw order.
+    from mcp_server.tools.memory_tools import _little_endian_word
+
+    assert _little_endian_word("001122", 3) is None
+    assert _little_endian_word("0011", 4) is None, "length must match the bytes returned"
+    assert _little_endian_word("zzzz", 2) is None
+    assert _little_endian_word(None, 4) is None

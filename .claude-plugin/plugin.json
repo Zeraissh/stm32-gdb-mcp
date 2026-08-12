@@ -1,7 +1,7 @@
 {
   "name": "stm32-debug-kit",
   "displayName": "STM32 Debug Kit",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Autonomous STM32 hardware debugging for AI agents: the stm32-gdb-mcp server (GDB + OpenOCD/ST-Link/J-Link) plus skills for the debug loop and write-time SWO/ITM instrumentation. A SessionStart hook locks the golden rules in at conversation start.",
   "author": { "name": "Zeraissh", "url": "https://github.com/Zeraissh/stm32-gdb-mcp" },
   "homepage": "https://github.com/Zeraissh/stm32-gdb-mcp",

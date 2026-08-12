@@ -4115,3 +4115,37 @@ def test_mcp_info_reports_the_package_directory_that_really_holds_the_code():
     package_dir = Path(payload["data"]["package_dir"])
     assert (package_dir / "server_metadata.py").is_file()
     assert package_dir.name == "mcp_server"
+
+
+def test_read_memory_payload_carries_the_little_endian_word(monkeypatch):
+    # The unit test for _little_endian_word passes even if nothing calls it, so this
+    # drives the whole handler: the field has to reach the envelope. Bytes here are the
+    # real RCC_CSR read from an STM32L151 -- 0x0C000000 arrives least-significant-byte
+    # first, which is exactly the reversal this field exists to stop people doing by hand.
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def read_memory(self, address, length):
+            return [{"type": "result", "payload": {"memory": [{"contents": "0000000c"}]}}]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool(
+        "read_memory", {"address": "0x40023834", "length": 4})))
+
+    assert payload["data"]["bytes"] == "0000000c", "raw memory order must still be there"
+    assert payload["data"]["value_le"] == "0x0c000000"
+
+
+def test_read_memory_payload_omits_the_word_for_a_non_word_length(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def read_memory(self, address, length):
+            return [{"type": "result", "payload": {"memory": [{"contents": "001122"}]}}]
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool(
+        "read_memory", {"address": "0x20000000", "length": 3})))
+
+    assert payload["data"]["bytes"] == "001122"
+    assert "value_le" not in payload["data"], "a 3-byte read has no single scalar reading"

@@ -540,7 +540,7 @@
       "type": "string"
      },
      "strategy": {
-      "description": "Optional reset strategy: default, under_reset, software, or cold (hub power cycle).",
+      "description": "Optional reset strategy: default, under_reset, software, or cold (hub power cycle). \"software\" issues soft_reset_halt, which resets through the debug unit WITHOUT asserting SYSRESETREQ -- so RCC_CSR does not record it and its sticky reset flags do not move; use \"default\" when the reset must be visible there, e.g. when proving a cold boot by watching a sticky flag disappear. \"under_reset\" is currently an alias of \"default\". The result's `note` says which of these applied to the call you actually made.",
       "type": "string"
      }
     },
@@ -878,7 +878,7 @@
     "openWorldHint": false,
     "readOnlyHint": true
    },
-   "description": "Reads a block of memory from the target.",
+   "description": "Reads a block of memory from the target. Returns the raw bytes in memory order, plus value_le -- the same bytes as one little-endian value -- for a 1/2/4/8-byte read. Use value_le for a peripheral register: the raw string arrives least-significant-byte first, so reversing it by hand is where bit positions get misread.",
    "inputSchema": {
     "properties": {
      "address": {

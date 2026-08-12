@@ -39,7 +39,14 @@ def _stop_event_next_actions(event: dict) -> list[str]:
         "type": "object",
         "properties": {
             "halt": {"type": "boolean", "description": "If true, halts the CPU immediately after reset."},
-            "strategy": {"type": "string", "description": "Optional reset strategy: default, under_reset, software, or cold (hub power cycle)."},
+            "strategy": {"type": "string", "description":
+                "Optional reset strategy: default, under_reset, software, or cold (hub power "
+                "cycle). \"software\" issues soft_reset_halt, which resets through the debug "
+                "unit WITHOUT asserting SYSRESETREQ -- so RCC_CSR does not record it and its "
+                "sticky reset flags do not move; use \"default\" when the reset must be visible "
+                "there, e.g. when proving a cold boot by watching a sticky flag disappear. "
+                "\"under_reset\" is currently an alias of \"default\". The result's `note` says "
+                "which of these applied to the call you actually made."},
             "command": {"type": "string", "description": "Optional custom GDB monitor reset command."}
         },
         "required": ["halt"]

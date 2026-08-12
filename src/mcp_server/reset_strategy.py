@@ -79,4 +79,20 @@ def resolve_reset_command(
             "For a real cold boot (power actually removed), use strategy=\"cold\" with a "
             "programmable USB hub configured."
         )
+    # soft_reset_halt resets the core THROUGH THE DEBUG UNIT and never asserts
+    # SYSRESETREQ, so the reset does not reach RCC_CSR and its sticky flag field
+    # does not move. Invisible until you try to PROVE a reset happened -- and it
+    # silently breaks the standard cold-boot proof, which is "a warm reset sets
+    # SFTRST, then a real power cut clears it again". Measured on an STM32L151:
+    # strategy="software" left RCC_CSR at 0x0C000000 while strategy="default" moved
+    # it to 0x1C000000, so a cold reset compared against the software one looks
+    # like it did nothing.
+    if resolved["command"].endswith("soft_reset_halt"):
+        soft_note = (
+            "'software' issues soft_reset_halt, which resets the core through the debug unit "
+            "WITHOUT asserting SYSRESETREQ -- so RCC_CSR does not record it and its sticky reset "
+            "flags do not move. Use strategy=\"default\" when the reset has to be visible in "
+            "RCC_CSR, e.g. when proving a cold boot by watching a sticky flag disappear."
+        )
+        resolved["note"] = f"{resolved['note']} {soft_note}" if resolved.get("note") else soft_note
     return resolved
