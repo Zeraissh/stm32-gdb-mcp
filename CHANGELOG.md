@@ -1,5 +1,60 @@
 # Changelog / 更新日志
 
+## [0.11.0] - 2026-08-12
+
+Three routes out of a "read-only" tool, found by auditing what `call_read` forwards
+without an approval prompt. They are one attack surface with three entrances; closing
+any one alone would not have been enough. /
+本次修复三条从"只读"工具逃逸的路径——它们是同一攻击面的三个入口，只堵其一都不够。
+
+### BREAKING: the server refuses to start without the target-write lockdown / 破坏性变更
+
+`start_gdb` now applies `set may-write-memory off`, `may-write-registers off` and
+`may-call-functions off`, and **raises** if GDB will not honour them (needs GNU gdb 7.2+).
+Unlike the mi-async and charset settings, which degrade on purpose, a failure here is the
+security property going missing while the server reports itself guarded. /
+`start_gdb` 现在会施加三个写权限开关，GDB 不支持则**拒绝启动**（需 GNU gdb 7.2+）。
+
+### Host command execution through a caller string / 通过调用方字符串执行主机命令
+
+- **Newline injection.** pygdbmi writes the command verbatim plus one newline, so an
+  embedded newline split one command into two and GDB ran the remainder as a fresh CLI
+  line — and GDB's CLI has `shell`. Verified against arm-none-eabi-gdb 15.2.90: a
+  `location` of `main\nshell echo ... > f` spawned a host process and wrote the file.
+  Now refused in `execute_command`, where every caller string this class interpolates
+  converges — a per-tool wrapper would already have missed the `tpiu_name` interpolated
+  into a `monitor` command. /
+  换行注入：一条命令被劈成两条，后半段被当作新的 CLI 行执行，而 GDB 有 `shell`。
+- **`$_shell`.** A GDB convenience *function*, so it runs inside an ordinary expression —
+  no newline, and none of the `may-write-*` switches restrict it. Confirmed with all three
+  off: GDB reached its shell machinery and returned the child's exit status. Refused by
+  name; the `$_` namespace is deliberately NOT banned wholesale, because `$_CHIPNAME.tpiu`
+  is an OpenOCD variable this server legitimately sends. /
+  `$_shell` 是便利函数，运行在普通表达式内，三个开关都管不到它。按名封禁，未一刀切。
+
+### Target writes through a "read-only" expression / 通过"只读"表达式写目标
+
+- `read_variable(name="*(unsigned int *)0x40003000 = 0x5555")` wrote the IWDG key register
+  — a region `MemoryWriteGuard` exists to protect — through a tool annotated
+  `readOnlyHint=True`, with no audit entry. Lexical filtering was rejected because it
+  loses: `sizeof(1) + (g = 888)` and `x/2i main + 0*(g = 1010)` both land the assignment.
+  GDB's switches refuse inside its target layer *before a packet exists* — measured against
+  an RSP stub, the wire log holds only read packets. /
+  只读工具可写 IWDG 键寄存器且不留审计；词法过滤会被括号绕过，故改用 GDB 自身开关。
+- **Verified on hardware**, because a target-less GDB answers "No registers." and proves
+  nothing: on a live STM32L151, `$pc = 0` → `Writing to registers is not allowed (regno 15)`
+  while `$pc`, `$sp` and flash reads all still work. /
+  已在真机验证：写被拒、读照常。
+- Legitimate writes lift the guard through a scoped window that asserts the lift landed
+  **before** anything is erased — GDB delivers `vFlashErase` and only then consults the
+  permission, so a download meeting the guard mid-flight would leave the first flash block
+  erased and unprogrammed. Flashing lifts registers too: GDB sets the PC to the entry point
+  with a P packet after the last `vFlashWrite`, so otherwise a *successful* flash reports a
+  false failure. `may-call-functions` has no lift path at all — nothing here calls a target
+  function, so the one side effect that RESUMES the core stays closed. /
+  合法写入通过受控窗口解锁，并在擦除前断言生效；烧录同时需要寄存器权限；
+  `may-call-functions` 永不解锁。
+
 ## [0.10.1] - 2026-08-12
 
 ### Two traps found while proving a cold boot on real hardware / 真机验证冷启动时踩到的两个坑
