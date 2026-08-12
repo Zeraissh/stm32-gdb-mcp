@@ -234,6 +234,24 @@ class GdbClientManager:
                 "GDB command may not contain a newline or NUL byte -- one command per "
                 f"write. This is a command-injection guard, not a formatting rule: {cmd!r}"
             )
+        # $_shell is a GDB *convenience function*, so it runs inside an ordinary
+        # expression -- no newline needed, which means the check above does not see
+        # it, and no `set may-write-memory/registers/functions off` covers it either
+        # (verified: with all three off, -data-evaluate-expression "$_shell(...)"
+        # still reached GDB's shell machinery and returned the child's exit status).
+        # That makes it a second, independent route from a caller-supplied
+        # expression to a host process.
+        #
+        # Deliberately NOT a blanket ban on the "$_" namespace: `$_CHIPNAME.tpiu` is
+        # an OpenOCD TCL variable this server legitimately sends inside a `monitor`
+        # command (swo_config.py:61), and the other GDB $_ functions -- $_streq,
+        # $_gdb_setting, $_regex -- are pure. Widen this only for a function that
+        # actually reaches outside GDB.
+        if "$_shell" in cmd:
+            raise ValueError(
+                "GDB command may not use $_shell: it runs a host command, and no GDB "
+                f"'may-write-*' setting restricts it. Command: {cmd!r}"
+            )
         if timeout_sec is None:
             timeout_sec = self.timeouts.get("default")
         return self._note_state(self.gdb.write(cmd, timeout_sec=timeout_sec))

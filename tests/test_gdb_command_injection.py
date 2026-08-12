@@ -92,3 +92,33 @@ def test_ordinary_commands_still_go_through(client):
     client.execute_command("info functions ^HAL_")
 
     assert len(client.gdb.writes) == 2
+
+
+def test_shell_convenience_function_is_refused(client):
+    # $_shell runs a host command from inside an ORDINARY expression -- no newline, so
+    # the check above never sees it, and none of GDB's may-write-memory /
+    # may-write-registers / may-call-functions settings restrict it. Verified against
+    # arm-none-eabi-gdb 15.2.90 with all three off: the call still reached GDB's shell
+    # machinery and returned the child's exit status. It happens to fail on this
+    # Windows build with a charset-conversion error, which is an accident of the build,
+    # not a defence.
+    with pytest.raises(ValueError, match=r"may not use \$_shell"):
+        client.read_variable('$_shell("echo pwned")')
+
+    assert client.gdb.writes == []
+
+
+def test_the_openocd_chipname_variable_is_not_caught_by_the_shell_guard(client):
+    # $_CHIPNAME.tpiu is an OpenOCD TCL variable this server sends inside a monitor
+    # command (swo_config.py). A blanket ban on the "$_" namespace would break SWO
+    # setup, so the guard names one function rather than a prefix.
+    client.execute_command("monitor $_CHIPNAME.tpiu configure -protocol uart")
+
+    assert client.gdb.writes == ["monitor $_CHIPNAME.tpiu configure -protocol uart"]
+
+
+@pytest.mark.parametrize("expr", ['$_streq("a", "a")', '$_gdb_setting("may-write-memory")'])
+def test_pure_convenience_functions_still_work(client, expr):
+    client.execute_command(f"-data-evaluate-expression {expr}")
+
+    assert len(client.gdb.writes) == 1
