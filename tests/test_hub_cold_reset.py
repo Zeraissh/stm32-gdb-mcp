@@ -290,3 +290,29 @@ def test_cold_reset_records_its_own_confirmation_in_the_audit_trail(monkeypatch,
     assert power_off[0]["channel"] == 2
     assert power_off[0]["acknowledged"] is True
 
+
+
+def test_cold_reset_without_a_hub_block_names_the_per_session_load(hub_session):
+    # The branch that fires on a rack: the config was loaded into a DIFFERENT session,
+    # so this one has no hub block at all. Telling it to "map a channel" would teach
+    # hard-coding a channel per session instead of loading the map where it is missing.
+    payload = _call("reset_target", {"halt": True, "strategy": "cold"})
+
+    assert payload["error"]["code"] == "cold_reset_unavailable"
+    assert "has no hub block" in payload["error"]["message"]
+    assert "per-session" in payload["error"]["message"]
+    assert payload["suggested_next_actions"][0].startswith("debug_config(action=load")
+
+
+def test_cold_reset_with_a_hub_block_that_resolves_to_nothing_says_so_instead(hub_session):
+    # The else-branch: a hub block EXISTS, so the remedy is not "load the config" --
+    # it is "look at what the map actually selects on". Before this test the branch was
+    # never executed by the suite at all.
+    hub_session.session.profile.update({"hub": {"guard": "confirm"}})
+
+    payload = _call("reset_target", {"halt": True, "strategy": "cold"})
+
+    assert payload["error"]["code"] == "cold_reset_unavailable"
+    assert "HAS a hub block" in payload["error"]["message"]
+    assert "hub(action=describe)" in payload["suggested_next_actions"]
+    assert not any(a.startswith("debug_config(action=load") for a in payload["suggested_next_actions"])

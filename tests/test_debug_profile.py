@@ -1,3 +1,6 @@
+from types import SimpleNamespace
+from typing import cast
+
 from mcp_server.debug_profile import DebugProfileStore
 
 
@@ -122,3 +125,36 @@ def test_a_non_numeric_map_key_is_left_alone_rather_than_silently_dropped():
     store.update({"hub": {"map": {"spare": {"label": "x"}}}})
 
     assert list(store.get()["hub"]["map"]) == ["spare"]
+
+
+def test_set_debug_profile_strips_merge_before_it_reaches_the_real_store():
+    # The tool-layer tests all run against conftest's FakeProfile, which has no
+    # ALLOWED_FIELDS, so nothing there notices if the strip is removed. Drive the REAL
+    # store the way the handler does: forwarding `merge` as a field would raise.
+    from mcp_server.tools import config_tools
+    from mcp_server.tools.context import ToolContext
+
+    store = DebugProfileStore()
+    ctx = SimpleNamespace(debug_profile=store, svd_parser=SimpleNamespace(load=lambda path: None))
+
+    config_tools.set_debug_profile(cast(ToolContext, ctx), {"mcu": "STM32L431", "merge": True})
+
+    assert store.get() == {"mcu": "STM32L431"}, "merge is a control flag, never a stored field"
+
+
+def test_labelling_a_channel_keeps_the_discovered_identity_in_the_real_store():
+    # The end-to-end version of this runs through conftest's FakeProfile, which
+    # re-implements the merge branch -- so it can pass while production is broken. This
+    # one exercises DebugProfileStore itself.
+    from mcp_server.tools import config_tools
+    from mcp_server.tools.context import ToolContext
+
+    store = DebugProfileStore()
+    store.update({"hub": {"map": {"3": {"serial": "AAA", "key": "instance_id:USB-3"}}}})
+    ctx = SimpleNamespace(debug_profile=store, svd_parser=SimpleNamespace(load=lambda path: None))
+
+    config_tools.set_debug_profile(
+        cast(ToolContext, ctx), {"hub": {"map": {"3": {"label": "TC"}}}, "merge": True})
+
+    assert store.get()["hub"]["map"]["3"] == {
+        "serial": "AAA", "key": "instance_id:USB-3", "label": "TC"}

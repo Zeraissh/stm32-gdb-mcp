@@ -382,3 +382,22 @@ def test_a_hub_block_with_nothing_to_select_on_points_at_discovery(fake_hub):
 
     assert "hub(action=discover, apply=true)" in excinfo.value.next_actions
 
+
+
+def test_a_label_miss_never_names_one_label_as_the_one_to_use(fake_hub):
+    # It used to end with `session="{labels[0]}"` -- the alphabetically first label in
+    # the whole rack. This code cannot see which channel the caller's board is on, so
+    # naming one is a coin flip, and acting on it selects (and power-cycles) whichever
+    # board that label belongs to. Same wrong-board hazard the rest of this work is about.
+    spec = {"map": {1: {"label": "aaa"}, 2: {"label": "zzz"}}}
+    manager = _manager(fake_hub, spec)
+
+    with pytest.raises(HubUnavailableError) as excinfo:
+        manager.channel_for(profile={"hub": spec}, session_id="TC")
+
+    message = str(excinfo.value)
+    assert 'session="aaa"' not in message
+    assert 'session="zzz"' not in message
+    # It must still name every candidate, so the human can pick the right one.
+    assert "['aaa', 'zzz']" in message
+    assert "power-cycle" in message

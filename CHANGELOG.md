@@ -93,6 +93,18 @@
 - `reset_target(strategy="cold")` said the same thing and now names the per-session load too. /
   `reset_target(strategy="cold")` 的同类报错也一并修正。
 
+### The unmapped-channel message named someone else's board / 报错点名了别人的板子
+
+- The label-miss branch ended with `Start this board's session under its label
+  (session="<label>")`, filled in with `sorted(labels)[0]` — the alphabetically first label
+  in the whole rack. Nothing in that code can see which channel the caller's board is on, so
+  on the shipped 4-board example it advises binding to channel 1 regardless. Acting on it
+  selects, and power-cycles, whichever board owns that label — the same wrong-board hazard
+  the rest of this work exists to remove. It now names every candidate and says plainly that
+  picking is the human's call, and why. /
+  label 不匹配的报错原本会填入按字母序第一个 label 并让你照着用，而该代码根本不知道你的板子
+  在哪个通道——照做会选中并断电到别人的板子。现在只列出全部候选，并说明为何必须由人来选。
+
 ### Docs: the hub power interlock was overstated / 文档：Hub 断电联锁的表述过强
 
 - README, `rack_hub.yaml` and the runtime `SERVER_INSTRUCTIONS` all claimed that cutting power

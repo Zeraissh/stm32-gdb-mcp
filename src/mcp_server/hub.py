@@ -157,12 +157,18 @@ class HubPowerGuard:
         board in the middle of a flash.
 
         ``confirm`` asserts intent and does not have to arrive as a caller's
-        argument. The entry points that exist to remove power -- cold reset,
-        recover_session's escalation ladder, discovery's data toggles -- pass it
-        themselves, because naming one of those IS the confirmation, and each drops
-        or refuses the debug session before the cut. Those decisions are audited
-        exactly like an argument-confirmed one, which is what keeps the exception
-        honest rather than a hole.
+        argument. Three entry points pass it themselves, because naming one of them
+        IS the confirmation, and their decisions are audited exactly like an
+        argument-confirmed one. They do NOT all protect the session the same way,
+        and the difference matters:
+
+        - ``reset_target(strategy="cold")`` and ``recover_session``'s escalation
+          ladder stop the debug session before the cut and re-establish it after.
+        - ``hub(action=discover)`` refuses outright while a session is live --
+          unless ``force=true``, which bypasses this guard entirely
+          (``_GuardBypass`` passes ``confirm=True`` and never passes
+          ``live_session``). On that path the caller has overridden the interlock
+          knowingly; nothing downstream re-checks it.
         """
         if self.mode == "dry_run":
             return {"action": "simulated", "reason": "dry_run mode is active",
@@ -481,9 +487,11 @@ class HubManager:
             return HubUnavailableError(
                 f"hub channel unmapped: hub.map defines the labels {labels}, and a label is "
                 f"compared against the debug session name EXACTLY -- this call ran under {tried}, "
-                f"which is none of them.{also} Start this board's session under its label "
-                f'(session="{labels[0]}"), or change that label in the config to the session name '
-                f"you are using.",
+                f"which is none of them.{also} Start this board's session under ITS OWN label, or "
+                f"change that channel's label to the session name you are using. Which of those "
+                f"labels is yours is not something this code can know -- it cannot see which "
+                f"channel your board is on, and naming the wrong one would select, and power-cycle, "
+                f"a different board.",
                 next_actions=["hub(action=describe)", "debug_profile(action=get)"],
             )
 
