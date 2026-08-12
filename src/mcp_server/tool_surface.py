@@ -208,6 +208,26 @@ def read_only_tool_names() -> set[str]:
     return names - READ_ONLY_DISPATCH_EXCLUDED
 
 
+# A few tools are read-only only for certain ARGUMENT values. Deliberately tiny
+# and hand-written rather than a general mechanism: an argument that flips a tool
+# between reading and writing is a design smell, so the table should stay short
+# enough to read in one go, and adding to it should feel like a decision.
+READ_ONLY_ARG_GUARDS = {
+    # enable=true writes DEMCR.TRCENA -- and GDB cannot write it while the core
+    # runs, so it HALTS a running target to do so. Reading the counter without
+    # enabling it touches nothing.
+    "read_cycle_counter": lambda args: not args.get("enable"),
+    # Same DWT enable, but here the default is on: the tool description tells
+    # callers to leave enable=true, so only an explicit false is read-only.
+    "sample_pc": lambda args: args.get("enable") is False,
+}
+
+
+def _args_are_read_only(target: str, args: dict) -> bool:
+    guard = READ_ONLY_ARG_GUARDS.get(target)
+    return True if guard is None else bool(guard(args))
+
+
 def read_only_actions(name: object) -> list[str]:
     """The discriminator values of family ``name`` that resolve to a read-only tool.
 
@@ -246,15 +266,26 @@ def read_only_dispatch_target(name: object, args: object = None) -> str | None:
     if not isinstance(name, str) or name in READ_ONLY_DISPATCH_EXCLUDED:
         return None
     allowed = read_only_tool_names()
+    argdict = args if isinstance(args, dict) else {}
     family = MERGED.get(name)
     if family is None:
-        return name if name in allowed else None
-    discriminator, mapping = family[0], family[1]
-    if all(target in allowed for target in mapping.values()):
+        if name not in allowed or not _args_are_read_only(name, argdict):
+            return None
         return name
-    choice = args.get(discriminator) if isinstance(args, dict) else None
+    discriminator, mapping = family[0], family[1]
+    choice = argdict.get(discriminator)
     target = mapping.get(choice) if isinstance(choice, str) else None
-    return target if target in allowed else None
+    if target is None:
+        # Missing or unknown discriminator. Returning the family name is only safe
+        # when EVERY action reads under these arguments -- checking the arg guards
+        # here too is what stops read_registers(enable=true) from riding the
+        # all-actions-read shortcut past the guard on read_cycle_counter.
+        if all(t in allowed and _args_are_read_only(t, argdict) for t in mapping.values()):
+            return name
+        return None
+    if target not in allowed or not _args_are_read_only(target, argdict):
+        return None
+    return target
 
 
 def _with_session(schema: dict) -> dict:

@@ -123,6 +123,10 @@ class FakeGdbClient:
         self.calls.append(("read_variable", expression))
         return [{"payload": {"value": self.expressions[expression]}}]
 
+    def write_typed_memory(self, address, value, width_bits=32):
+        self.calls.append(("write_typed_memory", address, value, width_bits))
+        return [{"type": "result", "message": "done", "payload": None}]
+
 
 class FakeGdbManager:
     """GdbServerManager stand-in: alive flag, recorded start args, canned logs."""
