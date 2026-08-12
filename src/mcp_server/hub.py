@@ -49,6 +49,12 @@ MUTATING_ACTIONS = ("power_off", "power_on", "data_off", "data_on", "power_cycle
 
 INSTALL_HINT = "pip install 'stm32-gdb-mcp[hub]'"
 
+# Seconds of no hub traffic after which the control port is handed back. Long
+# enough that an ordinary sequence of hub calls never pays a reconnect, short
+# enough that a session which merely looked at the hub is not still holding it
+# minutes later. Override per-manager for tests; 0 disables.
+IDLE_RELEASE_SEC = 30.0
+
 
 class HubUnavailableError(RuntimeError):
     """The hub cannot be reached: extra not installed, no device, or link down.
@@ -238,6 +244,11 @@ class HubManager:
         # Channels this process powered off and has not powered back on. Restored
         # on shutdown so a killed MCP server never leaves a bench board dark.
         self._we_turned_off: set[int] = set()
+        # Hand the control port back after this long with no hub traffic, so one
+        # session cannot lock every other one out of the bench. 0 disables it.
+        self._idle_release_sec: float = IDLE_RELEASE_SEC
+        self._idle_timer: threading.Timer | None = None
+        self._touched_at: float = 0.0
         self.guard = HubPowerGuard()
 
     # ---------------------------------------------------------------- config
@@ -274,6 +285,8 @@ class HubManager:
 
     def _ensure(self) -> HubBackend:
         with self._lock:
+            self._touched_at = time.monotonic()
+            self._arm_idle_release_locked()
             if self._hub is not None and not self._link_lost:
                 if self._hub.is_connected():
                     return self._hub
@@ -281,6 +294,45 @@ class HubManager:
             if self._link_lost:
                 self._disconnect_locked()
             return self._connect_locked()
+
+    # ------------------------------------------------------- idle release
+    #
+    # The vendor library holds a CROSS-PROCESS lock on the hub's USB-CDC control
+    # port, and this connection is lazy and then cached forever -- so one MCP
+    # session that merely ran hub(action=describe) locked every other session out
+    # of the hub until its process exited, with no way to hand it back. Measured:
+    # a second process got "PortBusyError: Port COM7 is already in use by another
+    # process".
+    #
+    # Releasing on idle fixes that without anyone having to remember: the next
+    # call reconnects transparently, because connection was always lazy.
+
+    def _arm_idle_release_locked(self) -> None:
+        if not self._idle_release_sec:
+            return
+        if self._idle_timer is not None:
+            self._idle_timer.cancel()
+        self._idle_timer = threading.Timer(self._idle_release_sec, self._release_if_idle)
+        self._idle_timer.daemon = True
+        self._idle_timer.start()
+
+    def _release_if_idle(self) -> None:
+        with self._lock:
+            if self._hub is None:
+                return
+            if time.monotonic() - self._touched_at < self._idle_release_sec:
+                return  # a call landed while the timer was in flight
+            if self._we_turned_off:
+                # NEVER release while this process owes a port its power back.
+                # Holding the handle is exactly what lets shutdown restore it, and
+                # close() only restores while connected -- dropping the link here
+                # would leave a board dark with nothing able to notice.
+                self._arm_idle_release_locked()
+                return
+            # Power is deliberately NOT touched: an idle disconnect is not a
+            # shutdown. Re-powering here would silently undo a deliberate
+            # hub(action=power, state="off") just because the agent paused.
+            self._disconnect_locked()
 
     def _default_factory(self, exclude_ports=None):
         """Open the vendor device: an explicit port when configured, else a scan.
@@ -354,6 +406,12 @@ class HubManager:
             self._link_lost = True
 
     def _disconnect_locked(self) -> None:
+        # Cancel first: a timer left running past a disconnect is a thread that
+        # wakes up holding nothing, and on shutdown it would keep the process alive
+        # for its remaining delay.
+        if self._idle_timer is not None:
+            self._idle_timer.cancel()
+            self._idle_timer = None
         hub, self._hub = self._hub, None
         self._channels = ()
         self._info = {}
