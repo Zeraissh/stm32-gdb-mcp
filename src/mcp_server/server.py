@@ -490,6 +490,21 @@ async def handle_call_tool(name: str, arguments: dict | None) -> CallToolResult:
     if name == "batch":
         return call_tool_result(await _run_batch(arguments))
 
+    if name in ("call", "call_read"):
+        # `args` is forwarded as the inner tool's whole argument mapping, so a
+        # non-object here reached `arguments.get("session")` on a str/list and
+        # raised AttributeError OUT of handle_call_tool -- a protocol-level crash
+        # where every other bad input gets a structured envelope. Checked once for
+        # both dispatchers, before either looks at anything else.
+        forwarded = arguments.get("args", {})
+        if forwarded is not None and not isinstance(forwarded, dict):
+            return call_tool_result([content_error(
+                f"{name} needs 'args' to be an object mapping the inner tool's arguments, "
+                f"got {type(forwarded).__name__}. Example: "
+                f"{name}(tool=\"read_memory\", args={{\"address\": \"0x20000000\", \"length\": 4}}).",
+                code="invalid_arguments",
+                suggested_next_actions=["tool_help"])])
+
     if name == "call":
         inner = arguments.get("tool")
         if inner in (None, "call", "batch", "run_scenario"):

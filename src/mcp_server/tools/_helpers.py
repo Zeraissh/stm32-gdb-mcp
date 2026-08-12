@@ -82,21 +82,36 @@ def hub_binding(ctx: Any) -> tuple[Any, int] | None:
     block in the profile, no channel mapped, hub offline. A missing hub is never
     an error, just no escalation available, so this must not raise.
     """
+    return resolve_hub_binding(ctx)[0]
+
+
+def resolve_hub_binding(ctx: Any) -> tuple[tuple[Any, int] | None, str | None]:
+    """``hub_binding`` plus WHY it came back empty.
+
+    The reason exists because collapsing every cause into None made one caller
+    lie: reset_target's cold path reported "this session has a hub block but no
+    channel resolved from it" whenever the binding was missing -- including when
+    the channel resolved perfectly and the hub was simply unreachable, or the
+    optional extra was not installed. Telling someone to fix their map when the
+    map is fine sends them the wrong way.
+
+    Callers that only care whether a hub is available keep using ``hub_binding``.
+    """
     try:
         manager = ctx.fns.hub_manager
         profile = ctx.debug_profile.get()
         spec = profile.get("hub")
         if not spec:
-            return None
+            return None, "this session's debug profile has no hub block"
         manager.configure(spec)
         channel, _source = manager.channel_for(
             profile=profile,
             session_id=ctx.session_id,
             probe_serial=getattr(ctx.sess, "serial", None) or profile.get("serial"),
         )
-    except Exception:  # noqa: BLE001 - no hub is a normal state, not a failure
-        return None
-    return manager, channel
+    except Exception as exc:  # noqa: BLE001 - no hub is a normal state, not a failure
+        return None, str(exc) or type(exc).__name__
+    return (manager, channel), None
 
 
 def recover_current_session(gdb_client: Any, gdb_manager: Any, last_session: dict, sess: Any,
