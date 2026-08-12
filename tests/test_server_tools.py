@@ -3897,11 +3897,24 @@ def test_workflow_instructions_do_not_overstate_the_hub_interlock():
     # ladder confirm on their own behalf (execution_tools.py, hub_recovery.py).
     # Instructions that promise an absolute the code does not keep cost trust in
     # every other safety claim here, and agents read these at runtime.
+    # Both of the substrings this used to assert -- "confirm=true" and
+    # 'reset_target(strategy="cold")' -- were ALREADY present in the pre-fix text
+    # (verified against 4c43709~1), so it passed whether or not the overstatement
+    # had been corrected. It now pins the two things the correction actually added.
     from mcp_server.server import server
 
     instructions = server.instructions
-    assert "confirm=true" in instructions
-    assert 'reset_target(strategy="cold")' in instructions
+
+    # 1. The interlock is scoped to the CALLING session. _live_session
+    #    (hub_tools.py) checks only that one, so an unqualified "whenever a GDB
+    #    server is live on that port" is the overstatement this guards against.
+    assert "THIS session's own GDB server is live" in instructions
+    assert "only the calling session" in instructions
+
+    # 2. The self-confirming exception is named, and so is the one path that is
+    #    genuinely unguarded.
+    assert "one deliberate" in instructions
+    assert "exclusive=true" in instructions
 
 
 # FIX 1 (mcp_info)
@@ -4046,11 +4059,24 @@ def test_call_read_admits_validate_debug_config_which_touches_nothing():
 def test_call_read_action_gate_fails_closed():
     # An action the gate cannot resolve is treated as a write, so a family that
     # grows a new action is refused until someone classifies its target tool.
+    # Note what this does and does not distinguish. The pre-fix name-only gate also
+    # refused these, because the hub family is a writer either way -- so this test
+    # never separated old from new, and it was never meant to. What it guards is the
+    # forward direction: a gate that grew permissive about an unresolved action
+    # (returning the family name and letting the dispatcher sort it out) would let
+    # hub(action=<anything>) through prompt-free. That mutation IS caught here.
+    #
+    # The message assertions pin the useful part of the refusal -- an agent that is
+    # told which actions would work does not have to guess -- and come from
+    # read_only_actions, independently of the gate.
     for args in ({}, {"action": "wipe"}, {"action": None}, {"action": 7}):
         payload = _payload(asyncio.run(handle_call_tool("call_read", {"tool": "hub", "args": args})))
 
         assert payload["ok"] is False, args
         assert payload["error"]["code"] == "not_read_only", args
+        message = payload["error"]["message"]
+        assert "read-only only for" in message, args
+        assert "describe" in message and "measure" in message, args
 
 
 # FIX 2 (action-aware call_read)
