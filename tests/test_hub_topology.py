@@ -300,3 +300,42 @@ def test_discovery_needs_no_per_channel_confirmation(monkeypatch, hub_session):
     monkeypatch.setattr(server_module, "detect_probe", lambda **_kw: {"probes": []})
 
     assert _call("hub", {"action": "discover", "settle_sec": 0})["ok"] is True
+
+
+# FIX 3 (profile merge)
+def test_labelling_a_channel_with_merge_keeps_the_discovered_identity(monkeypatch, hub_session):
+    # The loss as observed: discovery writes serial/key per channel, and a later
+    # debug_profile set carrying only a label replaced the whole hub block --
+    # taking with it the identity that resolves the channel.
+    import mcp_server.server as server_module
+
+    hub = hub_session.hub
+    monkeypatch.setattr("mcp_server.tools.hub_tools.time", _NoSleep)
+    monkeypatch.setattr(server_module, "detect_probe",
+                        lambda **_kw: {"probes": [STLINK_A] if hub.data[2] else []})
+    _call("hub", {"action": "discover", "apply": True, "settle_sec": 0})
+
+    _call("debug_profile", {"action": "set", "merge": True,
+                            "hub": {"map": {"2": {"label": "TC"}}}})
+
+    entry = _call("debug_profile", {"action": "get"})["data"]["hub"]["map"]["2"]
+    assert entry["serial"] == "0671FF565251"
+    assert entry["label"] == "TC"
+
+
+# FIX 3 (profile merge)
+def test_without_merge_a_nested_block_replaces_so_a_stale_channel_can_be_dropped(monkeypatch, hub_session):
+    import mcp_server.server as server_module
+
+    hub = hub_session.hub
+    monkeypatch.setattr("mcp_server.tools.hub_tools.time", _NoSleep)
+    monkeypatch.setattr(server_module, "detect_probe",
+                        lambda **_kw: {"probes": [STLINK_A] if hub.data[2] else []})
+    _call("hub", {"action": "discover", "apply": True, "settle_sec": 0})
+
+    _call("debug_profile", {"action": "set", "hub": {"map": {"3": {"label": "TC"}}}})
+
+    # Re-cabled rig: replacing is how channel 2's now-wrong entry goes away.
+    channel_map = _call("debug_profile", {"action": "get"})["data"]["hub"]["map"]
+    assert list(channel_map) == ["3"]
+

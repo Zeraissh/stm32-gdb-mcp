@@ -2,6 +2,121 @@
 
 ## [Unreleased]
 
+### `mcp_info`: which build is actually serving you / `mcp_info`：到底是哪个构建在服务
+
+- **Nothing reported the running server's identity.** `mcp_version()` existed but only
+  `report_issue` called it — i.e. the version was reachable only by filing a GitHub issue.
+  Diagnosing "why is the tool I expect missing?" meant reading the client's plugin manifest
+  off disk and comparing commit shas, and it cost two wasted session restarts before the
+  cause (a version-keyed plugin cache still serving old source) was found. /
+  此前没有任何工具能报出正在运行的服务器身份，只能去磁盘上翻客户端插件清单。
+- **New `mcp_info`** returns `version`, `commit`, `install_root` and `compact_mode`. It needs
+  no debug session, no probe and no target — which matters, because it gets called precisely
+  when nothing is connected. It is in `CORE_TOOLS`, so compact mode (itself the leading
+  explanation for a missing tool) cannot hide it, and it is read-only, so `call_read` reaches
+  it without a prompt. `tool_help` and `self_check` now carry the same block. /
+  新增 `mcp_info`，无需会话/探针/目标即可调用；已列入 `CORE_TOOLS` 且为只读，
+  `tool_help` 与 `self_check` 也一并携带该信息。
+- **Two tool counts, not one.** `tools_advertised` is what the client can actually see;
+  `tools_in_catalog` is the full surface, still reachable through `call`/`tool_help`. They
+  differ in compact mode, and reporting the catalog size as "advertised" would answer "why
+  can't I see my tool?" with a number that contradicts the client's own tool list — the exact
+  kind of true-sounding wrong number this tool exists to eliminate. /
+  `tools_advertised` 是客户端实际可见的数量，`tools_in_catalog` 是完整工具面；两者在 compact
+  模式下不同，把后者当成前者上报，会给出与客户端所见相矛盾的数字。
+- **`mcp_version()` no longer reports an unrelated repository.** It shelled out to
+  `git -C <root>` without checking `<root>/.git` exists, so a wheel under `site-packages`
+  let git walk upward and report some other checkout's HEAD as this server's version.
+  `server_info()` also separates the release version from the commit, which the single
+  ambiguous string could not. / 修复：未确认 `.git` 存在就调用 `git -C`，装成 wheel 时会把
+  无关仓库的 HEAD 当成本服务器版本；并将发布版本与 commit 分开报告。
+
+### call_read now judges the action, not the tool / call_read 现在按 action 判定，而非按工具
+
+- **`call_read(tool="debug_profile", args={"action":"get"})` was refused** with `not_read_only`,
+  and so was `hub(action=describe)` — which the server itself recommends as the next step from
+  `hub(action=discover)`. The gate tested the tool NAME, and an action-dispatched family is not
+  read-only as a whole: `debug_profile` mixes `get` with `set`. Agents therefore fell back to
+  `call`, the approval-prompting path, for operations that can never need approval. The gate now
+  resolves the discriminator first and judges the tool the action lands on. /
+  该门禁只看工具名，而 action 分发的工具族整体并非只读，于是纯读操作被迫改走会弹出授权提示的
+  `call`。现在先解析 action，再判定它实际落到的工具。
+- Newly reachable without a prompt: `debug_profile(action=get)`, `debug_config(action=validate)`,
+  `breakpoint(action=list)`, `timeouts(action=get)`, `write_guard(action=audit)`,
+  `typed_memory(action=read)`, `session_diagnostics(what=events|server_logs)`,
+  `hub(action=describe|measure)`. /
+  新增免提示可达的调用如上。
+- **`debug_config(action=validate)` never touched anything**: it validates the caller's own dict —
+  no session, no file, no hardware — yet it was on the write side of the gate. /
+  `validate_debug_config` 只校验调用方自己传入的字典，却被划到写入侧。
+- **Fails closed.** An unknown or missing action, and every family whose actions all write, are
+  still refused; a refusal now names the actions that would have been accepted. `self_check`
+  stays on the write side — it really does halt the core. /
+  保持“失败即拒绝”：未知/缺失的 action 一律拒绝；`self_check` 仍在写入侧，因为它确实会暂停内核。
+
+### `debug_profile(action=set)`: a nested block was replaced, not merged / 嵌套块被静默整块替换
+
+- **The description promised a merge the code did not do.** `set` merged at the TOP LEVEL
+  only — a nested block was assigned straight over the stored one — so
+  `debug_profile(action=set, hub={map: {3: {label: TC}}})` after
+  `hub(action=discover, apply=true)` destroyed the per-channel `serial`/`key` identity
+  discovery had just written, and for a serial-less probe that key is the ONLY identity it
+  has, so the channel silently stopped resolving. The description now says exactly what
+  happens, and `merge=true` deep-merges nested blocks for the caller who only wants to add
+  one key. / 描述承诺“合并”，实现却只在顶层合并：嵌套块是整块赋值，因此在 discovery 之后再设
+  置一个 label，会把刚写入的通道身份全部丢弃（无序列号探针只有该 key 可用，通道会静默失效）。
+  现在描述与实现一致，并新增 `merge=true` 对嵌套块做深度合并。
+- **Replace stays the default on purpose.** It is the only way to REMOVE a stale `hub.map`
+  entry, and a stale entry is not cosmetic: channel selection takes the first entry whose
+  serial matches, so a leftover one cuts power to the wrong board. `debug_config(action=load)`
+  keeps replacing for the same reason — re-loading a rack config after re-cabling must not
+  accumulate the previous rig's channels. / 默认仍是替换：这是删除过期 `hub.map` 条目的唯一
+  方式，而过期条目会让通道选择命中并断电到错误的板子；`debug_config(action=load)` 同理保持替
+  换语义，重新加载机架配置不应累积上一套接线。
+
+### "hub channel unmapped" pointed at the wrong fix / “通道未映射”给错了修复建议
+
+- **One message covered three different causes and offered the remedy for none of them.**
+  It said "no channel given, none in the debug profile, and no hub.map entry matches this
+  session" and then suggested pinning `hub.channel` — which, for the cause seen on a real
+  rack (the config was loaded into the DEFAULT session, never into session `"TC"`), teaches
+  the user to hard-code a channel per session and bypass `hub.map` entirely. The correct
+  remedy was `debug_config(action=load, path=..., session="TC")`. /
+  一条报错混合了三种不同原因，给出的修复建议对其中两种都是错的。
+- **Each case now gets its own message and its own `suggested_next_actions`**: an empty
+  per-session profile (a load that never happened), a profile with no `hub` block, a hub
+  block with neither channel nor map, a label miss, and a serial miss. The label case names
+  the labels that ARE defined and the session id that was tried, so it is a one-line
+  diagnosis instead of a guessing game. The error code stays `hub_unavailable`. /
+  现在按可区分的具体原因分别给出报错与后续建议；label 不匹配时会列出配置中已有的 label
+  和本次实际使用的会话名。错误码仍为 `hub_unavailable`。
+- `reset_target(strategy="cold")` said the same thing and now names the per-session load too. /
+  `reset_target(strategy="cold")` 的同类报错也一并修正。
+
+### The unmapped-channel message named someone else's board / 报错点名了别人的板子
+
+- The label-miss branch ended with `Start this board's session under its label
+  (session="<label>")`, filled in with `sorted(labels)[0]` — the alphabetically first label
+  in the whole rack. Nothing in that code can see which channel the caller's board is on, so
+  on the shipped 4-board example it advises binding to channel 1 regardless. Acting on it
+  selects, and power-cycles, whichever board owns that label — the same wrong-board hazard
+  the rest of this work exists to remove. It now names every candidate and says plainly that
+  picking is the human's call, and why. /
+  label 不匹配的报错原本会填入按字母序第一个 label 并让你照着用，而该代码根本不知道你的板子
+  在哪个通道——照做会选中并断电到别人的板子。现在只列出全部候选，并说明为何必须由人来选。
+
+### Docs: the hub power interlock was overstated / 文档：Hub 断电联锁的表述过强
+
+- README, `rack_hub.yaml` and the runtime `SERVER_INSTRUCTIONS` all claimed that cutting power
+  to a port with a live GDB server *always* requires `confirm=true`. It does not:
+  `reset_target(strategy="cold")` and `recover_session`'s escalation ladder pass `confirm`
+  themselves, because naming a tool whose whole purpose is removing power IS the confirmation,
+  and both stop the session before the cut. The design is deliberate; the docs asserted an
+  absolute it does not have, and a safety doc that overstates erodes trust in every other
+  safety claim. Now stated exactly, with the exception and why it is safe. /
+  文档声称有活跃 GDB 服务时**永远**需要 `confirm=true`，实际存在一处刻意设计的例外；安全文档
+  说过头会连带削弱其他安全承诺的可信度，现按实际规则准确表述并说明该例外为何是安全的。
+
 ### Docs: how a rack channel actually gets selected / 文档：机架通道到底如何被选中
 
 - **`label` is matched against the debug session name, exactly.** Nothing said so. It reads

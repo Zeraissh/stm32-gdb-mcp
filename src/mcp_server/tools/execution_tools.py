@@ -31,7 +31,10 @@ def _stop_event_next_actions(event: dict) -> list[str]:
                 "strategy=\"cold\" removes target power through a configured programmable USB "
                 "hub before resetting, which is the only strategy that produces a true "
                 "power-on reset (RCC_CSR POR flag, cleared .noinit, drained RAM); it fails "
-                "rather than silently doing a warm reset when no hub channel is mapped.",
+                "rather than silently doing a warm reset when no hub channel is mapped. It "
+                "needs no confirm argument -- asking for a cold reset by name IS the "
+                "confirmation the hub guard wants -- and it stops the GDB session before the "
+                "cut, then re-establishes it.",
     inputSchema={
         "type": "object",
         "properties": {
@@ -60,15 +63,33 @@ def reset_target(ctx: ToolContext, arguments: dict) -> list[TextContent]:
             # Downgrading to a warm reset here would report success for something
             # that did not happen -- the exact false-success shape reset_strategy
             # already warns about for 'under_reset'.
+            #
+            # hub_binding() collapses every "no hub here" reason into None, but the
+            # one it still tells apart is the one that actually bites on a rack: a
+            # profile with no hub block at all, i.e. a per-session load that never
+            # happened. Sending that case to "map a channel" teaches the user to
+            # hard-code a channel per session and bypass hub.map entirely.
+            load = f'debug_config(action=load, path=..., session="{ctx.session_id}")'
+            if not profile.get("hub"):
+                remedy = (f'The debug profile for session "{ctx.session_id}" has no hub block, and '
+                          f"the profile is per-session: a rack config loaded into another session "
+                          f"is invisible here, and a server restart clears it. Load it into this "
+                          f'session ({load}), or use strategy="default".')
+                actions = [load, 'reset_target(strategy="default")']
+            else:
+                remedy = ('This session HAS a hub block, but no channel resolved from it. '
+                          'hub(action=describe) shows the map beside the live channel list, and '
+                          'hub(action=power, state="on") reports the precise reason. Or use '
+                          'strategy="default".')
+                actions = ["hub(action=describe)", "hub(action=discover, apply=true)",
+                           'reset_target(strategy="default")']
             return [content_error(
                 "strategy=\"cold\" needs a programmable USB hub channel for this session, and "
                 "none is mapped. A cold reset is not a command, it is removing power -- "
                 "silently doing a warm reset instead would report a power-on reset that never "
-                "happened. Map a channel, or use strategy=\"default\".",
+                f"happened. {remedy}",
                 code="cold_reset_unavailable",
-                suggested_next_actions=["hub(action=describe)",
-                                        "debug_profile(action=set, hub=...)",
-                                        "reset_target(strategy=\"default\")"],
+                suggested_next_actions=actions,
             )]
         if not ctx.last_session.get("server_type"):
             return [content_error(

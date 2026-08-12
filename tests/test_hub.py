@@ -316,3 +316,88 @@ def test_channel_names_are_optional(fake_hub):
 def test_channel_list_falls_back_to_max_channels_from_device_info(fake_hub):
     fake_hub.fail_on["get_channels"] = RuntimeError("unknown product type")
     assert _manager(fake_hub).describe()["channels"] == [1, 2, 3, 4]
+
+
+# FIX 4 (unmapped-channel messages)
+def test_an_empty_session_profile_is_named_as_a_missing_per_session_load(fake_hub):
+    # The live failure: the rack config was loaded into the DEFAULT session, and
+    # session "TC" -- which never loaded it -- was told to pin a channel instead,
+    # i.e. to bypass the very map it was missing.
+    manager = _manager(fake_hub, {"map": {1: {"label": "default"}}})
+
+    with pytest.raises(HubUnavailableError) as excinfo:
+        manager.channel_for(profile={}, session_id="TC")
+
+    message = str(excinfo.value)
+    assert "hub channel unmapped" in message
+    assert "EMPTY" in message
+    assert 'debug_config(action=load, path=..., session="TC")' in message
+    assert 'debug_profile(action=set, hub={"channel": N})' not in message
+    assert excinfo.value.next_actions[0] == 'debug_config(action=load, path=..., session="TC")'
+
+
+# FIX 4 (unmapped-channel messages)
+def test_a_profile_without_a_hub_block_is_not_reported_as_a_broken_map(fake_hub):
+    manager = _manager(fake_hub, {})
+
+    with pytest.raises(HubUnavailableError, match='has no "hub" block'):
+        manager.channel_for(profile={"mcu": "STM32L151"}, session_id="TC")
+
+
+# FIX 4 (unmapped-channel messages)
+def test_a_label_miss_names_the_labels_defined_and_the_session_tried(fake_hub):
+    # Otherwise this is a guessing game: the rule is an exact match against the
+    # session name, so the two things needed to see it are the labels and the name.
+    spec = {"map": {1: {"label": "l151"}, 4: {"label": "u535"}}}
+    manager = _manager(fake_hub, spec)
+
+    with pytest.raises(HubUnavailableError) as excinfo:
+        manager.channel_for(profile={"hub": spec}, session_id="TC")
+
+    message = str(excinfo.value)
+    assert "['l151', 'u535']" in message
+    assert '"TC"' in message
+    assert "EXACTLY" in message
+
+
+# FIX 4 (unmapped-channel messages)
+def test_a_serial_miss_names_the_mapped_serials_and_the_probe_serial(fake_hub):
+    spec = {"map": {1: {"serial": "AAA"}, 3: {"serial": "BBB"}}}
+    manager = _manager(fake_hub, spec)
+
+    with pytest.raises(HubUnavailableError) as excinfo:
+        manager.channel_for(profile={"hub": spec}, session_id="TC", probe_serial="CCC")
+
+    message = str(excinfo.value)
+    assert "['AAA', 'BBB']" in message
+    assert '"CCC"' in message
+
+
+# FIX 4 (unmapped-channel messages)
+def test_a_hub_block_with_nothing_to_select_on_points_at_discovery(fake_hub):
+    manager = _manager(fake_hub, {})
+
+    with pytest.raises(HubUnavailableError) as excinfo:
+        manager.channel_for(profile={"hub": {"guard": "allow"}}, session_id="TC")
+
+    assert "hub(action=discover, apply=true)" in excinfo.value.next_actions
+
+
+
+def test_a_label_miss_never_names_one_label_as_the_one_to_use(fake_hub):
+    # It used to end with `session="{labels[0]}"` -- the alphabetically first label in
+    # the whole rack. This code cannot see which channel the caller's board is on, so
+    # naming one is a coin flip, and acting on it selects (and power-cycles) whichever
+    # board that label belongs to. Same wrong-board hazard the rest of this work is about.
+    spec = {"map": {1: {"label": "aaa"}, 2: {"label": "zzz"}}}
+    manager = _manager(fake_hub, spec)
+
+    with pytest.raises(HubUnavailableError) as excinfo:
+        manager.channel_for(profile={"hub": spec}, session_id="TC")
+
+    message = str(excinfo.value)
+    assert 'session="aaa"' not in message
+    assert 'session="zzz"' not in message
+    # It must still name every candidate, so the human can pick the right one.
+    assert "['aaa', 'zzz']" in message
+    assert "power-cycle" in message

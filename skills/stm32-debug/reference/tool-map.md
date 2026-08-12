@@ -97,4 +97,4 @@ must be preserved or capture rate guaranteed.
 - `run_scenario`, `batch`
 - `get_session(view=journal|timeline|metrics)`, `clear_session_journal`
 - `export_debug_report`, `report_issue`
-- `tool_help(name=...|query=...)`, `call(tool=..., args=...)`
+- `tool_help(name=...|query=...)`, `mcp_info`, `call(tool=..., args=...)`

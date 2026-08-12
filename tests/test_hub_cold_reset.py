@@ -268,3 +268,51 @@ def test_measure_is_reachable_through_call_read():
     from mcp_server.tool_surface import read_only_tool_names
 
     assert "measure_hub_channel" in read_only_tool_names()
+
+
+# FIX 5 (hub interlock wording)
+def test_cold_reset_records_its_own_confirmation_in_the_audit_trail(monkeypatch, hub_session):
+    # The docs now say the exception is honest because it is auditable: a cold
+    # reset confirms on its own behalf, but it leaves the same trace an explicit
+    # confirm=true would. A self-confirmed power cut with no trace would be the
+    # overstatement all over again, one layer down.
+    import mcp_server.server as server_module
+
+    monkeypatch.setattr(server_module, "_last_session",
+                        {"server_type": "openocd", "server_args": []})
+    _set_profile({"channel": 2, "power_cycle": {"off_ms": 0, "settle_ms": 0}})
+
+    assert _call("reset_target", {"halt": True, "strategy": "cold"})["ok"] is True
+
+    power_off = [entry for entry in hub_session.manager.guard.get_audit_log()
+                 if entry["action"] == "power_off"]
+    assert [entry["decision"] for entry in power_off] == ["apply"]
+    assert power_off[0]["channel"] == 2
+    assert power_off[0]["acknowledged"] is True
+
+
+
+def test_cold_reset_without_a_hub_block_names_the_per_session_load(hub_session):
+    # The branch that fires on a rack: the config was loaded into a DIFFERENT session,
+    # so this one has no hub block at all. Telling it to "map a channel" would teach
+    # hard-coding a channel per session instead of loading the map where it is missing.
+    payload = _call("reset_target", {"halt": True, "strategy": "cold"})
+
+    assert payload["error"]["code"] == "cold_reset_unavailable"
+    assert "has no hub block" in payload["error"]["message"]
+    assert "per-session" in payload["error"]["message"]
+    assert payload["suggested_next_actions"][0].startswith("debug_config(action=load")
+
+
+def test_cold_reset_with_a_hub_block_that_resolves_to_nothing_says_so_instead(hub_session):
+    # The else-branch: a hub block EXISTS, so the remedy is not "load the config" --
+    # it is "look at what the map actually selects on". Before this test the branch was
+    # never executed by the suite at all.
+    hub_session.session.profile.update({"hub": {"guard": "confirm"}})
+
+    payload = _call("reset_target", {"halt": True, "strategy": "cold"})
+
+    assert payload["error"]["code"] == "cold_reset_unavailable"
+    assert "HAS a hub block" in payload["error"]["message"]
+    assert "hub(action=describe)" in payload["suggested_next_actions"]
+    assert not any(a.startswith("debug_config(action=load") for a in payload["suggested_next_actions"])

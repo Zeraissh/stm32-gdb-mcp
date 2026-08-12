@@ -248,3 +248,46 @@ def test_tool_surface_keeps_compact_core_and_merged_families():
     assert "set_breakpoint" not in names
     assert "start_debug_session" in names
     assert "breakpoint" in names
+
+
+# FIX 1 (mcp_info)
+def test_server_info_separates_the_release_version_from_the_commit(monkeypatch):
+    from mcp_server import __version__, server_metadata
+
+    monkeypatch.setattr(server_metadata, "_git_commit", lambda root: "deadbee")
+
+    info = server_metadata.server_info()
+
+    # mcp_version() collapses these into one string the caller cannot decode;
+    # "which build is running?" needs both answers side by side.
+    assert info["name"] == "stm32-gdb-mcp"
+    assert info["version"] == __version__
+    assert info["commit"] == "deadbee"
+    assert Path(info["install_root"]).is_dir()
+
+
+# FIX 1 (mcp_info)
+def test_server_info_omits_commit_outside_a_git_checkout(monkeypatch):
+    from mcp_server import server_metadata
+
+    monkeypatch.setattr(server_metadata, "_git_commit", lambda root: None)
+
+    info = server_metadata.server_info()
+
+    assert "commit" not in info
+    assert info["version"]
+
+
+# FIX 1 (mcp_info)
+def test_git_commit_is_not_probed_outside_a_checkout(monkeypatch, tmp_path):
+    from mcp_server import server_metadata
+
+    def must_not_run(*args, **kwargs):
+        raise AssertionError("git must not be invoked outside a checkout")
+
+    monkeypatch.setattr(server_metadata.subprocess, "run", must_not_run)
+
+    # Without the .git guard, `git -C <site-packages>` walked upward and reported
+    # an unrelated repository's HEAD as this server's version.
+    assert server_metadata._git_commit(str(tmp_path)) is None
+

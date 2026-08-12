@@ -14,6 +14,8 @@ injection) stay local to their test by design.
 
 import pytest
 
+from mcp_server.debug_profile import deep_merge
+
 
 class FakeGdb:
     """Records every (command, timeout_sec) write and answers with a canned response."""
@@ -138,9 +140,14 @@ class FakeProfile:
     def __init__(self, initial=None):
         self._profile = dict(initial or {})
 
-    def update(self, values):
+    def update(self, values, merge=False):
         for key, value in values.items():
-            if value is not None:
+            if value is None:
+                continue
+            current = self._profile.get(key)
+            if merge and isinstance(current, dict) and isinstance(value, dict):
+                self._profile[key] = deep_merge(current, value)
+            else:
                 self._profile[key] = value
         return self.get()
 

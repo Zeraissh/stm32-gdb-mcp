@@ -1,3 +1,6 @@
+from types import SimpleNamespace
+from typing import cast
+
 from mcp_server.debug_profile import DebugProfileStore
 
 
@@ -38,3 +41,120 @@ def test_debug_profile_store_retains_probe_and_logging_defaults():
     }
 
     assert store.update(defaults) == defaults
+
+
+# FIX 3 (profile merge)
+def test_debug_profile_store_replaces_a_nested_block_by_default():
+    store = DebugProfileStore()
+    store.update({"hub": {"guard": "confirm",
+                          "map": {"3": {"key": "instance_id:A"}, "4": {"key": "instance_id:B"}}}})
+
+    profile = store.update({"hub": {"map": {"3": {"label": "TC"}}}})
+
+    # Replace is the only way to DROP a channel, and a stale hub.map entry is not
+    # cosmetic: channel selection takes the first matching entry and the hub tools
+    # then cut that port's power.
+    assert profile["hub"] == {"map": {"3": {"label": "TC"}}}
+
+
+# FIX 3 (profile merge)
+def test_debug_profile_store_deep_merges_nested_blocks_when_asked():
+    store = DebugProfileStore()
+    store.update({"hub": {"guard": "confirm",
+                          "map": {"3": {"key": "instance_id:A"}, "4": {"key": "instance_id:B"}}}})
+
+    profile = store.update({"hub": {"map": {"3": {"label": "TC"}}}}, merge=True)
+
+    assert profile["hub"]["map"]["3"] == {"key": "instance_id:A", "label": "TC"}
+    assert profile["hub"]["map"]["4"] == {"key": "instance_id:B"}
+    assert profile["hub"]["guard"] == "confirm"
+
+
+# FIX 3 (profile merge)
+def test_debug_profile_store_merge_replaces_lists_and_scalars():
+    store = DebugProfileStore()
+    store.update({"rtt": {"command": "RTTClient", "args": ["--device", "STM32L431"]}})
+
+    profile = store.update({"rtt": {"args": ["--device", "STM32L151"]}}, merge=True)
+
+    # A list has no key to merge on; a half-merged args list is a command line
+    # nobody wrote.
+    assert profile["rtt"] == {"command": "RTTClient", "args": ["--device", "STM32L151"]}
+
+
+# FIX 3 (profile merge)
+def test_debug_profile_store_merge_still_rejects_unknown_fields():
+    store = DebugProfileStore()
+
+    try:
+        store.update({"merge": True}, merge=True)
+    except ValueError as exc:
+        assert "merge" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+
+
+def test_merge_survives_a_yaml_loaded_map_with_integer_channel_keys():
+    # The bug this pins: YAML writes hub.map keys as ints (examples/configs/rack_hub.yaml
+    # uses `1:`), while anything arriving over MCP writes strings, because JSON object
+    # keys are always strings. deep_merge matches keys exactly, so before canonicalising
+    # the two spellings coexisted as SEPARATE entries -- the label landed on a new entry
+    # with no probe identity, which is precisely the loss merge=True exists to prevent.
+    store = DebugProfileStore()
+    store.update({"hub": {"map": {3: {"serial": "AAA", "key": "instance_id:USB-3"}}}})
+
+    store.update({"hub": {"map": {"3": {"label": "TC"}}}}, merge=True)
+
+    channel_map = store.get()["hub"]["map"]
+    assert list(channel_map) == ["3"], "one channel must stay one entry, whatever the key type"
+    assert channel_map["3"] == {"serial": "AAA", "key": "instance_id:USB-3", "label": "TC"}
+
+
+def test_replacing_a_yaml_loaded_map_also_canonicalises_the_keys():
+    # Replace must canonicalise too, or the NEXT merge hits the same mismatch.
+    store = DebugProfileStore()
+    store.update({"hub": {"map": {3: {"label": "TC"}}}})
+
+    assert list(store.get()["hub"]["map"]) == ["3"]
+
+
+def test_a_non_numeric_map_key_is_left_alone_rather_than_silently_dropped():
+    # Validation belongs to debug_config; swallowing a typo here would hide it.
+    store = DebugProfileStore()
+    store.update({"hub": {"map": {"spare": {"label": "x"}}}})
+
+    assert list(store.get()["hub"]["map"]) == ["spare"]
+
+
+def test_set_debug_profile_strips_merge_before_it_reaches_the_real_store():
+    # The tool-layer tests all run against conftest's FakeProfile, which has no
+    # ALLOWED_FIELDS, so nothing there notices if the strip is removed. Drive the REAL
+    # store the way the handler does: forwarding `merge` as a field would raise.
+    from mcp_server.tools import config_tools
+    from mcp_server.tools.context import ToolContext
+
+    store = DebugProfileStore()
+    ctx = SimpleNamespace(debug_profile=store, svd_parser=SimpleNamespace(load=lambda path: None))
+
+    config_tools.set_debug_profile(cast(ToolContext, ctx), {"mcu": "STM32L431", "merge": True})
+
+    assert store.get() == {"mcu": "STM32L431"}, "merge is a control flag, never a stored field"
+
+
+def test_labelling_a_channel_keeps_the_discovered_identity_in_the_real_store():
+    # The end-to-end version of this runs through conftest's FakeProfile, which
+    # re-implements the merge branch -- so it can pass while production is broken. This
+    # one exercises DebugProfileStore itself.
+    from mcp_server.tools import config_tools
+    from mcp_server.tools.context import ToolContext
+
+    store = DebugProfileStore()
+    store.update({"hub": {"map": {"3": {"serial": "AAA", "key": "instance_id:USB-3"}}}})
+    ctx = SimpleNamespace(debug_profile=store, svd_parser=SimpleNamespace(load=lambda path: None))
+
+    config_tools.set_debug_profile(
+        cast(ToolContext, ctx), {"hub": {"map": {"3": {"label": "TC"}}}, "merge": True})
+
+    assert store.get()["hub"]["map"]["3"] == {
+        "serial": "AAA", "key": "instance_id:USB-3", "label": "TC"}

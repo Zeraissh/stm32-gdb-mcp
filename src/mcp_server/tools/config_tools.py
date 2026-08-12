@@ -12,14 +12,18 @@ from ..debug_config import (
     validate_debug_config as validate_debug_config_data,
 )
 from ..project_inspector import inspect_project as inspect_project_dir
-from ..tool_response import content_success
+from ..tool_response import content_error, content_success
 from .context import ToolContext
 from .registry import register
 
 
 @register(Tool(
     name="set_debug_profile",
-    description="Stores board/session defaults such as MCU, probe, GDB server args, ELF path, and SVD path.",
+    description=(
+        "Stores board/session defaults such as MCU, probe, GDB server args, ELF path, and SVD path. "
+        "Top-level fields you omit keep their value, but a nested block you pass (hub, rtt, uart, swo, "
+        "reset, hil) REPLACES the stored one whole -- pass merge=true to deep-merge into it instead."
+    ),
     inputSchema={
         "type": "object",
         "properties": {
@@ -38,12 +42,38 @@ from .registry import register
                     "channel is 1-based and selects which port this session's board sits on."
                 ),
             },
-            "notes": {"type": "string"}
+            "notes": {"type": "string"},
+            "merge": {
+                "type": "boolean",
+                "description": (
+                    "Deep-merge nested blocks (hub, rtt, uart, swo, reset, hil) into the stored ones "
+                    "instead of replacing them -- use it to add one key, e.g. a hub.map label, without "
+                    "dropping the identity hub(action=discover) wrote. Leave it off to replace, which "
+                    "is the only way to remove a stale entry."
+                ),
+            }
         }
     }
 ))
 def set_debug_profile(ctx: ToolContext, arguments: dict) -> list[TextContent]:
-    profile = ctx.debug_profile.update(arguments)
+    # merge is a control flag, not a profile field: forwarding it would trip the
+    # store's unknown-field check (ALLOWED_FIELDS).
+    merge = arguments.get("merge", False)
+    if not isinstance(merge, bool):
+        # Refuse rather than coerce. bool("false") is True, so guessing turns the
+        # flag ON for a caller who spelled out "off" -- and both directions are
+        # destructive here: a wrong True keeps a stale hub.map channel that can
+        # power-cycle the wrong board, a wrong False discards the probe identity
+        # this flag exists to protect.
+        return [content_error(
+            f"merge must be a boolean, got {type(merge).__name__} {merge!r}. It is not "
+            "coerced: bool(\"false\") is True, and guessing wrong either keeps a stale "
+            "hub.map entry or destroys the discovered probe identity.",
+            code="invalid_argument",
+            suggested_next_actions=["debug_profile(action=get)"],
+        )]
+    values = {key: value for key, value in arguments.items() if key != "merge"}
+    profile = ctx.debug_profile.update(values, merge=merge)
     svd_path = profile.get("svd_path")
     if svd_path:
         ctx.svd_parser.load(svd_path)
@@ -61,7 +91,11 @@ def get_debug_profile(ctx: ToolContext, arguments: dict) -> list[TextContent]:
 
 @register(Tool(
     name="load_debug_config",
-    description="Loads a YAML debug config and applies compatible fields to the active debug profile.",
+    description=(
+        "Loads a YAML debug config and applies compatible fields to the active debug profile. "
+        "Fields the file defines REPLACE the stored ones, so re-loading a rack config after re-cabling "
+        "never accumulates the previous rig's hub.map channels; fields it omits are left alone."
+    ),
     inputSchema={
         "type": "object",
         "properties": {

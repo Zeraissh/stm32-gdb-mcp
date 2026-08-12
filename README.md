@@ -122,12 +122,29 @@ Then point a session at its port (1-based, matching the hub's silkscreen):
 ```
 
 `hub(action=describe)` is read-only and also reports per-port voltage/current on models
-with an ADC. Power and data actions require `confirm=true` while the guard is in its
-default `confirm` mode, or whenever a GDB server is live on that port — cutting power
-mid-flash is how a board becomes a brick. Set `guard: allow` for scripted CI. /
+with an ADC. `hub(action=power/data/cycle)` requires `confirm=true` while the guard is in
+its default `confirm` mode, and — in every mode, `guard: allow` included — whenever **the
+calling session's own** GDB server is live on that port: cutting power mid-flash is how a
+board becomes a brick. Note the scope: the check sees only the session making the call, so
+on a rack it will **not** notice that a *different* session is mid-flash on that channel.
+Isolate with `hub(action=data, exclusive=true)` before touching a neighbour's port.
+Three entry points confirm on their own behalf, deliberately, because naming them *is* the
+confirmation — and their decisions land in the same audit trail `hub(action=describe)`
+returns. `reset_target(strategy="cold")` and `recover_session`'s escalation ladder stop the
+GDB session before the cut instead of yanking VBUS out from under it.
+`hub(action=discover)` refuses outright while a session is live — **except with
+`force=true`, which bypasses the interlock entirely**, so that flag is the one place you
+are genuinely on your own. Set `guard: allow` for scripted CI. /
 `hub(action=describe)` 是只读的，带 ADC 的型号还会返回每端口电压/电流。默认 `confirm`
-模式下，或该端口上有活跃 GDB 服务时，电源与数据线操作都必须显式传 `confirm=true`
-——烧录中途断电正是把板子变砖的方式。CI 脚本可设 `guard: allow`。
+模式下，`hub(action=power/data/cycle)` 必须显式传 `confirm=true`；**调用方自己的会话**在该端口
+上有活跃 GDB 服务时，任何模式（含 `guard: allow`）下都强制要求——烧录中途断电正是把板子变砖的
+方式。注意这条检查的范围：它只看发起调用的那个会话，因此在机架上**不会**发现另一个会话正在该
+通道上烧录。要动邻居的端口，请先用 `hub(action=data, exclusive=true)` 做隔离。
+有三处入口会自行确认，这是刻意设计的——点名调用它们本身就是确认，且其决定同样进入
+`hub(action=describe)` 返回的审计日志。`reset_target(strategy="cold")` 与 `recover_session`
+的恢复阶梯会先停掉 GDB 会话再断电，而不是从活跃会话脚下拔掉 VBUS；`hub(action=discover)`
+在有活跃会话时直接拒绝运行——**但 `force=true` 会完全绕过该联锁**，那是唯一真正需要你自己
+负责的地方。CI 脚本可设 `guard: allow`。
 
 #### Selecting a channel on a multi-board rack / 多板机架下的通道选择
 
@@ -150,8 +167,8 @@ hub:
 {"action": "load", "path": "bench_hub.yaml"}
 ```
 
-Two things about this that are easy to get wrong: /
-其中有两点很容易搞错：
+Three things about this that are easy to get wrong: /
+其中有三点很容易搞错：
 
 - **A `label` is matched against the debug session name, exactly.** It is not a free-form
   nickname: the channel is selected only when the session was started as
@@ -170,6 +187,17 @@ Two things about this that are easy to get wrong: /
   调用会以 `hub_unavailable: hub channel unmapped` 失败。需要给**每个**会话都加载一次：
   `debug_config(action=load, path="bench_hub.yaml", session="TC")`。profile 还是纯内存的，
   因此服务器每次重启后都要重新加载。
+- **`set` replaces a nested block; it does not merge into it.** `debug_profile(action=set,
+  hub={...})` keeps every OTHER profile field, but the `hub` block you pass replaces the
+  stored one whole — so writing `hub={map: {3: {label: TC}}}` after
+  `hub(action=discover, apply=true)` throws away the probe identity discovery had written
+  there, and a serial-less probe has no other identity. Pass `merge=true` to deep-merge into
+  the stored block instead; leave it off when you mean to drop a stale channel, because
+  replacing is the only way to remove one. /
+  **`set` 对嵌套块是整块替换，不是合并。** 顶层其他字段会保留，但传入的 `hub` 块会整块覆盖已
+  存的内容——在 `hub(action=discover, apply=true)` 之后再写 `hub={map: {3: {label: TC}}}`，
+  会把 discovery 写入的探针身份一并丢掉（无序列号探针没有别的身份可用）。需要合并请加
+  `merge=true`；要删除过期通道则保持默认的替换语义，因为那是唯一的删除方式。
 
 When it works, the result carries `channel_source: "map_label"` — check that field rather
 than assuming the right port was chosen. /

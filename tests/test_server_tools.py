@@ -3889,3 +3889,229 @@ def test_load_symbols_no_profile_elf_is_still_an_error(monkeypatch):
 
     assert payload["ok"] is False
     assert payload["error"]["code"] == "missing_elf"
+
+
+# FIX 5 (hub interlock wording)
+def test_workflow_instructions_do_not_overstate_the_hub_interlock():
+    # The interlock is real, but reset_target(strategy="cold") and recover_session's
+    # ladder confirm on their own behalf (execution_tools.py, hub_recovery.py).
+    # Instructions that promise an absolute the code does not keep cost trust in
+    # every other safety claim here, and agents read these at runtime.
+    from mcp_server.server import server
+
+    instructions = server.instructions
+    assert "confirm=true" in instructions
+    assert 'reset_target(strategy="cold")' in instructions
+
+
+# FIX 1 (mcp_info)
+def test_mcp_info_identifies_the_running_build_with_nothing_connected(monkeypatch):
+    # The whole point of the tool: an agent asks it exactly when nothing is
+    # connected, so it must never touch gdb_client, a probe, or a session.
+    from pathlib import Path
+
+    from mcp_server import __version__
+
+    monkeypatch.delenv("STM32_GDB_MCP_COMPACT", raising=False)
+
+    payload = _payload(asyncio.run(handle_call_tool("mcp_info", {})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["name"] == "stm32-gdb-mcp"
+    assert payload["data"]["version"] == __version__
+    assert Path(payload["data"]["install_root"]).is_dir()
+    assert payload["data"]["compact_mode"] is False
+
+
+# FIX 1 (mcp_info)
+def test_mcp_info_survives_and_reports_compact_mode(monkeypatch):
+    monkeypatch.setenv("STM32_GDB_MCP_COMPACT", "1")
+    names = {tool.name for tool in asyncio.run(handle_list_tools())}
+
+    payload = _payload(asyncio.run(handle_call_tool("mcp_info", {})))
+
+    # Compact mode hiding the tool that reports compact mode is the failure mode
+    # this test exists to prevent.
+    assert "mcp_info" in names
+    assert payload["data"]["compact_mode"] is True
+    # tools_advertised must be what the CLIENT can see, not the size of the
+    # catalog. The catalog stays full in compact mode (tool_help needs it to
+    # describe hidden tools), so reporting its size here would answer "why can't I
+    # see my tool?" with a number that contradicts the client's own tool list.
+    assert payload["data"]["tools_advertised"] == len(names)
+    assert payload["data"]["tools_in_catalog"] > len(names)
+
+
+# FIX 1 (mcp_info)
+def test_mcp_info_is_read_only_and_reachable_through_call_read():
+    from mcp_server.tool_surface import read_only_tool_names
+
+    tools = {tool.name: tool for tool in asyncio.run(handle_list_tools())}
+
+    assert tools["mcp_info"].annotations.readOnlyHint is True
+    assert tools["mcp_info"].annotations.destructiveHint is False
+    assert "mcp_info" in read_only_tool_names()
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "call_read", {"tool": "mcp_info", "args": {}})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["name"] == "stm32-gdb-mcp"
+
+
+# FIX 1 (mcp_info)
+def test_tool_help_carries_the_build_identity_when_it_finds_nothing():
+    payload = _payload(asyncio.run(handle_call_tool("tool_help", {"name": "not_a_real_tool"})))
+
+    # count=0 alone cannot separate "wrong build" from "tool was renamed"; the
+    # server block is what makes that answerable without a client restart.
+    assert payload["ok"] is True
+    assert payload["data"]["count"] == 0
+    assert payload["data"]["server"]["name"] == "stm32-gdb-mcp"
+    assert payload["data"]["server"]["version"]
+
+
+# FIX 1 (mcp_info)
+def test_self_check_reports_the_running_build_alongside_the_identity(monkeypatch):
+    import mcp_server.server as server_module
+
+    class FakeClient:
+        def halt_execution(self):
+            pass
+
+        def read_word(self, address):
+            return {0xE000ED00: 0x410FC241, 0xE0042000: 0x10016435}[address]
+
+    class FakeProfile:
+        def get(self):
+            return {"mcu": "STM32L431"}
+
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile())
+
+    payload = _payload(asyncio.run(handle_call_tool("self_check", {})))
+
+    # self_check is the mandated first call after connecting, so the build
+    # identity lands in the transcript before anyone thinks to ask for it.
+    assert payload["data"]["core"] == "Cortex-M4"
+    assert payload["data"]["server"]["name"] == "stm32-gdb-mcp"
+    assert payload["data"]["server"]["version"]
+
+
+# FIX 2 (action-aware call_read)
+def test_call_read_admits_the_read_only_action_of_a_write_family():
+    # The gate used to judge the tool name, so debug_profile(action=get) was refused
+    # for sharing a family with action=set -- while hub(action=discover) recommends
+    # exactly that call as the next step.
+    asyncio.run(handle_call_tool(
+        "set_debug_profile", {"session": "readgate", "mcu": "STM32L151"}))
+
+    payload = _payload(asyncio.run(handle_call_tool(
+        "call_read", {"session": "readgate", "tool": "debug_profile", "args": {"action": "get"}})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["mcu"] == "STM32L151"
+
+
+# FIX 2 (action-aware call_read)
+def test_call_read_still_refuses_the_writing_action_of_the_same_family():
+    payload = _payload(asyncio.run(handle_call_tool(
+        "call_read", {"tool": "debug_profile", "args": {"action": "set", "mcu": "STM32F407"}})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "not_read_only"
+    # naming the actions that ARE allowed is what makes the retry obvious
+    assert "action=get" in payload["error"]["message"]
+    assert "call" in payload["suggested_next_actions"]
+
+
+# FIX 2 (action-aware call_read)
+def test_call_read_admits_validate_debug_config_which_touches_nothing():
+    # No session, no file, no hardware -- it validates the caller's own dict.
+    payload = _payload(asyncio.run(handle_call_tool(
+        "call_read", {"tool": "debug_config",
+                      "args": {"action": "validate", "config": {"mcu": "STM32L431"}}})))
+
+    assert payload["ok"] is True
+    assert payload["data"]["valid"] is True
+
+    # load/save still write, so they stay on the other side of the gate.
+    for action in ("load", "save"):
+        refused = _payload(asyncio.run(handle_call_tool(
+            "call_read", {"tool": "debug_config", "args": {"action": action, "path": "x.yaml"}})))
+        assert refused["error"]["code"] == "not_read_only", action
+
+
+# FIX 2 (action-aware call_read)
+def test_call_read_action_gate_fails_closed():
+    # An action the gate cannot resolve is treated as a write, so a family that
+    # grows a new action is refused until someone classifies its target tool.
+    for args in ({}, {"action": "wipe"}, {"action": None}, {"action": 7}):
+        payload = _payload(asyncio.run(handle_call_tool("call_read", {"tool": "hub", "args": args})))
+
+        assert payload["ok"] is False, args
+        assert payload["error"]["code"] == "not_read_only", args
+
+
+# FIX 2 (action-aware call_read)
+def test_call_read_refuses_every_action_that_touches_the_target_or_a_file():
+    # self_check really halts the core; a GDB expression can assign; coredump
+    # writes a file; get_logs(clear=true) drops entries. None may go prompt-free.
+    cases = (
+        ("self_check", {}),
+        ("expressions", {"action": "capture", "expressions": ["x"]}),
+        ("coredump", {"action": "capture", "path": "x.core"}),
+        ("logging", {"action": "get", "channel": "rtt"}),
+        ("hub", {"action": "power", "state": "off"}),
+        ("typed_memory", {"action": "write", "address": "0x20000000",
+                          "value": "0x1", "width_bits": 32}),
+        ("session_diagnostics", {"what": "health"}),
+    )
+    for tool, args in cases:
+        payload = _payload(asyncio.run(handle_call_tool("call_read", {"tool": tool, "args": args})))
+
+        assert payload["ok"] is False, tool
+        assert payload["error"]["code"] == "not_read_only", tool
+
+
+# FIX 2 (action-aware call_read)
+def test_read_only_families_still_resolve_by_name():
+    from mcp_server.tool_surface import read_only_dispatch_target
+
+    # Every action of these reads, so the family name itself resolves and its own
+    # dispatcher keeps producing the better "requires 'action' to be one of [...]".
+    for family in ("frame", "snapshot", "inspect_symbol", "read_registers"):
+        assert read_only_dispatch_target(family, {}) == family
+
+    # Mixed families are judged action by action.
+    assert read_only_dispatch_target("breakpoint", {"action": "list"}) == "list_breakpoints"
+    assert read_only_dispatch_target("breakpoint", {"action": "set"}) is None
+    assert read_only_dispatch_target("hub", {"action": "describe"}) == "describe_hub"
+    assert read_only_dispatch_target("hub", {"action": "cycle"}) is None
+    assert read_only_dispatch_target("call_read", {}) is None
+
+
+
+def test_set_debug_profile_refuses_a_non_boolean_merge_instead_of_coercing():
+    # bool("false") is True, so coercion turns the flag ON for a caller who spelled out
+    # "off". Both directions are destructive: a wrong True keeps a stale hub.map channel
+    # that can power-cycle the wrong board, a wrong False discards the probe identity.
+    payload = _payload(asyncio.run(handle_call_tool(
+        "debug_profile", {"action": "set", "mcu": "STM32L431", "merge": "false"})))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "invalid_argument"
+    assert "bool(\"false\") is True" in payload["error"]["message"]
+
+
+def test_mcp_info_reports_the_package_directory_that_really_holds_the_code():
+    # install_root is three levels up from server_metadata.py: the repo root for a
+    # src-layout checkout, but the PARENT of site-packages for a plain pip install --
+    # a directory that does not contain mcp_server at all. package_dir always does.
+    from pathlib import Path
+
+    payload = _payload(asyncio.run(handle_call_tool("mcp_info", {})))
+
+    package_dir = Path(payload["data"]["package_dir"])
+    assert (package_dir / "server_metadata.py").is_file()
+    assert package_dir.name == "mcp_server"
