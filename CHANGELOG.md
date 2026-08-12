@@ -62,6 +62,25 @@ which settles the two claims only a flash can: no false failure from the entry-p
 packet, and no half-erased first block, with `compare-sections` clean afterwards. /
 锁定已在真实 STM32L151 上完整验证：20 项非破坏性检查 + 11 项真实烧录检查。
 
+### The hub control port is handed back after an idle period / 空闲后交还 Hub 控制口
+
+- **One session could lock every other one out of the bench.** The vendor library holds a
+  cross-process lock on the hub's USB-CDC control port; this manager connected lazily and
+  then cached the connection forever; and `close()` was wired only into process shutdown,
+  reachable from no tool. So a session that merely ran `hub(action=describe)` held the hub
+  until its process exited. Reproduced from a second process:
+  `PortBusyError: Port COM7 is already in use by another process`. The port is now released
+  after 30 s of no hub traffic, and the next call reconnects transparently because
+  connecting was always lazy. /
+  厂商库对控制口有跨进程锁，而连接是懒建立后永久缓存的，`close()` 又只挂在进程退出路径上且无
+  工具可触发——于是一个会话会独占 hub 直到其进程结束。现在 30 秒无操作即交还，下次调用自动重连。
+- **It never releases while this process owes a channel its power back**, because `close()`
+  restores power only while connected — dropping the link then would leave a board dark
+  with nothing able to put it back. And it never touches power itself: an idle disconnect
+  is not a shutdown, and re-powering would silently undo a deliberate
+  `hub(action=power, state="off")`. /
+  欠着供电恢复时绝不释放，且空闲断开绝不改动电源状态。
+
 ## [0.11.0] - 2026-08-12
 
 Three routes out of a "read-only" tool, found by auditing what `call_read` forwards
