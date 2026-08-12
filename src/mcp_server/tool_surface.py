@@ -228,11 +228,15 @@ def _args_are_read_only(target: str, args: dict) -> bool:
     return True if guard is None else bool(guard(args))
 
 
-def read_only_actions(name: object) -> list[str]:
-    """The discriminator values of family ``name`` that resolve to a read-only tool.
+def read_only_actions(name: object, args: object = None) -> list[str]:
+    """The discriminator values of family ``name`` that read, GIVEN these arguments.
 
     Empty for anything that is not a family, and for a family with no read-only
-    action at all. Used to tell a refused caller which actions it could have used.
+    action at all. Used to tell a refused caller which actions it could have used,
+    so it must agree with the gate: classifying by target-tool membership alone
+    reported ``cycle`` as read-only while the gate refused
+    ``read_registers(what=cycle, enable=true)`` -- naming the very action the
+    caller had just used as the one that would have worked.
     """
     if not isinstance(name, str):
         return []
@@ -240,7 +244,26 @@ def read_only_actions(name: object) -> list[str]:
     if family is None:
         return []
     allowed = read_only_tool_names()
-    return [choice for choice, target in family[1].items() if target in allowed]
+    argdict = args if isinstance(args, dict) else {}
+    return [choice for choice, target in family[1].items()
+            if target in allowed and _args_are_read_only(target, argdict)]
+
+
+def read_only_arg_hint(name: object, args: object = None) -> str | None:
+    """Why an argument-guarded tool was refused, and what to change.
+
+    Without this the refusal for a hidden tool reads "'sample_pc' is not a
+    read-only tool" -- which is not what happened, and leaves no way to discover
+    that the tool has a form call_read WILL take.
+    """
+    if not isinstance(name, str) or name not in READ_ONLY_ARG_GUARDS:
+        return None
+    argdict = args if isinstance(args, dict) else {}
+    if _args_are_read_only(name, argdict):
+        return None
+    return (f"'{name}' writes DEMCR (and halts a running core to do it) unless "
+            f"enable=false; call it with enable=false to keep it prompt-free, or use "
+            f"call(tool='{name}', ...) to enable the DWT.")
 
 
 def read_only_dispatch_target(name: object, args: object = None) -> str | None:
@@ -296,6 +319,19 @@ def _with_session(schema: dict) -> dict:
 
 
 def _annotations(name: str) -> ToolAnnotations | None:
+    if name in READ_ONLY_ARG_GUARDS:
+        # An annotation describes the TOOL; the gate describes one CALL. These
+        # tools can write DEMCR and halt a running core depending on an argument,
+        # so readOnlyHint=True would be a promise to the client that the tool
+        # cannot keep -- and the client suppresses its prompt on that promise, for
+        # a DIRECT call the per-argument gate never sees. Not destructive either:
+        # it enables a trace bit, it does not erase anything.
+        #
+        # They stay in READ_ONLY_TOOLS so call_read can still admit the argument
+        # form that provably only reads. Same split, stated twice: the tool may
+        # write, this call does not.
+        return ToolAnnotations(readOnlyHint=False, destructiveHint=False,
+                               idempotentHint=False, openWorldHint=False)
     if name in READ_ONLY_TOOLS:
         return ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
     if name in HARDWARE_WRITE_TOOLS:
