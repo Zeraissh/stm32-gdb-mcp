@@ -13,6 +13,45 @@ from .context import ToolContext
 from .registry import register
 
 
+def _usb_location_for(ctx: ToolContext, arguments: dict, profile: dict) -> str | None:
+    """The ``adapter usb location`` value for this session's board, or None.
+
+    Three sources, most explicit first, because a wrong value here attaches to the
+    wrong board:
+
+    1. ``usb_location`` passed to this call.
+    2. ``hub.map[<channel>].usb_location`` in the profile, selected by hub_channel,
+       by the profile's hub.channel, or by the label that matches this session id --
+       the same precedence hub channel selection already uses.
+    3. Nothing. There is deliberately NO guess: the last port number happens to be
+       the hub channel on this bench, but the prefix ("1-1.") is the hub's own
+       position on the bus and cannot be derived from a channel number. Inventing
+       one would either fail to open or, worse, open a different probe.
+    """
+    explicit = arguments.get("usb_location")
+    if explicit:
+        return str(explicit)
+
+    hub_spec = profile.get("hub") or {}
+    entries = hub_spec.get("map") or {}
+    channel = arguments.get("hub_channel") or hub_spec.get("channel")
+    if channel is None:
+        for key, entry in entries.items():
+            if isinstance(entry, dict) and entry.get("label") == ctx.session_id:
+                channel = key
+                break
+    if channel is None:
+        return None
+    for key, entry in entries.items():
+        try:
+            same = int(key) == int(channel)
+        except (TypeError, ValueError):
+            same = str(key) == str(channel)
+        if same and isinstance(entry, dict) and entry.get("usb_location"):
+            return str(entry["usb_location"])
+    return None
+
+
 def _probe_selection(ctx: ToolContext, arguments: dict, profile: dict) -> tuple[str | None, str | None, dict | None, dict | None]:
     probe = arguments.get("probe")
     if probe:
@@ -49,7 +88,17 @@ def _adapter_speed_khz(args: list[str]) -> int | None:
             "server_args": {"type": "array", "items": {"type": "string"}, "description": "Optional args for the server e.g. ['-f', 'interface/stlink.cfg', '-f', 'target/stm32f4x.cfg']"},
             "probe": {"type": "string", "description": "Optional OpenOCD probe type: stlink, jlink, or cmsis-dap. Falls back to the profile, then a unique detected probe."},
             "serial": {"type": "string", "description": "Probe/ST-Link serial to select a specific board (for concurrent multi-target). Auto-added as 'adapter serial <serial>'."},
-            "speed_khz": {"type": "integer", "description": "OpenOCD adapter clock used when server_args are inferred (default 4000)."}
+            "speed_khz": {"type": "integer", "description": "OpenOCD adapter clock used when server_args are inferred (default 4000)."},
+            "usb_location": {"type": "string", "description":
+                "Select the probe by physical USB position, e.g. '1-1.4'. This is how to "
+                "pick one of several probes that report NO serial number (most clone "
+                "ST-Links), and unlike hub isolation it disconnects nobody -- two sessions "
+                "can debug two boards at once. Added as 'adapter usb location <value>'. "
+                "Usually you want hub_channel instead, which looks this up."},
+            "hub_channel": {"type": "integer", "description":
+                "Take the probe on this hub channel, using the usb_location recorded for it "
+                "in the profile's hub.map. Falls back to hub.channel, then to the map entry "
+                "whose label matches this session's name."}
         }
     }
 ))
@@ -102,12 +151,34 @@ def start_debug_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
             server_args_source = probe_source
         else:
             if detection and detection.get("count", 0) > 1:
+                # Naming only "select one" sent agents off to read the skill docs to
+                # work out HOW -- and on a hub bench the practical answer is to
+                # isolate, which this message never mentioned. Spell out both routes
+                # so the next step is a tool call, not a documentation round trip.
+                count = detection.get("count", 0)
+                serials = [p.get("serial") for p in detection.get("probes", []) if p.get("serial")]
+                by_serial = (f' Serials seen: {serials}; set one with '
+                             f'debug_profile(action=set, serial="...").' if serials else
+                             " None of them reports a serial number, so they can only be told apart "
+                             "by USB port -- isolation is the practical route here.")
                 return [content_error(
-                    "Multiple debug probes are connected. Select one with profile probe/serial or pass "
-                    "explicit server_args; no probe was chosen automatically.",
+                    f"{count} debug probes are connected and none was chosen automatically."
+                    f"{by_serial} Best route: pin the one you want by USB position, which needs "
+                    "no serial and disconnects nobody -- pass server_args containing "
+                    '-c "adapter usb location <bus>-<port>", e.g. 1-1.4 for hub channel 4 '
+                    "(the last port number is the hub channel). Two sessions can then debug two "
+                    "boards at once. Failing that, isolate: "
+                    'hub(action=data, state="on", channel=N, exclusive=true, confirm=true) leaves '
+                    "one probe enumerated -- but it takes every OTHER board off the USB bus, and "
+                    'putting them back needs hub(action=data, state="on", channel=M, confirm=true) '
+                    "(confirm is required: data_on is a mutating action under the default guard).",
                     code="multiple_probes",
                     raw_response=detection,
-                    suggested_next_actions=["detect_probe", "set_debug_profile", "start_debug_session"],
+                    suggested_next_actions=[
+                        'start_debug_session(server_args=[..., "-c", "adapter usb location 1-1.N"])',
+                        'hub(action=data, state="on", channel=N, exclusive=true, confirm=true)',
+                        "debug_profile(action=set, serial=...)",
+                    ],
                 )]
             missing = [field for field, value in (("mcu", mcu), ("probe", probe)) if not value]
             return [content_error(
@@ -138,6 +209,20 @@ def start_debug_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
         if serial and "adapter serial" not in _argstr:
             args += ["-c", f"adapter serial {serial}"]
             ctx.sess.serial = serial
+        # The serial-less case, which is most clone ST-Links: OpenOCD can select a
+        # probe by physical USB position instead, and that needs nobody
+        # disconnected. Verified on this bench -- two instances pinned to different
+        # locations coexist, and the last port number is the hub channel
+        # (CH1->1-1.1, CH3->1-1.3, CH4->1-1.4, correlated by cutting each channel's
+        # data line and seeing which location vanished).
+        #
+        # Isolation (hub exclusive=true) was only ever a workaround for this server
+        # not telling OpenOCD which probe to take: it drops every OTHER board off
+        # the USB bus, bypasses the hub guard and the audit trail, and has to be
+        # undone afterwards.
+        location = _usb_location_for(ctx, arguments, profile)
+        if location and "adapter usb location" not in _argstr:
+            args += ["-c", f"adapter usb location {location}"]
     # A previous session may not have fully released the probe/port yet, so the
     # restart can transiently fail with "open failed". retry_call backs off and
     # retries those, so stop -> start (and CI loops) work without a manual restart.
