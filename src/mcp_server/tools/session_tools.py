@@ -114,17 +114,21 @@ def start_debug_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
                              "by USB port -- isolation is the practical route here.")
                 return [content_error(
                     f"{count} debug probes are connected and none was chosen automatically."
-                    f"{by_serial} With a programmable USB hub, isolate first: "
+                    f"{by_serial} Best route: pin the one you want by USB position, which needs "
+                    "no serial and disconnects nobody -- pass server_args containing "
+                    '-c "adapter usb location <bus>-<port>", e.g. 1-1.4 for hub channel 4 '
+                    "(the last port number is the hub channel). Two sessions can then debug two "
+                    "boards at once. Failing that, isolate: "
                     'hub(action=data, state="on", channel=N, exclusive=true, confirm=true) leaves '
-                    "one probe enumerated, then start_debug_session auto-selects it. Restore the "
-                    'other channels with hub(action=data, state="on", channel=M) when done. '
-                    "Without a hub, pass explicit server_args naming the probe.",
+                    "one probe enumerated -- but it takes every OTHER board off the USB bus, and "
+                    'putting them back needs hub(action=data, state="on", channel=M, confirm=true) '
+                    "(confirm is required: data_on is a mutating action under the default guard).",
                     code="multiple_probes",
                     raw_response=detection,
                     suggested_next_actions=[
+                        'start_debug_session(server_args=[..., "-c", "adapter usb location 1-1.N"])',
                         'hub(action=data, state="on", channel=N, exclusive=true, confirm=true)',
                         "debug_profile(action=set, serial=...)",
-                        "start_debug_session",
                     ],
                 )]
             missing = [field for field, value in (("mcu", mcu), ("probe", probe)) if not value]

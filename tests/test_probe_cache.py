@@ -134,3 +134,33 @@ def test_a_failed_enumeration_is_not_cached(monkeypatch):
 
     assert runner.calls == 1, "a failure must not be served for the rest of the TTL"
     assert second["count"] == 1
+
+
+def test_the_multiple_probes_guidance_prescribes_calls_that_actually_work():
+    """A remedy the guard rejects is worse than no remedy: it sends the agent down a
+    dead end with a plausible-looking command.
+
+    The first version of this message told the caller to restore the other channels
+    with hub(action=data, state="on", channel=M) -- which the default 'confirm'
+    guard mode refuses, because data_on is a mutating action. Verified against the
+    real guard, not read from the source.
+    """
+    import inspect
+
+    from conftest import FakeHub
+
+    from mcp_server.hub import HubGuardError, HubManager
+    from mcp_server.tools import session_tools
+
+    # The message is built inline in the handler, so assert against the module text.
+    assert "channel=M, confirm=true" in inspect.getsource(session_tools), \
+        "the restore guidance must carry confirm=true"
+
+    # And prove the guard really does refuse it without confirm, so this test fails
+    # if the requirement is ever relaxed and the guidance silently becomes stale.
+    manager = HubManager(backend_factory=lambda exclude_ports=None: FakeHub())
+    manager._idle_release_sec = 0
+    manager.configure({"port": "COM7"})
+    with pytest.raises(HubGuardError):
+        manager.data(2, "on")
+    assert manager.data(2, "on", confirm=True)["applied"] is True
