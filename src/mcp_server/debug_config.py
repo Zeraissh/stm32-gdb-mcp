@@ -223,8 +223,10 @@ def _validate_hub(hub, errors: list[str]):
                     continue
                 # `key` is what hub(action=discover) writes for a probe with no
                 # serial number: a USB-port-derived identity, stable while the
-                # probe stays in that port.
-                for field in ("serial", "label", "key"):
+                # probe stays in that port. `usb_location` is the libusb bus-port
+                # path OpenOCD takes for `adapter usb location`, which is how a
+                # serial-less probe gets selected without disconnecting anyone.
+                for field in ("serial", "label", "key", "usb_location"):
                     value = entry.get(field)
                     if value is not None and (not isinstance(value, str) or not value.strip()):
                         errors.append(f"hub.map[{number}].{field} must be a non-empty string")

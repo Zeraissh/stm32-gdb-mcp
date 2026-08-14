@@ -164,3 +164,60 @@ def test_the_multiple_probes_guidance_prescribes_calls_that_actually_work():
     with pytest.raises(HubGuardError):
         manager.data(2, "on")
     assert manager.data(2, "on", confirm=True)["applied"] is True
+
+
+# --- selecting a probe by USB position instead of isolating -------------------
+
+def _session_args(monkeypatch, arguments, profile):
+    """Run start_debug_session far enough to see the server_args it assembled."""
+    import asyncio
+    import json
+
+    from conftest import FakeGdbClient, FakeGdbManager, FakeProfile
+
+    import mcp_server.server as server_module
+    from mcp_server.server import handle_call_tool
+
+    manager = FakeGdbManager()
+    monkeypatch.setattr(server_module, "gdb_manager", manager)
+    monkeypatch.setattr(server_module, "gdb_client", FakeGdbClient())
+    monkeypatch.setattr(server_module, "debug_profile", FakeProfile(profile))
+    result = asyncio.run(handle_call_tool("start_debug_session", arguments))
+    payload = json.loads(result.content[0].text)
+    assert payload["ok"] is True, payload
+    # FakeGdbManager records (server_type, args) per start.
+    assert manager.started, "the session never started"
+    return manager.started[-1]
+
+
+def test_a_channel_with_a_recorded_location_pins_openocd_to_it(monkeypatch):
+    # The point: no isolation, nobody disconnected, two boards can run at once.
+    profile = {"mcu": "STM32L151", "probe": "stlink", "server_type": "openocd",
+               "hub": {"map": {"4": {"label": "AGS", "usb_location": "1-1.4"}}}}
+
+    args = _session_args(monkeypatch, {"hub_channel": 4}, profile)
+
+    flat = " ".join(str(a) for a in (args or []))
+    assert "adapter usb location 1-1.4" in flat
+
+
+def test_an_explicit_location_wins_over_the_map(monkeypatch):
+    profile = {"mcu": "STM32L151", "probe": "stlink", "server_type": "openocd",
+               "hub": {"map": {"4": {"usb_location": "1-1.4"}}}}
+
+    args = _session_args(monkeypatch, {"hub_channel": 4, "usb_location": "9-9.9"}, profile)
+
+    flat = " ".join(str(a) for a in (args or []))
+    assert "adapter usb location 9-9.9" in flat
+
+
+def test_no_location_is_invented_when_none_is_recorded(monkeypatch):
+    # The prefix ("1-1.") is the hub's own position on the bus and cannot be derived
+    # from a channel number. A guess would either fail to open or open the wrong probe.
+    profile = {"mcu": "STM32L151", "probe": "stlink", "server_type": "openocd",
+               "hub": {"map": {"4": {"label": "AGS"}}}}
+
+    args = _session_args(monkeypatch, {"hub_channel": 4}, profile)
+
+    flat = " ".join(str(a) for a in (args or []))
+    assert "adapter usb location" not in flat
