@@ -688,11 +688,19 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "One-call bring-up: flash an ELF (loads symbols), reset-halt, set a temporary breakpoint at an entry point (default 'main'), run to it, and return the decoded stop context.",
+   "description": "One-call bring-up: flash an ELF (loads symbols), reset-halt, set a temporary breakpoint at an entry point (default 'main'), run to it, and return the decoded stop context. With hub_channel (or usb_location) and no session running, it starts one pinned to that probe first -- so 'flash the firmware on channel 4' is this single call, on a bench with several probes, without disconnecting any of the others.",
    "inputSchema": {
     "properties": {
      "file_path": {
       "description": "Path to the ELF to flash.",
+      "type": "string"
+     },
+     "hub_channel": {
+      "description": "Start a session on the probe at this hub channel first, if none is running. Uses the usb_location recorded for it in the profile's hub.map. Ignored when a session is already live -- it flashes through that one.",
+      "type": "integer"
+     },
+     "mcu": {
+      "description": "Passed through when this call starts the session; falls back to the profile.",
       "type": "string"
      },
      "run_to": {
@@ -706,6 +714,10 @@
      "timeout_sec": {
       "description": "Max seconds to wait (default 10).",
       "type": "number"
+     },
+     "usb_location": {
+      "description": "Same, but naming the USB position directly, e.g. '1-1.4'.",
+      "type": "string"
      }
     },
     "required": [
