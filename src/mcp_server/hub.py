@@ -244,6 +244,9 @@ class HubManager:
         # Channels this process powered off and has not powered back on. Restored
         # on shutdown so a killed MCP server never leaves a bench board dark.
         self._we_turned_off: set[int] = set()
+        # Channels this process took OFF the USB bus and has not put back. The
+        # data-line twin of _we_turned_off; see close().
+        self._we_disconnected: set[int] = set()
         # Hand the control port back after this long with no hub traffic, so one
         # session cannot lock every other one out of the bench. 0 disables it.
         self._idle_release_sec: float = IDLE_RELEASE_SEC
@@ -332,11 +335,12 @@ class HubManager:
                 # prevent. Windows CI caught it; this machine's timing did not.
                 self._arm_idle_release_locked(remaining)
                 return
-            if self._we_turned_off:
-                # NEVER release while this process owes a port its power back.
-                # Holding the handle is exactly what lets shutdown restore it, and
-                # close() only restores while connected -- dropping the link here
-                # would leave a board dark with nothing able to notice.
+            if self._we_turned_off or self._we_disconnected:
+                # NEVER release while this process owes a channel its power OR its
+                # data line back. Holding the handle is exactly what lets shutdown
+                # restore them, and close() only restores while connected --
+                # dropping the link here would leave a board dark, or silently off
+                # the USB bus, with nothing able to notice.
                 self._arm_idle_release_locked()
                 return
             # Power is deliberately NOT touched: an idle disconnect is not a
@@ -432,13 +436,23 @@ class HubManager:
             except Exception:  # noqa: BLE001 - teardown must not raise
                 pass
 
-    def close(self, restore_power: bool = True) -> dict:
-        """Disconnect, optionally re-powering channels this process turned off.
+    def close(self, restore_power: bool = True, restore_data: bool = True) -> dict:
+        """Disconnect, putting back whatever this process changed.
 
         Wired into ``server._shutdown_all_sessions``: a client that kills the MCP
-        server must not leave a bench rack dark.
+        server must not leave a bench rack dark -- or, just as invisibly, off the
+        USB bus.
+
+        Data lines matter as much as power here and had no restore at all until
+        now. ``hub(action=data, exclusive=true)`` switches off every OTHER
+        channel's data line, which is the documented way to make
+        start_debug_session's single-probe auto-select work on a rack -- so the
+        common case leaves several boards disconnected, and nothing remembered to
+        put them back. A dark board is at least visible; a board whose probe
+        silently vanished from the bus looks like a broken cable.
         """
         restored: list[int] = []
+        reconnected: list[int] = []
         with self._lock:
             if self._hub is not None and restore_power and self._we_turned_off:
                 for channel in sorted(self._we_turned_off):
@@ -447,9 +461,17 @@ class HubManager:
                             restored.append(channel)
                     except Exception:  # noqa: BLE001 - shutdown must not raise
                         pass
+            if self._hub is not None and restore_data and self._we_disconnected:
+                for channel in sorted(self._we_disconnected):
+                    try:
+                        if self._hub.set_channel_usb2_dataline(channel, state=1):
+                            reconnected.append(channel)
+                    except Exception:  # noqa: BLE001 - shutdown must not raise
+                        pass
             self._we_turned_off.clear()
+            self._we_disconnected.clear()
             self._disconnect_locked()
-        return {"restored_channels": restored}
+        return {"restored_channels": restored, "reconnected_channels": reconnected}
 
     # --------------------------------------------------------------- channels
 
@@ -742,6 +764,13 @@ class HubManager:
         for other in others:
             if hub.set_channel_usb2_dataline(other, state=0):
                 turned_off.append(other)
+                # This path talks to the backend directly rather than through
+                # _switch (one guard decision covers the whole isolation), so the
+                # bookkeeping _switch would have done has to happen here too --
+                # otherwise the very case that strands boards, isolating on a rack,
+                # is the one case nothing remembers to undo.
+                self._we_disconnected.add(other)
+        self._we_disconnected.discard(channel)
         result["exclusive"] = True
         result["data_off_channels"] = turned_off
         return result
@@ -928,6 +957,15 @@ class HubManager:
                     self._we_turned_off.add(channel)
                 elif state == "on":
                     self._we_turned_off.discard(channel)
+            elif kind == "data":
+                # Symmetric with power, and for the same reason: this process took
+                # the channel off the bus, so this process owes it back. exclusive
+                # isolation routes every "other" channel through here, so the
+                # bookkeeping covers the case that actually bites.
+                if state == "off" and ok:
+                    self._we_disconnected.add(channel)
+                elif state == "on":
+                    self._we_disconnected.discard(channel)
             self.guard.audit(action, channel, decision, {"acknowledged": ok})
 
         if not ok:
