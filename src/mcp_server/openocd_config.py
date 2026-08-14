@@ -13,6 +13,7 @@ import platform
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -245,9 +246,47 @@ def _parse_macos_usb(payload: str) -> list[dict]:
 PROBE_DETECTION_TIMEOUT_S = 45
 
 
-def detect_probe(platform_name: str | None = None, sysfs_root: str | Path = "/sys/bus/usb/devices", runner=None) -> dict:
+# Measured on this bench: 7.8-8.5 s per call, every call, because it spawns
+# PowerShell and walks the whole USB device tree. A single "flash the board on CH4"
+# request calls it three times -- look, confirm the isolation took, confirm the
+# restore -- which is ~24 s of the ~32 s of tool time, and each call is also a
+# round trip the agent has to think around.
+#
+# USB topology does not change on its own inside one flow, so a short TTL removes
+# the repeats. It is deliberately short: a human unplugging a probe should not have
+# to wait long for the server to notice.
+PROBE_CACHE_TTL_S = 3.0
+_probe_cache: dict = {"at": 0.0, "key": None, "response": None}
+
+
+def invalidate_probe_cache() -> None:
+    """Drop the cached enumeration. Call after anything that moves USB topology.
+
+    Not an optimisation detail -- a correctness requirement. detect_probe is how a
+    caller CONFIRMS a hub isolation took effect, so serving a pre-isolation result
+    afterwards would tell an agent the bench is in a state it is not, which is worse
+    than the 8 s it saves. HubManager._switch calls this on every applied change.
+    """
+    _probe_cache["at"] = 0.0
+    _probe_cache["key"] = None
+    _probe_cache["response"] = None
+
+
+def detect_probe(platform_name: str | None = None, sysfs_root: str | Path = "/sys/bus/usb/devices",
+                 runner=None, use_cache: bool = True) -> dict:
     """Enumerate connected debug probes from OS USB device state."""
     system = platform_name or platform.system()
+    # Recorded BEFORE runner is defaulted below -- reading `runner is None` after
+    # that line is always False, which is what made the first version of this cache
+    # never store anything and quietly stay as slow as before.
+    real_hardware = runner is None
+    # Keyed on the arguments, so a test passing its own platform never reads an
+    # entry produced for a different one.
+    cache_key = (system, str(sysfs_root))
+    if use_cache and real_hardware and _probe_cache["response"] is not None \
+            and _probe_cache["key"] == cache_key \
+            and (time.monotonic() - _probe_cache["at"]) < PROBE_CACHE_TTL_S:
+        return dict(_probe_cache["response"])
     runner = runner or subprocess.run
     probes = []
     method = "none"
@@ -294,6 +333,11 @@ def detect_probe(platform_name: str | None = None, sysfs_root: str | Path = "/sy
         response["error"] = error
     if len(probes) == 1:
         response["suggested_probe"] = probes[0]["type"]
+    if use_cache and real_hardware and not error:
+        # Never cache a failure: the next caller should get a fresh attempt rather
+        # than the same error for the rest of the TTL.
+        _probe_cache.update({"at": time.monotonic(), "key": cache_key,
+                             "response": dict(response)})
     return response
 
 

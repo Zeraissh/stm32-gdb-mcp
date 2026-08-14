@@ -934,6 +934,14 @@ class HubManager:
             raise HubUnavailableError(
                 f"hub did not acknowledge {action} on channel {channel}; the link may have dropped"
             )
+        # Cutting power or data changes what is enumerated on the USB bus, and
+        # detect_probe is CACHED -- and is precisely how a caller confirms this
+        # switch took effect. Serving a pre-switch enumeration afterwards would
+        # report a bench state that no longer exists, which is worse than the
+        # re-enumeration cost it saves. Imported here, not at module scope, to keep
+        # the hub layer free of a hard dependency on probe detection.
+        from .openocd_config import invalidate_probe_cache
+        invalidate_probe_cache()
         return {"channel": channel, "action": action, "applied": True}
 
 

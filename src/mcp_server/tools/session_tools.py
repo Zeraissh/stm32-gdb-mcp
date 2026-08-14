@@ -102,12 +102,30 @@ def start_debug_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
             server_args_source = probe_source
         else:
             if detection and detection.get("count", 0) > 1:
+                # Naming only "select one" sent agents off to read the skill docs to
+                # work out HOW -- and on a hub bench the practical answer is to
+                # isolate, which this message never mentioned. Spell out both routes
+                # so the next step is a tool call, not a documentation round trip.
+                count = detection.get("count", 0)
+                serials = [p.get("serial") for p in detection.get("probes", []) if p.get("serial")]
+                by_serial = (f' Serials seen: {serials}; set one with '
+                             f'debug_profile(action=set, serial="...").' if serials else
+                             " None of them reports a serial number, so they can only be told apart "
+                             "by USB port -- isolation is the practical route here.")
                 return [content_error(
-                    "Multiple debug probes are connected. Select one with profile probe/serial or pass "
-                    "explicit server_args; no probe was chosen automatically.",
+                    f"{count} debug probes are connected and none was chosen automatically."
+                    f"{by_serial} With a programmable USB hub, isolate first: "
+                    'hub(action=data, state="on", channel=N, exclusive=true, confirm=true) leaves '
+                    "one probe enumerated, then start_debug_session auto-selects it. Restore the "
+                    'other channels with hub(action=data, state="on", channel=M) when done. '
+                    "Without a hub, pass explicit server_args naming the probe.",
                     code="multiple_probes",
                     raw_response=detection,
-                    suggested_next_actions=["detect_probe", "set_debug_profile", "start_debug_session"],
+                    suggested_next_actions=[
+                        'hub(action=data, state="on", channel=N, exclusive=true, confirm=true)',
+                        "debug_profile(action=set, serial=...)",
+                        "start_debug_session",
+                    ],
                 )]
             missing = [field for field, value in (("mcu", mcu), ("probe", probe)) if not value]
             return [content_error(
