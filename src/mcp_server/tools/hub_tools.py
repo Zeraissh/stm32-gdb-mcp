@@ -172,6 +172,21 @@ def set_hub_data(ctx: ToolContext, arguments: dict) -> list[TextContent]:
                               live_session=_live_session(ctx, channel),
                               exclusive=bool(arguments.get("exclusive")))
         result["channel_source"] = source
+        # A half-done isolation must not read as success. The caller's next move is
+        # start_debug_session, whose single-probe auto-select is only safe when
+        # exactly one probe is left enumerated -- with two it picks whichever, and
+        # not touching the wrong board was the entire point of isolating.
+        if result.get("exclusive_incomplete"):
+            still_up = [entry["channel"] for entry in result["exclusive_incomplete"]]
+            return [content_error(
+                f"isolation is INCOMPLETE: channel {result['channel']} is on, but "
+                f"{still_up} could not be disconnected, so more than one probe is still "
+                "enumerated and start_debug_session may attach to the wrong board. "
+                "Per-channel reasons are in raw_response.",
+                code="hub_isolation_incomplete",
+                raw_response=result,
+                suggested_next_actions=["hub(action=describe)", "detect_probe"],
+            )]
         return [content_success(result)]
     except (HubUnavailableError, HubBusyError, HubGuardError) as exc:
         return _error(exc)
