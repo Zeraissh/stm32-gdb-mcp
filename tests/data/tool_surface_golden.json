@@ -50,6 +50,10 @@
    "description": "Starts the specified GDB Server (openocd, stlink, jlink) and connects the GDB Client to it. openocd REQUIRES server_args naming the probe and target, e.g. ['-f','interface/stlink.cfg','-f','target/stm32l4x.cfg'] \u2014 without them OpenOCD cannot find a config or adapter. Omitted values come from the active debug profile.",
    "inputSchema": {
     "properties": {
+     "hub_channel": {
+      "description": "Take the probe on this hub channel, using the usb_location recorded for it in the profile's hub.map. Falls back to hub.channel, then to the map entry whose label matches this session's name.",
+      "type": "integer"
+     },
      "probe": {
       "description": "Optional OpenOCD probe type: stlink, jlink, or cmsis-dap. Falls back to the profile, then a unique detected probe.",
       "type": "string"
@@ -81,6 +85,10 @@
      "speed_khz": {
       "description": "OpenOCD adapter clock used when server_args are inferred (default 4000).",
       "type": "integer"
+     },
+     "usb_location": {
+      "description": "Select the probe by physical USB position, e.g. '1-1.4'. This is how to pick one of several probes that report NO serial number (most clone ST-Links), and unlike hub isolation it disconnects nobody -- two sessions can debug two boards at once. Added as 'adapter usb location <value>'. Usually you want hub_channel instead, which looks this up.",
+      "type": "string"
      }
     },
     "type": "object"

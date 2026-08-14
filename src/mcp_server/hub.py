@@ -755,24 +755,54 @@ class HubManager:
         kind of invisible side effect this server refuses to hide.
         """
         result = self._switch("data", channel, state, confirm, live_session)
-        if not exclusive or result["applied"] is not True or state != "on":
+        if not exclusive or state != "on":
+            return result
+        if result["applied"] is not True:
+            # dry_run (or a blocked target switch) means NOTHING was isolated. Say
+            # so in the result: the previous version silently skipped the whole
+            # exclusive leg while still returning ok, so a caller that checked only
+            # ok=true went on to start a session on an un-isolated rack.
+            result["exclusive"] = False
+            result["exclusive_skipped"] = (
+                f"target channel {channel} was not switched ({result.get('reason') or 'not applied'}), "
+                "so no other channel was disconnected")
             return result
 
-        hub = self._ensure()
-        others = [ch for ch in self._channels if ch != channel]
-        turned_off = []
-        for other in others:
-            if hub.set_channel_usb2_dataline(other, state=0):
+        # Route the neighbours through _switch as well. Doing it directly, as this
+        # used to, skipped the guard (so it could cut the data line under ANOTHER
+        # session's live GDB server with no confirm), skipped the audit trail (so
+        # describe()'s recent_actions could not even tell you what to put back),
+        # skipped the probe-cache invalidation, and ran outside the lock.
+        turned_off, failed = [], []
+        for other in [ch for ch in self._channels if ch != channel]:
+            try:
+                outcome = self._switch("data", other, "off", confirm, live_session)
+            except (HubGuardError, HubUnavailableError) as exc:
+                # A neighbour that the guard refuses, or that the hub does not
+                # acknowledge, must not abort the whole call: the target channel is
+                # already switched, and raising here would leave the caller with a
+                # half-isolated bench and no result describing it. Recorded instead,
+                # and reported as an incomplete isolation.
+                failed.append({"channel": other, "reason": str(exc)})
+                continue
+            if outcome.get("applied") is True:
                 turned_off.append(other)
-                # This path talks to the backend directly rather than through
-                # _switch (one guard decision covers the whole isolation), so the
-                # bookkeeping _switch would have done has to happen here too --
-                # otherwise the very case that strands boards, isolating on a rack,
-                # is the one case nothing remembers to undo.
-                self._we_disconnected.add(other)
+            else:
+                failed.append({"channel": other,
+                               "reason": outcome.get("reason") or "not acknowledged"})
+        # This branch used to add each neighbour to _we_disconnected by hand,
+        # because the loop bypassed _switch. main now routes it through _switch,
+        # which does that bookkeeping itself -- so keeping the manual version would
+        # be a second writer to the same ledger. The one thing still owed by hand is
+        # the TARGET channel: it was just switched on, so nothing is owed for it.
         self._we_disconnected.discard(channel)
-        result["exclusive"] = True
+        result["exclusive"] = not failed
         result["data_off_channels"] = turned_off
+        if failed:
+            # A partial isolation used to be reported as success with a shorter
+            # list, which is how a caller ends up debugging the wrong board: more
+            # than one probe is still enumerated and auto-select picks whichever.
+            result["exclusive_incomplete"] = failed
         return result
 
     def power_cycle(self, channel: int, off_ms: int = 400, settle_ms: int = 1500,
