@@ -1,5 +1,51 @@
 # Changelog / 更新日志
 
+## [0.13.0] - 2026-08-14
+
+### Select a probe by USB position instead of isolating the bench / 用 USB 位置选探针，不必隔离台架
+
+- **Answers "why can't two OpenOCDs each drive a different ST-Link" -- they can.** OpenOCD's
+  `adapter usb location <bus>-<port>` selects by physical position and needs no serial number,
+  which is exactly what clone ST-Links lack. `start_debug_session` gains `usb_location` and
+  `hub_channel`, the latter looking up `hub.map[N].usb_location`. Two sessions can now debug
+  two boards at once, and nobody gets disconnected. /
+  OpenOCD 本就支持按物理 USB 位置选探针，无需序列号——正是克隆 ST-Link 缺的东西。
+- Verified on hardware, not inferred: cutting each hub channel's data line and seeing which
+  location vanished gives CH1→1-1.1, CH3→1-1.3, CH4→1-1.4 (3/3), and two pinned instances
+  coexist. Isolation was only ever a workaround for this server not telling OpenOCD which
+  probe to take. **No location is ever guessed** -- the prefix is the hub's own position on
+  the bus and cannot be derived from a channel number. / 已在硬件上逐通道验证；绝不猜测位置。
+
+### A one-sentence flash no longer costs minutes / 一句话烧录不再耗时数分钟
+
+- **`detect_probe` is cached for 3 s.** It costs 7.8-8.5 s on EVERY call (it spawns PowerShell
+  and walks the USB device tree), and a flash flow made three of them -- ~24 s of ~32 s of
+  tool time. Any hub switch invalidates it, which is a correctness requirement rather than
+  tidiness: `detect_probe` is how a caller confirms an isolation took effect. /
+  `detect_probe` 每次调用都要 7.8-8.5 秒且无缓存；现在缓存 3 秒，任何 hub 切换都会作废它。
+- **`multiple_probes` now says how to fix itself.** It said "select one" without saying how, so
+  the agent went to read the skill docs -- a round trip per attempt. It now names the calls,
+  leads with location pinning, and states isolation's real cost. /
+  该报错此前不给解法，agent 只能去翻文档。
+
+### Isolation, where it is still used, is honest about what it did / 隔离现在如实汇报
+
+- **It went around the guard entirely.** The neighbour loop talked to the backend directly, so
+  every channel it disconnected got no guard decision, no audit entry, no lock and no cache
+  invalidation -- an isolation could cut the USB link under ANOTHER session's live GDB server
+  with no confirm and no record. It now routes through the same path as any other switch. /
+  隔离切断其他通道时完全绕过守卫与审计，可在别的会话运行时断其链路且不留记录。
+- **A partial isolation reported success.** A neighbour the hub would not switch was skipped
+  silently, leaving more than one probe enumerated for auto-select to choose from -- the exact
+  outcome isolating exists to prevent. Now `hub_isolation_incomplete`. And `dry_run` skipped
+  the whole exclusive leg while returning ok, so a caller could start a session on an
+  un-isolated rack. / 部分隔离被当作成功；dry_run 下整段被跳过却返回成功。
+- **A data line this process switched off is put back on shutdown**, as power already was.
+  `exclusive=true` takes every other board off the bus, and nothing remembered to reconnect
+  them -- observed on this bench, where two boards sat disconnected long after the run that
+  isolated a third. A dark board is at least visible; one silently off the bus looks like a
+  broken cable. / 被本进程断开的数据线现在会在退出时恢复，与电源一致。
+
 ## [0.12.0] - 2026-08-12
 
 The v0.11.0 lockdown denies target writes through GDB. These close the two write

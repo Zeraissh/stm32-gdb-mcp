@@ -1,6 +1,6 @@
 [project]
 name = "stm32-gdb-mcp"
-version = "0.12.0"
+version = "0.13.0"
 description = "MCP server for STM32 debugging with GDB"
 readme = "README.md"
 requires-python = ">=3.10"
