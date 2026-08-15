@@ -332,19 +332,45 @@ def flash_erase(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     name="flash_and_run",
     description="One-call bring-up: flash an ELF (loads symbols), reset-halt, set a "
                 "temporary breakpoint at an entry point (default 'main'), run to it, and "
-                "return the decoded stop context.",
+                "return the decoded stop context. With hub_channel (or usb_location) and no "
+                "session running, it starts one pinned to that probe first -- so 'flash the "
+                "firmware on channel 4' is this single call, on a bench with several probes, "
+                "without disconnecting any of the others.",
     inputSchema={
         "type": "object",
         "properties": {
             "file_path": {"type": "string", "description": "Path to the ELF to flash."},
             "run_to": {"type": "string", "description": "Entry point to stop at (default 'main')."},
-            "timeout_sec": {"type": "number", "description": "Max seconds to wait (default 10)."}
+            "timeout_sec": {"type": "number", "description": "Max seconds to wait (default 10)."},
+            "hub_channel": {"type": "integer", "description":
+                "Start a session on the probe at this hub channel first, if none is running. "
+                "Uses the usb_location recorded for it in the profile's hub.map. Ignored when "
+                "a session is already live -- it flashes through that one."},
+            "usb_location": {"type": "string", "description":
+                "Same, but naming the USB position directly, e.g. '1-1.4'."},
+            "mcu": {"type": "string", "description":
+                "Passed through when this call starts the session; falls back to the profile."}
         },
         "required": ["file_path"]
     }
 ))
 def flash_and_run(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     profile = ctx.debug_profile.get()
+    # "Flash the new firmware on CH4" should be ONE call. Without this it is two --
+    # start_debug_session, then flash -- and on a multi-probe bench it used to be
+    # four, because the session could not say which probe it wanted and the bench
+    # had to be isolated first. hub_channel pins the probe by USB position instead,
+    # so nothing is disconnected and other boards keep working.
+    started = None
+    if (arguments.get("hub_channel") or arguments.get("usb_location")) and not _session_is_live(ctx):
+        started = _start_session_for_flash(ctx, arguments, profile)
+        if started.get("error"):
+            return [content_error(
+                f"could not start a session on the requested probe: {started['error']}",
+                code=started.get("code", "session_start_failed"),
+                suggested_next_actions=["detect_probe", "start_debug_session", "hub(action=describe)"],
+            )]
+        profile = ctx.debug_profile.get()
     reset_config = profile.get("reset", {})
     reset = resolve_reset_command(
         ctx.gdb_manager.server_type or profile.get("server_type"),
@@ -359,7 +385,54 @@ def flash_and_run(ctx: ToolContext, arguments: dict) -> list[TextContent]:
         timeout_sec=arguments.get("timeout_sec", 10.0),
         reset_command=reset["command"],
     )
+    if started:
+        result["session"] = started
     return [content_success(result, suggested_next_actions=["capture_state", "debug_until"])]
+
+
+def _session_is_live(ctx: ToolContext) -> bool:
+    try:
+        return bool(ctx.gdb_manager is not None and ctx.gdb_manager.is_alive())
+    except Exception:  # noqa: BLE001 - liveness is advisory; treat unknown as not live
+        return False
+
+
+def _start_session_for_flash(ctx: ToolContext, arguments: dict, profile: dict) -> dict:
+    """Bring up a session pinned to the requested probe, reusing start_debug_session.
+
+    Reusing it rather than reimplementing matters: probe selection, server_args
+    inference, the probe lock, symbol autoload and the teardown-on-failure all live
+    there, and a second copy would drift.
+
+    Deliberately does NOT tear the session down if the FLASH later fails. A running
+    OpenOCD is not stranded bench state the way a disconnected data line is -- it is
+    the thing an agent needs in order to find out why the flash failed, and killing
+    it would destroy the evidence to make the call look tidy.
+    """
+    import json  # noqa: PLC0415 - only needed on this path
+
+    from .registry import REGISTRY  # noqa: PLC0415 - avoids an import cycle at module load
+
+    payload: dict = {}
+    for key in ("mcu", "server_type", "server_args", "speed_khz", "probe", "serial",
+                "hub_channel", "usb_location", "session"):
+        if arguments.get(key) is not None:
+            payload[key] = arguments[key]
+    spec = REGISTRY.get("start_debug_session")
+    if spec is None:
+        return {"error": "start_debug_session is not registered"}
+    try:
+        result = spec.handler(ctx, payload)
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    decoded = json.loads(result[0].text)
+    if not decoded.get("ok"):
+        return {"error": (decoded.get("error") or {}).get("message", "unknown"),
+                "code": (decoded.get("error") or {}).get("code", "session_start_failed")}
+    data = decoded.get("data") or {}
+    return {"started": True, "port": data.get("port"),
+            "server_type": data.get("server_type"),
+            "pinned_to": arguments.get("usb_location") or f"hub channel {arguments.get('hub_channel')}"}
 
 
 @register(Tool(
