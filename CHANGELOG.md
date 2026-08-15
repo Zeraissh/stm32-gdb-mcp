@@ -1,5 +1,30 @@
 # Changelog / 更新日志
 
+## [0.14.0] - 2026-08-15
+
+### "Flash the new firmware on CH4" is one call / 一句话烧录变成一次调用
+
+- **`flash_and_run` can bring up its own session, pinned to one probe.**
+  `flash_and_run(file_path=..., hub_channel=4)` starts a session on that channel's probe
+  (via the `usb_location` recorded in `hub.map`) and flashes through it. It was two calls,
+  and before USB-position pinning it was four -- isolate the bench, start, flash, put the
+  bench back -- because the session could not say which probe it wanted. /
+  `flash_and_run` 现在可在无会话时自行起一个并绑定到指定通道的探针；此前需要两步，
+  更早需要四步（隔离→起会话→烧录→恢复）。
+- **Extended rather than added.** `flash_and_run` already existed and is already in
+  `CORE_TOOLS`, so compact mode shows it and the advertised tool count is unchanged. /
+  扩展既有工具而非新增，工具面数量不变。
+- A **live session is reused** rather than a second one started behind the caller's back; a
+  **failed start does not fall through to flashing** (on a multi-probe bench that is how the
+  wrong board gets written); a **failed flash does not tear the session down**, because a
+  running OpenOCD is what an agent needs in order to find out why -- killing it would destroy
+  the evidence to make the call look tidy. /
+  已有会话直接复用；起会话失败则不烧录；烧录失败不拆会话，那是排查依据。
+- Verified end to end on the bench, 7/7, with **all three probes visible throughout** -- which
+  is the point: `start_debug_session` would previously have refused with `multiple_probes` and
+  required isolating the other boards. One call, 9.6 s, four data lines untouched. /
+  已在真机端到端验证：三个探针全程可见、四条数据线全程连接，一次调用 9.6 秒完成。
+
 ## [0.13.0] - 2026-08-14
 
 ### Select a probe by USB position instead of isolating the bench / 用 USB 位置选探针，不必隔离台架
