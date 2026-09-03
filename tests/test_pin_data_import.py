@@ -17,7 +17,7 @@ from mcp_server.pin_data_import import (
 )
 
 MCU_XML_L4 = """<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<Mcu ClockTree="STM32L4" DBVersion="V3.0" Family="STM32L4" HasPowerPad="false" Line="STM32L431" Package="LQFP48" RefName="STM32L431C(B-C)Tx" xmlns="http://dummy.com">
+<Mcu ClockTree="STM32L4" DBVersion="V3.0" Family="STM32L4" HasPowerPad="false" Line="STM32L4x1" Package="LQFP48" RefName="STM32L431C(B-C)Tx" xmlns="http://dummy.com">
     <IP InstanceName="USART1" Name="USART" Version="sci2_v2_1_Cube"/>
     <IP ConfigFile="GPIO-STM32L4xx" InstanceName="GPIO" Name="GPIO" Version="STM32L43x_gpio_v1_0"/>
     <Pin Name="VBAT" Position="1" Type="Power"/>
@@ -55,7 +55,7 @@ def test_parse_mcu_xml_header_and_pins():
 
     assert parsed["ref_name"] == "STM32L431C(B-C)Tx"
     assert parsed["family"] == "STM32L4"
-    assert parsed["line"] == "STM32L431"
+    assert parsed["line"] == "STM32L4x1"
     assert parsed["package"] == "LQFP48"
     assert parsed["db_version"] == "V3.0"
     assert parsed["gpio_version"] == "STM32L43x_gpio_v1_0"
@@ -75,6 +75,24 @@ def test_parse_mcu_xml_header_and_pins():
 def test_parse_mcu_xml_rejects_non_mcu_root():
     with pytest.raises(ValueError, match="Mcu"):
         parse_mcu_xml('<Foo xmlns="http://dummy.com"/>')
+
+
+def test_parse_mcu_xml_derives_concrete_key_line_from_ref_name():
+    parsed = parse_mcu_xml(MCU_XML_L4)
+
+    # ST's Line attribute uses lowercase-x wildcards; the DB key must be the
+    # concrete line from RefName, matching board_model.normalize_mcu_part.
+    assert parsed["line"] == "STM32L4x1"
+    assert parsed["key_line"] == "STM32L431"
+
+
+def test_parse_mcu_xml_key_line_none_when_ref_name_unmatched():
+    xml = MCU_XML_L4.replace('RefName="STM32L431C(B-C)Tx"', 'RefName="EVALBOARD-01"')
+
+    parsed = parse_mcu_xml(xml)
+
+    assert parsed["key_line"] is None
+    assert parsed["line"] == "STM32L4x1"
 
 
 GPIO_MODES_L4 = """<?xml version="1.0" encoding="UTF-8" standalone="no"?>
@@ -182,8 +200,19 @@ def test_build_db_missing_modes_file_warns_and_omits_af():
     assert all("af" not in e for pin in db["STM32L431"].values() for e in pin)
 
 
+def test_build_db_falls_back_to_line_when_ref_name_unmatched():
+    xml = MCU_XML_L4.replace('RefName="STM32L431C(B-C)Tx"', 'RefName="EVALBOARD-01"')
+    mcu = parse_mcu_xml(xml)
+
+    db = build_db([mcu], {}, source="/data")
+
+    assert "STM32L4x1" in db
+    assert "STM32L431" not in db
+
+
 def test_build_db_requires_line_or_family():
     mcu = parse_mcu_xml(MCU_XML_L4)
+    mcu["key_line"] = None
     mcu["line"] = None
     mcu["family"] = None
 

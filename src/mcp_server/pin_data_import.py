@@ -5,6 +5,11 @@ Pure module: stdlib only, no imports from the rest of the package, everything
 plain dicts. Generation is an offline, git-reviewable step; the MCP server only
 ever loads the produced JSON. Never fabricates an ``af`` -- entries without a
 numeric alternate function are emitted without the key.
+
+DB keys are concrete lines derived from each MCU's ``RefName`` (matching
+``board_model.normalize_mcu_part``, e.g. ``STM32L431C(B-C)Tx`` ->
+``STM32L431``), falling back to the XML ``Line`` attribute (which may carry
+ST's lowercase-x wildcards, e.g. ``STM32L4x1``), then to the family.
 """
 
 from __future__ import annotations
@@ -14,6 +19,8 @@ import xml.etree.ElementTree as ET
 
 _AF_RE = re.compile(r"^GPIO_AF(\d+)_")
 _SKIP_SIGNALS = frozenset({"GPIO", "EVENTOUT"})
+# Same semantics as board_model._MCU_LINE_RE: concrete line from a part number.
+_REF_LINE_RE = re.compile(r"STM32[A-Z][A-Z0-9]{3}", re.IGNORECASE)
 
 
 def _ns(root: ET.Element) -> str:
@@ -65,10 +72,13 @@ def parse_mcu_xml(text: str) -> dict:
             entries.append({"peripheral": pair[0], "signal": pair[1]})
         if entries:
             pins[port_pin] = entries
+    ref_name = root.get("RefName")
+    key_line_match = _REF_LINE_RE.match(ref_name) if ref_name else None
     return {
-        "ref_name": root.get("RefName"),
+        "ref_name": ref_name,
         "family": root.get("Family"),
         "line": root.get("Line"),
+        "key_line": key_line_match.group(0).upper() if key_line_match else None,
         "package": root.get("Package"),
         "db_version": root.get("DBVersion"),
         "gpio_version": gpio_version,
@@ -109,13 +119,16 @@ GENERATED_BY = "stm32-gdb-mcp scripts/import_pin_data.py"
 
 
 def build_db(mcus: list[dict], modes_by_version: dict[str, dict], source: str) -> dict:
-    """Merge parsed MCUs into one capability DB keyed by Line, with provenance.
+    """Merge parsed MCUs into one capability DB keyed by concrete line, with provenance.
 
-    ``modes_by_version`` maps a GPIO IP version string (from each MCU's
-    ``gpio_version``) to the table returned by :func:`parse_gpio_modes_xml`.
-    A missing table degrades honestly: entries keep no ``af`` and a warning is
-    recorded in ``_meta``. Duplicate (peripheral, signal) entries across RefNames
-    of one Line are merged; a later entry may contribute a missing ``af``.
+    The key is the concrete line derived from ``RefName`` (``key_line``,
+    matching ``board_model.normalize_mcu_part``), falling back to the XML
+    ``Line`` attribute, then the family. ``modes_by_version`` maps a GPIO IP
+    version string (from each MCU's ``gpio_version``) to the table returned by
+    :func:`parse_gpio_modes_xml`. A missing table degrades honestly: entries
+    keep no ``af`` and a warning is recorded in ``_meta``. Duplicate
+    (peripheral, signal) entries across RefNames of one line are merged; a
+    later entry may contribute a missing ``af``.
     """
     db: dict = {
         "_meta": {
@@ -127,9 +140,11 @@ def build_db(mcus: list[dict], modes_by_version: dict[str, dict], source: str) -
         }
     }
     for mcu in mcus:
-        scope = mcu["line"] or mcu["family"]
+        scope = mcu["key_line"] or mcu["line"] or mcu["family"]
         if not scope:
-            raise ValueError(f"{mcu['ref_name']}: no line or family to key the DB by")
+            raise ValueError(
+                f"{mcu['ref_name']}: no key_line, line, or family to key the DB by"
+            )
         if db["_meta"]["db_version"] is None:
             db["_meta"]["db_version"] = mcu["db_version"]
         if mcu["ref_name"]:
