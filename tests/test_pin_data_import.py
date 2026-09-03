@@ -1,7 +1,10 @@
 """pin_data_import: parse ST open_pin_data / CubeMX db XML into capability DB JSON."""
 
+import json
+
 import pytest
 
+from mcp_server.board_validation import load_capability_db
 from mcp_server.pin_data_import import (
     build_db,
     normalize_port_pin,
@@ -183,3 +186,27 @@ def test_build_db_requires_line_or_family():
 
     with pytest.raises(ValueError, match="line"):
         build_db([mcu], {}, source="/data")
+
+
+def test_generated_db_round_trips_through_capability_db(tmp_path):
+    mcu = parse_mcu_xml(MCU_XML_L4)
+    modes = parse_gpio_modes_xml(GPIO_MODES_L4)
+    db = build_db([mcu], {"STM32L43x_gpio_v1_0": modes}, source="/data")
+    path = tmp_path / "caps.json"
+    path.write_text(json.dumps(db, indent=2, sort_keys=True), encoding="utf-8")
+
+    caps = load_capability_db(str(path))
+
+    assert caps.supports("STM32L431", "STM32L4", "PA9", "USART1", "TX") is True
+    assert caps.supports("STM32L431", "STM32L4", "PA9", "SPI1", "MOSI") is False
+    # Unknown pin degrades to None, never a false conflict.
+    assert caps.supports("STM32L431", "STM32L4", "PB7", "USART1", "RX") is None
+
+    af_map = caps.af_map()
+    assert af_map["STM32L431"]["PA9"]["USART1_TX"] == 7
+    assert af_map["STM32L431"]["PA9"]["I2C1_SCL"] == 4
+    # Entries without af stay out of the projection.
+    assert "ADC1_IN5" not in af_map["STM32L431"].get("PA0", {})
+    # _meta must not leak into either consumer.
+    assert caps.supports("_meta", None, "PA9", "USART1", "TX") is None
+    assert "_meta" not in af_map
