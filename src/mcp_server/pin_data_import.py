@@ -142,18 +142,14 @@ def build_db(mcus: list[dict], modes_by_version: dict[str, dict], source: str) -
     for mcu in mcus:
         scope = mcu["key_line"] or mcu["line"] or mcu["family"]
         if not scope:
-            raise ValueError(
-                f"{mcu['ref_name']}: no key_line, line, or family to key the DB by"
-            )
+            raise ValueError(f"{mcu['ref_name']}: no key_line, line, or family to key the DB by")
         if db["_meta"]["db_version"] is None:
             db["_meta"]["db_version"] = mcu["db_version"]
         if mcu["ref_name"]:
             db["_meta"]["ref_names"].append(mcu["ref_name"])
         modes = modes_by_version.get(mcu["gpio_version"])
         if mcu["gpio_version"] and modes is None:
-            db["_meta"]["warnings"].append(
-                f"no GPIO modes file for {mcu['gpio_version']} ({mcu['ref_name']})"
-            )
+            db["_meta"]["warnings"].append(f"no GPIO modes file for {mcu['gpio_version']} ({mcu['ref_name']})")
         table = db.setdefault(scope, {})
         for port_pin, entries in mcu["pins"].items():
             bucket = table.setdefault(port_pin, [])
