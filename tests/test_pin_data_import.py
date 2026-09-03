@@ -77,6 +77,13 @@ def test_parse_mcu_xml_rejects_non_mcu_root():
         parse_mcu_xml('<Foo xmlns="http://dummy.com"/>')
 
 
+def test_parse_mcu_xml_malformed_raises_value_error():
+    # Pins the CLI's `except ValueError` fatality contract: a raw
+    # xml.etree.ParseError must never escape the parser.
+    with pytest.raises(ValueError, match="malformed MCU XML"):
+        parse_mcu_xml("<Mcu")
+
+
 def test_parse_mcu_xml_derives_concrete_key_line_from_ref_name():
     parsed = parse_mcu_xml(MCU_XML_L4)
 
@@ -153,12 +160,20 @@ def test_parse_gpio_modes_afio_remap_yields_no_numeric_af():
     assert table == {}
 
 
-MCU_XML_L4_TWIN = MCU_XML_L4.replace(
-    'RefName="STM32L431C(B-C)Tx"', 'RefName="STM32L431CCUx"'
-).replace(
-    '<Pin Name="PA9" Position="21" Type="I/O">',
-    '<Pin Name="PA10" Position="22" Type="I/O">',
-).replace('Name="I2C1_SCL"', 'Name="I2C1_SDA"').replace('Name="USART1_TX"', 'Name="USART1_RX"')
+def test_parse_gpio_modes_xml_malformed_raises_value_error():
+    with pytest.raises(ValueError, match="malformed GPIO modes XML"):
+        parse_gpio_modes_xml("<IP")
+
+
+MCU_XML_L4_TWIN = (
+    MCU_XML_L4.replace('RefName="STM32L431C(B-C)Tx"', 'RefName="STM32L431CCUx"')
+    .replace(
+        '<Pin Name="PA9" Position="21" Type="I/O">',
+        '<Pin Name="PA10" Position="22" Type="I/O">',
+    )
+    .replace('Name="I2C1_SCL"', 'Name="I2C1_SDA"')
+    .replace('Name="USART1_TX"', 'Name="USART1_RX"')
+)
 
 
 def test_build_db_keys_by_line_and_attaches_af():
@@ -194,9 +209,7 @@ def test_build_db_missing_modes_file_warns_and_omits_af():
 
     db = build_db([mcu], {}, source="/data")
 
-    assert db["_meta"]["warnings"] == [
-        "no GPIO modes file for STM32L43x_gpio_v1_0 (STM32L431C(B-C)Tx)"
-    ]
+    assert db["_meta"]["warnings"] == ["no GPIO modes file for STM32L43x_gpio_v1_0 (STM32L431C(B-C)Tx)"]
     assert all("af" not in e for pin in db["STM32L431"].values() for e in pin)
 
 
@@ -218,6 +231,38 @@ def test_build_db_requires_line_or_family():
 
     with pytest.raises(ValueError, match="line"):
         build_db([mcu], {}, source="/data")
+
+
+# Same concrete line, different RefName, identical PA9 signals -- exercises the
+# dedupe / af-backfill merge branch in build_db.
+MCU_XML_L4_SAME_PINS = MCU_XML_L4.replace('RefName="STM32L431C(B-C)Tx"', 'RefName="STM32L431CBTx"')
+
+
+def test_build_db_merges_duplicate_pair_across_ref_names():
+    first = parse_mcu_xml(MCU_XML_L4)
+    second = parse_mcu_xml(MCU_XML_L4_SAME_PINS)
+    modes = parse_gpio_modes_xml(GPIO_MODES_L4)
+
+    db = build_db([first, second], {"STM32L43x_gpio_v1_0": modes}, source="/data")
+
+    # Exactly one entry for the duplicated (peripheral, signal) pair, with af.
+    usart1_tx = [e for e in db["STM32L431"]["PA9"] if (e["peripheral"], e["signal"]) == ("USART1", "TX")]
+    assert usart1_tx == [{"peripheral": "USART1", "signal": "TX", "af": 7}]
+    assert db["_meta"]["ref_names"] == ["STM32L431C(B-C)Tx", "STM32L431CBTx"]
+
+
+def test_build_db_backfills_af_from_later_ref_name():
+    # First RefName's GPIO version has no modes file -> entry without af; the
+    # second RefName's modes table backfills the same merged entry.
+    first = parse_mcu_xml(MCU_XML_L4.replace('Version="STM32L43x_gpio_v1_0"', 'Version="STM32L43x_gpio_v9_9"'))
+    second = parse_mcu_xml(MCU_XML_L4_SAME_PINS)
+    modes = parse_gpio_modes_xml(GPIO_MODES_L4)
+
+    db = build_db([first, second], {"STM32L43x_gpio_v1_0": modes}, source="/data")
+
+    usart1_tx = [e for e in db["STM32L431"]["PA9"] if (e["peripheral"], e["signal"]) == ("USART1", "TX")]
+    assert usart1_tx == [{"peripheral": "USART1", "signal": "TX", "af": 7}]
+    assert db["_meta"]["warnings"] == ["no GPIO modes file for STM32L43x_gpio_v9_9 (STM32L431C(B-C)Tx)"]
 
 
 def test_generated_db_round_trips_through_capability_db(tmp_path):
@@ -286,3 +331,41 @@ def test_cli_missing_source_root_fails(tmp_path):
 
     assert result.returncode == 1
     assert "mcu" in result.stderr
+
+
+# An unrelated MCU that a wildcard expansion must never select.
+MCU_XML_F1 = (
+    MCU_XML_L4.replace('RefName="STM32L431C(B-C)Tx"', 'RefName="STM32F103C8Tx"')
+    .replace('Line="STM32L4x1"', 'Line="STM32F103"')
+    .replace('Family="STM32L4"', 'Family="STM32F1"')
+)
+
+# Same wildcard stem shape with a different package suffix (Tx vs Ux).
+MCU_XML_L4_UX = MCU_XML_L4.replace('RefName="STM32L431C(B-C)Tx"', 'RefName="STM32L431C(B-C)Ux"')
+
+
+def test_cli_mcu_selector_matches_wildcard_stem(tmp_path):
+    source = _make_source(tmp_path / "src_root")
+    (source / "mcu" / "STM32F103C8Tx.xml").write_text(MCU_XML_F1, encoding="utf-8")
+    out = tmp_path / "caps.json"
+
+    # Documented invocation: STM32L431CC must expand-match STM32L431C(B-C)Tx.
+    result = _run_cli("--source", str(source), "--mcu", "STM32L431CC", "-o", str(out))
+
+    assert result.returncode == 0, result.stderr
+    db = json.loads(out.read_text(encoding="utf-8"))
+    assert db["_meta"]["ref_names"] == ["STM32L431C(B-C)Tx"]
+    assert "STM32F103" not in db
+
+
+def test_cli_mcu_selector_ambiguous_across_wildcard_files(tmp_path):
+    source = _make_source(tmp_path / "src_root")
+    (source / "mcu" / "STM32L431C(B-C)Ux.xml").write_text(MCU_XML_L4_UX, encoding="utf-8")
+
+    result = _run_cli("--source", str(source), "--mcu", "STM32L431CC", "-o", str(tmp_path / "x.json"))
+
+    assert result.returncode == 1
+    assert "ambiguous" in result.stderr
+    # Error message shows the real file stems, not expansions.
+    assert "STM32L431C(B-C)Tx" in result.stderr
+    assert "STM32L431C(B-C)Ux" in result.stderr

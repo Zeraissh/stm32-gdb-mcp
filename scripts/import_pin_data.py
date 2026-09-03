@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import difflib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -33,6 +34,38 @@ def _die(message: str) -> SystemExit:
     raise SystemExit(f"error: {message}")
 
 
+_WILDCARD_GROUP_RE = re.compile(r"\(([0-9A-Za-z])-([0-9A-Za-z])\)")
+_MAX_WILDCARD_EXPANSIONS = 10000
+
+
+def _expand_wildcard_stem(stem: str) -> list[str]:
+    """Expand ST's parenthesized single-character ranges into concrete candidates.
+
+    ``STM32L431C(B-C)Tx`` -> ``["STM32L431CBTx", "STM32L431CCTx"]``: ``(B-C)``
+    means the single character ranges from B to C inclusive at that position.
+    Multiple parenthesized groups expand as a cartesian product; groups that
+    are not single-character ranges stay literal. Falls back to the raw stem
+    when there is nothing to expand or the product would exceed
+    ``_MAX_WILDCARD_EXPANSIONS``.
+    """
+    groups = list(_WILDCARD_GROUP_RE.finditer(stem))
+    if not groups:
+        return [stem]
+    total = 1
+    for group in groups:
+        total *= ord(group.group(2)) - ord(group.group(1)) + 1
+        if total > _MAX_WILDCARD_EXPANSIONS:
+            return [stem]
+    candidates = [""]
+    pos = 0
+    for group in groups:
+        prefix = stem[pos : group.start()]
+        chars = [chr(c) for c in range(ord(group.group(1)), ord(group.group(2)) + 1)]
+        candidates = [head + prefix + char for head in candidates for char in chars]
+        pos = group.end()
+    return [head + stem[pos:] for head in candidates]
+
+
 def _select_mcu_files(mcu_dir: Path, selectors: list[str] | None, all_mcus: bool) -> list[Path]:
     files = sorted(mcu_dir.glob("*.xml"))
     if all_mcus:
@@ -41,10 +74,11 @@ def _select_mcu_files(mcu_dir: Path, selectors: list[str] | None, all_mcus: bool
         _die("pass --mcu <substring> (repeatable) or --all")
     selected: list[Path] = []
     stems = [f.stem for f in files]
+    candidates = {f: _expand_wildcard_stem(f.stem) for f in files}
     for selector in selectors:
         needle = selector.lower()
-        exact = [f for f in files if f.stem.lower() == needle]
-        matches = exact or [f for f in files if needle in f.stem.lower()]
+        exact = [f for f in files if any(c.lower() == needle for c in candidates[f])]
+        matches = exact or [f for f in files if any(needle in c.lower() for c in candidates[f])]
         if not matches:
             close = difflib.get_close_matches(selector, stems, n=5, cutoff=0.3)
             _die(f"no MCU matching {selector!r}. Closest: {close or 'none'}")
