@@ -103,3 +103,59 @@ def parse_gpio_modes_xml(text: str) -> dict[tuple[str, str], int]:
                     if match:
                         table[(port_pin, signal_name)] = int(match.group(1))
     return table
+
+
+GENERATED_BY = "stm32-gdb-mcp scripts/import_pin_data.py"
+
+
+def build_db(mcus: list[dict], modes_by_version: dict[str, dict], source: str) -> dict:
+    """Merge parsed MCUs into one capability DB keyed by Line, with provenance.
+
+    ``modes_by_version`` maps a GPIO IP version string (from each MCU's
+    ``gpio_version``) to the table returned by :func:`parse_gpio_modes_xml`.
+    A missing table degrades honestly: entries keep no ``af`` and a warning is
+    recorded in ``_meta``. Duplicate (peripheral, signal) entries across RefNames
+    of one Line are merged; a later entry may contribute a missing ``af``.
+    """
+    db: dict = {
+        "_meta": {
+            "source": source,
+            "generated_by": GENERATED_BY,
+            "db_version": None,
+            "ref_names": [],
+            "warnings": [],
+        }
+    }
+    for mcu in mcus:
+        scope = mcu["line"] or mcu["family"]
+        if not scope:
+            raise ValueError(f"{mcu['ref_name']}: no line or family to key the DB by")
+        if db["_meta"]["db_version"] is None:
+            db["_meta"]["db_version"] = mcu["db_version"]
+        if mcu["ref_name"]:
+            db["_meta"]["ref_names"].append(mcu["ref_name"])
+        modes = modes_by_version.get(mcu["gpio_version"])
+        if mcu["gpio_version"] and modes is None:
+            db["_meta"]["warnings"].append(
+                f"no GPIO modes file for {mcu['gpio_version']} ({mcu['ref_name']})"
+            )
+        table = db.setdefault(scope, {})
+        for port_pin, entries in mcu["pins"].items():
+            bucket = table.setdefault(port_pin, [])
+            by_pair = {(e["peripheral"], e["signal"]): e for e in bucket}
+            for entry in entries:
+                pair = (entry["peripheral"], entry["signal"])
+                signal_name = f"{pair[0]}_{pair[1]}"
+                af = modes.get((port_pin, signal_name)) if modes else None
+                existing = by_pair.get(pair)
+                if existing is not None:
+                    if af is not None and "af" not in existing:
+                        existing["af"] = af
+                    continue
+                merged = dict(entry)
+                if af is not None:
+                    merged["af"] = af
+                bucket.append(merged)
+                by_pair[pair] = merged
+    db["_meta"]["ref_names"].sort()
+    return db

@@ -3,6 +3,7 @@
 import pytest
 
 from mcp_server.pin_data_import import (
+    build_db,
     normalize_port_pin,
     parse_gpio_modes_xml,
     parse_mcu_xml,
@@ -126,3 +127,59 @@ def test_parse_gpio_modes_afio_remap_yields_no_numeric_af():
     table = parse_gpio_modes_xml(GPIO_MODES_F1)
 
     assert table == {}
+
+
+MCU_XML_L4_TWIN = MCU_XML_L4.replace(
+    'RefName="STM32L431C(B-C)Tx"', 'RefName="STM32L431CCUx"'
+).replace(
+    '<Pin Name="PA9" Position="21" Type="I/O">',
+    '<Pin Name="PA10" Position="22" Type="I/O">',
+).replace('Name="I2C1_SCL"', 'Name="I2C1_SDA"').replace('Name="USART1_TX"', 'Name="USART1_RX"')
+
+
+def test_build_db_keys_by_line_and_attaches_af():
+    mcu = parse_mcu_xml(MCU_XML_L4)
+    modes = parse_gpio_modes_xml(GPIO_MODES_L4)
+
+    db = build_db([mcu], {"STM32L43x_gpio_v1_0": modes}, source="/data/open_pin_data")
+
+    assert {frozenset(e.items()) for e in db["STM32L431"]["PA9"]} == {
+        frozenset({"peripheral": "I2C1", "signal": "SCL", "af": 4}.items()),
+        frozenset({"peripheral": "USART1", "signal": "TX", "af": 7}.items()),
+    }
+    # ADC1_IN5 has no GPIO_AF parameter -> entry without "af".
+    assert db["STM32L431"]["PA0"][0] == {"peripheral": "ADC1", "signal": "IN5"}
+    assert db["_meta"]["source"] == "/data/open_pin_data"
+    assert db["_meta"]["db_version"] == "V3.0"
+    assert db["_meta"]["ref_names"] == ["STM32L431C(B-C)Tx"]
+    assert db["_meta"]["warnings"] == []
+
+
+def test_build_db_unions_ref_names_sharing_a_line():
+    first = parse_mcu_xml(MCU_XML_L4)
+    twin = parse_mcu_xml(MCU_XML_L4_TWIN)
+
+    db = build_db([first, twin], {}, source="/data")
+
+    assert sorted(db["_meta"]["ref_names"]) == ["STM32L431C(B-C)Tx", "STM32L431CCUx"]
+    assert "PA9" in db["STM32L431"] and "PA10" in db["STM32L431"]
+
+
+def test_build_db_missing_modes_file_warns_and_omits_af():
+    mcu = parse_mcu_xml(MCU_XML_L4)
+
+    db = build_db([mcu], {}, source="/data")
+
+    assert db["_meta"]["warnings"] == [
+        "no GPIO modes file for STM32L43x_gpio_v1_0 (STM32L431C(B-C)Tx)"
+    ]
+    assert all("af" not in e for pin in db["STM32L431"].values() for e in pin)
+
+
+def test_build_db_requires_line_or_family():
+    mcu = parse_mcu_xml(MCU_XML_L4)
+    mcu["line"] = None
+    mcu["family"] = None
+
+    with pytest.raises(ValueError, match="line"):
+        build_db([mcu], {}, source="/data")
