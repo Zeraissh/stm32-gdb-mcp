@@ -1,6 +1,9 @@
 """pin_data_import: parse ST open_pin_data / CubeMX db XML into capability DB JSON."""
 
 import json
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -210,3 +213,47 @@ def test_generated_db_round_trips_through_capability_db(tmp_path):
     # _meta must not leak into either consumer.
     assert caps.supports("_meta", None, "PA9", "USART1", "TX") is None
     assert "_meta" not in af_map
+
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+CLI = REPO_ROOT / "scripts" / "import_pin_data.py"
+
+
+def _make_source(root: Path) -> Path:
+    mcu_dir = root / "mcu"
+    (mcu_dir / "IP").mkdir(parents=True)
+    (mcu_dir / "STM32L431C(B-C)Tx.xml").write_text(MCU_XML_L4, encoding="utf-8")
+    (mcu_dir / "IP" / "GPIO-STM32L43x_gpio_v1_0_Modes.xml").write_text(GPIO_MODES_L4, encoding="utf-8")
+    return root
+
+
+def _run_cli(*args):
+    return subprocess.run([sys.executable, str(CLI), *args], capture_output=True, text=True)
+
+
+def test_cli_generates_loadable_db(tmp_path):
+    source = _make_source(tmp_path / "src_root")
+    out = tmp_path / "caps.json"
+
+    result = _run_cli("--source", str(source), "--mcu", "stm32l431", "-o", str(out))
+
+    assert result.returncode == 0, result.stderr
+    db = json.loads(out.read_text(encoding="utf-8"))
+    assert db["STM32L431"]["PA9"][0] == {"peripheral": "I2C1", "signal": "SCL", "af": 4}
+    assert db["_meta"]["ref_names"] == ["STM32L431C(B-C)Tx"]
+
+
+def test_cli_unknown_mcu_lists_close_matches(tmp_path):
+    source = _make_source(tmp_path / "src_root")
+
+    result = _run_cli("--source", str(source), "--mcu", "STM32L999", "-o", str(tmp_path / "x.json"))
+
+    assert result.returncode == 1
+    assert "STM32L431C(B-C)Tx" in result.stderr
+
+
+def test_cli_missing_source_root_fails(tmp_path):
+    result = _run_cli("--source", str(tmp_path / "nope"), "--all", "-o", str(tmp_path / "x.json"))
+
+    assert result.returncode == 1
+    assert "mcu" in result.stderr
