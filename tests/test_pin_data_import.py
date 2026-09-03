@@ -4,6 +4,7 @@ import pytest
 
 from mcp_server.pin_data_import import (
     normalize_port_pin,
+    parse_gpio_modes_xml,
     parse_mcu_xml,
     split_signal,
 )
@@ -67,3 +68,61 @@ def test_parse_mcu_xml_header_and_pins():
 def test_parse_mcu_xml_rejects_non_mcu_root():
     with pytest.raises(ValueError, match="Mcu"):
         parse_mcu_xml('<Foo xmlns="http://dummy.com"/>')
+
+
+GPIO_MODES_L4 = """<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<IP DBVersion="V3.0" Name="GPIO" Version="STM32L43x_gpio_v1_0" xmlns="http://dummy.com">
+    <GPIO_Pin PortName="PA" Name="PA9">
+        <SpecificParameter Name="GPIO_Pin">
+            <PossibleValue>GPIO_PIN_9</PossibleValue>
+        </SpecificParameter>
+        <PinSignal Name="I2C1_SCL">
+            <SpecificParameter Name="GPIO_AF">
+                <PossibleValue>GPIO_AF4_I2C1</PossibleValue>
+            </SpecificParameter>
+        </PinSignal>
+        <PinSignal Name="USART1_TX">
+            <SpecificParameter Name="GPIO_AF">
+                <PossibleValue>GPIO_AF7_USART1</PossibleValue>
+            </SpecificParameter>
+        </PinSignal>
+    </GPIO_Pin>
+    <GPIO_Pin PortName="PA" Name="PA0-WKUP1">
+        <PinSignal Name="ADC1_IN5"/>
+    </GPIO_Pin>
+</IP>
+"""
+
+GPIO_MODES_F1 = """<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<IP DBVersion="V3.0" Name="GPIO" Version="STM32F103x8_gpio_v1_0" xmlns="http://dummy.com">
+    <GPIO_Pin PortName="PA" Name="PA0-WKUP">
+        <PinSignal Name="TIM2_CH1">
+            <RemapBlock Name="TIM2_REMAP0" DefaultRemap="true" />
+            <RemapBlock Name="TIM2_REMAP2">
+               <SpecificParameter Name="GPIO_AF">
+                   <PossibleValue>__HAL_AFIO_REMAP_TIM2_PARTIAL_2</PossibleValue>
+               </SpecificParameter>
+            </RemapBlock>
+        </PinSignal>
+        <PinSignal Name="USART2_CTS">
+            <RemapBlock Name="USART2_REMAP0" DefaultRemap="true" />
+        </PinSignal>
+    </GPIO_Pin>
+</IP>
+"""
+
+
+def test_parse_gpio_modes_extracts_numeric_af():
+    table = parse_gpio_modes_xml(GPIO_MODES_L4)
+
+    assert table[("PA9", "I2C1_SCL")] == 4
+    assert table[("PA9", "USART1_TX")] == 7
+    # PinSignal without GPIO_AF parameter contributes nothing.
+    assert ("PA0", "ADC1_IN5") not in table
+
+
+def test_parse_gpio_modes_afio_remap_yields_no_numeric_af():
+    # F1 uses the AFIO remap model; __HAL_AFIO_REMAP_* values are not numeric AFs.
+    table = parse_gpio_modes_xml(GPIO_MODES_F1)
+
+    assert table == {}

@@ -74,3 +74,32 @@ def parse_mcu_xml(text: str) -> dict:
         "gpio_version": gpio_version,
         "pins": pins,
     }
+
+
+def parse_gpio_modes_xml(text: str) -> dict[tuple[str, str], int]:
+    """Parse ``mcu/IP/GPIO-<version>_Modes.xml`` into ``{(port_pin, PERIPHERAL_SIGNAL): af}``.
+
+    Only ``GPIO_AF<n>_*`` values count; AFIO remap values (F1 family) and signals
+    without a ``GPIO_AF`` parameter contribute nothing -- an absent entry means
+    "no numeric AF known", never a guess.
+    """
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError as e:
+        raise ValueError(f"malformed GPIO modes XML: {e}") from e
+    ns = _ns(root)
+    table: dict[tuple[str, str], int] = {}
+    for gpio_pin in root.iter(f"{ns}GPIO_Pin"):
+        port_pin = normalize_port_pin(gpio_pin.get("Name", ""))
+        if not port_pin:
+            continue
+        for pin_signal in gpio_pin.findall(f"{ns}PinSignal"):
+            signal_name = pin_signal.get("Name", "")
+            for param in pin_signal.iter(f"{ns}SpecificParameter"):
+                if param.get("Name") != "GPIO_AF":
+                    continue
+                for value in param.findall(f"{ns}PossibleValue"):
+                    match = _AF_RE.match((value.text or "").strip())
+                    if match:
+                        table[(port_pin, signal_name)] = int(match.group(1))
+    return table
