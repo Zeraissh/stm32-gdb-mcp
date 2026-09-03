@@ -358,6 +358,20 @@ def test_cli_mcu_selector_matches_wildcard_stem(tmp_path):
     assert "STM32F103" not in db
 
 
+def test_cli_mcu_selector_matches_raw_wildcard_stem(tmp_path):
+    source = _make_source(tmp_path / "src_root")
+    (source / "mcu" / "STM32L431C(B-C)Ux.xml").write_text(MCU_XML_L4_UX, encoding="utf-8")
+    out = tmp_path / "caps.json"
+
+    # Regression: the exact file stem must select that file even though the
+    # stem also carries (B-C) wildcard expansions.
+    result = _run_cli("--source", str(source), "--mcu", "STM32L431C(B-C)Tx", "-o", str(out))
+
+    assert result.returncode == 0, result.stderr
+    db = json.loads(out.read_text(encoding="utf-8"))
+    assert db["_meta"]["ref_names"] == ["STM32L431C(B-C)Tx"]
+
+
 def test_cli_mcu_selector_ambiguous_across_wildcard_files(tmp_path):
     source = _make_source(tmp_path / "src_root")
     (source / "mcu" / "STM32L431C(B-C)Ux.xml").write_text(MCU_XML_L4_UX, encoding="utf-8")

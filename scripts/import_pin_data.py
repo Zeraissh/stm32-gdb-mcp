@@ -74,7 +74,9 @@ def _select_mcu_files(mcu_dir: Path, selectors: list[str] | None, all_mcus: bool
         _die("pass --mcu <substring> (repeatable) or --all")
     selected: list[Path] = []
     stems = [f.stem for f in files]
-    candidates = {f: _expand_wildcard_stem(f.stem) for f in files}
+    # Each file's match candidates: the RAW file stem plus all (X-Y)
+    # expansions, so a selector equal to the literal stem still matches.
+    candidates = {f: [f.stem, *_expand_wildcard_stem(f.stem)] for f in files}
     for selector in selectors:
         needle = selector.lower()
         exact = [f for f in files if any(c.lower() == needle for c in candidates[f])]
