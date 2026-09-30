@@ -1720,7 +1720,7 @@
    "inputSchema": {
     "properties": {
      "format": {
-      "description": "Netlist format: auto (default) or kicad.",
+      "description": "Netlist format: auto (default), kicad, altium (Protel .NET), orcad (pstxnet.dat) or csv (generic pin-map).",
       "type": "string"
      },
      "path": {

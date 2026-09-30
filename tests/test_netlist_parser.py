@@ -6,8 +6,8 @@ from mcp_server.netlist_parser import (
     parse_altium_netlist,
     parse_csv_netlist,
     parse_kicad_netlist,
-    parse_orcad_netlist,
     parse_netlist,
+    parse_orcad_netlist,
 )
 
 KICAD_FIXTURE = """
@@ -249,3 +249,8 @@ def test_parse_csv_missing_column_lists_header():
 
 def test_detect_format_csv():
     assert detect_format(CSV_PINMAP) == "csv"
+
+
+def test_parse_netlist_unknown_format_lists_all_supported():
+    with pytest.raises(ValueError, match=r"Supported: kicad, altium, orcad, csv"):
+        parse_netlist("this is not a netlist at all", fmt="auto")

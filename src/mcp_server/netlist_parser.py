@@ -1,10 +1,11 @@
 """Netlist parsers that produce a normalized BoardDescription.
 
-Tier 1 supports the KiCad ``.net`` S-expression format. The parser is stdlib-only
-(a tiny S-expression reader) and hands the raw ``components`` / ``nets`` to
+Supported formats: KiCad ``.net`` S-expressions, Altium/Protel ``.NET``,
+Cadence/OrCAD ``pstxnet.dat``, and a generic CSV pin-map. Each parser is
+stdlib-only and hands raw ``components`` / ``nets`` to
 ``board_model.build_board_description`` for normalization and pin-function
-inference. Additional formats (Altium, OrCAD, CSV pin-maps) are planned in later
-tiers; see ``docs/superpowers/plans/2026-07-01-netlist-board-model.md``.
+inference. Formats that lack a datum (``port_pin`` outside KiCad/CSV, part
+values in pstxnet) emit ``None`` — never a guess.
 """
 
 import csv

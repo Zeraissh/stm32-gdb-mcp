@@ -26,7 +26,9 @@ from .registry import register
         "properties": {
             "path": {"type": "string", "description": "Path to a netlist file (e.g. board.net)."},
             "text": {"type": "string", "description": "Netlist contents inline (alternative to path)."},
-            "format": {"type": "string", "description": "Netlist format: auto (default) or kicad."},
+            "format": {"type": "string", "description":
+                       "Netlist format: auto (default), kicad, altium (Protel .NET), "
+                       "orcad (pstxnet.dat) or csv (generic pin-map)."},
             "session": {"type": "string", "description": "Target session id (default 'default')."}
         }
     }
@@ -45,7 +47,7 @@ def import_netlist(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     except (ValueError, OSError) as e:
         return [content_error(
             str(e), code="netlist_parse_error",
-            suggested_next_actions=["import_netlist with format=kicad"])]
+            suggested_next_actions=["import_netlist with format=kicad|altium|orcad|csv"])]
     ctx.board["current"] = parsed
     return [content_success(
         summarize_board(parsed),

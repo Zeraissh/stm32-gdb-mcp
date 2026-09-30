@@ -1,5 +1,18 @@
 # Changelog / 更新日志
 
+## [Unreleased]
+
+### Import netlists from Altium, OrCAD, and CSV pin-maps / 网表导入支持 Altium、OrCAD 与 CSV
+
+- `import_netlist` gains three formats alongside KiCad: **Altium/Protel `.NET`**,
+  **Cadence/OrCAD `pstxnet.dat`**, and a **generic CSV pin-map**, all autodetected
+  (explicit `format=altium|orcad|csv` also accepted). The BoardDescription contract
+  is unchanged, so `describe_board` / `validate_board` / framework planning work as-is. /
+  三种格式全部支持自动探测，BoardDescription 契约不变，下游工具无需改动。
+- Honest degradation, as everywhere else: Protel `.NET` has no pinfunction and
+  `pstxnet.dat` has no part values, so `port_pin` / MCU detection degrade to
+  `None` + a warning — never a guess. / 缺失数据降级为 `None` 加警告，绝不猜测。
+
 ## [0.14.0] - 2026-08-15
 
 ### "Flash the new firmware on CH4" is one call / 一句话烧录变成一次调用
