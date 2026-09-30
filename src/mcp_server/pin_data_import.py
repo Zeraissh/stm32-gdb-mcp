@@ -56,10 +56,15 @@ def parse_mcu_xml(text: str) -> dict:
         if ip.get("Name") == "GPIO":
             gpio_version = ip.get("Version")
     pins: dict[str, list[dict]] = {}
+    positions: dict[str, str] = {}
     for pin in root.findall(f"{ns}Pin"):
+        name = pin.get("Name", "")
+        port_pin = normalize_port_pin(name)
+        position = pin.get("Position")
+        if port_pin and position:
+            positions[position] = port_pin
         if pin.get("Type") != "I/O":
             continue
-        port_pin = normalize_port_pin(pin.get("Name", ""))
         if not port_pin:
             continue
         entries: list[dict] = []
@@ -83,6 +88,7 @@ def parse_mcu_xml(text: str) -> dict:
         "db_version": root.get("DBVersion"),
         "gpio_version": gpio_version,
         "pins": pins,
+        "positions": positions,
     }
 
 
@@ -151,6 +157,8 @@ def build_db(mcus: list[dict], modes_by_version: dict[str, dict], source: str) -
         if mcu["gpio_version"] and modes is None:
             db["_meta"]["warnings"].append(f"no GPIO modes file for {mcu['gpio_version']} ({mcu['ref_name']})")
         table = db.setdefault(scope, {})
+        if mcu["ref_name"] and mcu.get("positions"):
+            table.setdefault("_positions", {})[mcu["ref_name"]] = mcu["positions"]
         for port_pin, entries in mcu["pins"].items():
             bucket = table.setdefault(port_pin, [])
             by_pair = {(e["peripheral"], e["signal"]): e for e in bucket}

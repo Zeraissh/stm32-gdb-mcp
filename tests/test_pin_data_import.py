@@ -383,3 +383,46 @@ def test_cli_mcu_selector_ambiguous_across_wildcard_files(tmp_path):
     # Error message shows the real file stems, not expansions.
     assert "STM32L431C(B-C)Tx" in result.stderr
     assert "STM32L431C(B-C)Ux" in result.stderr
+
+
+MCU_XML_POSITIONS = """\
+<Mcu Family="STM32L1" Line="STM32L151/152" Package="UFQFPN48" RefName="STM32L151CCUx"
+     DBVersion="V3.0" xmlns="http://dummy.com">
+  <IP Name="GPIO" Version="STM32L152xC_gpio_v1_0"/>
+  <Pin Name="NRST" Position="7" Type="Reset"/>
+  <Pin Name="VSSA" Position="8" Type="Power"/>
+  <Pin Name="PA2" Position="12" Type="I/O">
+    <Signal Name="ADC_IN2"/>
+    <Signal Name="USART2_TX"/>
+  </Pin>
+  <Pin Name="PC14-OSC32_IN" Position="3" Type="I/O">
+    <Signal Name="RCC_OSC32_IN"/>
+  </Pin>
+  <Pin Name="BOOT0" Position="44" Type="Boot"/>
+</Mcu>
+"""
+
+
+def test_parse_mcu_xml_extracts_positions_for_all_pin_types():
+    mcu = parse_mcu_xml(MCU_XML_POSITIONS)
+
+    assert mcu["positions"] == {
+        "3": "PC14",   # I/O name normalized
+        "7": "NRST",   # Reset pin kept
+        "8": "VSSA",   # Power pin kept
+        "12": "PA2",
+        "44": "BOOT0",  # Boot pin kept
+    }
+
+
+def test_build_db_emits_positions_per_ref_name():
+    mcu = parse_mcu_xml(MCU_XML_POSITIONS)
+    db = build_db([mcu], {}, source="test")
+
+    scope = db["STM32L151"]
+    assert scope["_positions"] == {
+        "STM32L151CCUx": {"3": "PC14", "7": "NRST", "8": "VSSA", "12": "PA2", "44": "BOOT0"}
+    }
+    # The pins table is untouched: only I/O pins with peripheral signals.
+    assert {(e["peripheral"], e["signal"]) for e in scope["PA2"]} == {("ADC", "IN2"), ("USART2", "TX")}
+    assert "NRST" not in scope  # non-I/O pins never enter the AF table
