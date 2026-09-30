@@ -35,7 +35,7 @@
 
 Format notes (Protel `.NET`, emitted by Altium Designer and many other ECAD tools): component records are `[` … `]` blocks whose first three lines are designator / footprint / comment (later lines are optional and ignored); net records are `(` … `)` blocks whose first line is the net name and whose remaining lines are `REF-PIN` nodes (split on the LAST `-`; designators never contain one). The format carries **no** pinfunction, so `port_pin` is always absent.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/test_netlist_parser.py`:
 
@@ -118,12 +118,12 @@ from mcp_server.netlist_parser import (
 
 (Keep whatever the file already imports; add only the missing names.)
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_netlist_parser.py -k altium -v`
 Expected: FAIL — `ImportError: cannot import name 'parse_altium_netlist'`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `src/mcp_server/netlist_parser.py`, add after the KiCad section (before `# --- Dispatch`):
 
@@ -245,12 +245,12 @@ def parse_netlist(text: str, fmt: str = "auto", source: str = "<memory>") -> dic
 
 (The `orcad`/`csv` branches land in Tasks 2-3; the error message already names the full target set.)
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_netlist_parser.py -v`
 Expected: all tests pass, including the 4 new `altium` ones and every pre-existing kicad test.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/mcp_server/netlist_parser.py tests/test_netlist_parser.py
@@ -286,7 +286,7 @@ NODE_NAME U1 42
 END.
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/test_netlist_parser.py` (and add `parse_orcad_netlist` to the import block):
 
@@ -344,12 +344,12 @@ def test_detect_format_orcad():
     assert detect_format(ORCAD_PSTXNET) == "orcad"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_netlist_parser.py -k orcad -v`
 Expected: FAIL — `ImportError: cannot import name 'parse_orcad_netlist'`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `src/mcp_server/netlist_parser.py`, add after the Altium section:
 
@@ -415,12 +415,12 @@ Then add the dispatch branch in `parse_netlist`, between the altium branch and t
         components, nets = parse_orcad_netlist(text)
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_netlist_parser.py -v`
 Expected: all tests pass, including the 4 new `orcad` ones.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/mcp_server/netlist_parser.py tests/test_netlist_parser.py
@@ -453,7 +453,7 @@ CSV contract: one row per component pin; header row REQUIRED. Column names match
 
 Missing required columns raise `ValueError` listing the header that WAS found — never a guessed mapping. Blank/incomplete rows (export artifacts) are skipped.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/test_netlist_parser.py` (and add `parse_csv_netlist` to the import block):
 
@@ -501,12 +501,12 @@ def test_detect_format_csv():
     assert detect_format(CSV_PINMAP) == "csv"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_netlist_parser.py -k csv -v`
 Expected: FAIL — `ImportError: cannot import name 'parse_csv_netlist'`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `src/mcp_server/netlist_parser.py`, add the imports at the top of the file:
 
@@ -584,12 +584,12 @@ Then add the dispatch branch in `parse_netlist`, between the orcad branch and th
         components, nets = parse_csv_netlist(text)
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_netlist_parser.py -v`
 Expected: all tests pass, including the 5 new `csv` ones.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/mcp_server/netlist_parser.py tests/test_netlist_parser.py
@@ -610,7 +610,7 @@ git commit -m "feat: generic CSV pin-map netlist importer with autodetect"
 - Consumes: everything above.
 - Produces: `import_netlist(format=...)` documentation matches reality; the unsupported-format error names all four formats; a clean repo-wide verification result.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/test_netlist_parser.py`:
 
@@ -620,14 +620,14 @@ def test_parse_netlist_unknown_format_lists_all_supported():
         parse_netlist("this is not a netlist at all", fmt="auto")
 ```
 
-- [ ] **Step 2: Run test to verify it fails / passes**
+- [x] **Step 2: Run test to verify it fails / passes**
 
 Run: `python -m pytest tests/test_netlist_parser.py -k unknown_format -v`
 Expected: PASS already if Task 1 used the exact error message shown there
 (`"... Supported: kicad, altium, orcad, csv."`). If it fails, fix the message in
 `parse_netlist` to match — do NOT loosen the test.
 
-- [ ] **Step 3: Update the module docstring and tool descriptions**
+- [x] **Step 3: Update the module docstring and tool descriptions**
 
 Replace the first paragraph of `src/mcp_server/netlist_parser.py`'s docstring with:
 
@@ -657,7 +657,7 @@ and the parse-error suggestion (line 48) to:
             suggested_next_actions=["import_netlist with format=kicad|altium|orcad|csv"])]
 ```
 
-- [ ] **Step 4: Add the CHANGELOG entry**
+- [x] **Step 4: Add the CHANGELOG entry**
 
 Insert at the top of `CHANGELOG.md`, directly under `# Changelog / 更新日志`:
 
@@ -676,7 +676,7 @@ Insert at the top of `CHANGELOG.md`, directly under `# Changelog / 更新日志`
   `None` + a warning — never a guess. / 缺失数据降级为 `None` 加警告，绝不猜测。
 ```
 
-- [ ] **Step 5: Full verification**
+- [x] **Step 5: Full verification**
 
 Run:
 
@@ -690,7 +690,7 @@ python -m compileall src tests scripts
 Expected: ruff clean; mypy clean; the full suite green (1293 pre-existing + ~14 new
 netlist tests); compileall exits 0.
 
-- [ ] **Step 6: Real-file smoke (optional, needs a real export)**
+- [x] **Step 6: Real-file smoke (optional, needs a real export)**
 
 If a real Altium `.NET` or OrCAD `pstxnet.dat` export is available:
 
@@ -703,14 +703,14 @@ print(b['format'], b['stats'], b['warnings'])"
 Expected: the right `format`, plausible `stats`, and only honest warnings.
 If no real file is available, note it in the final summary as unverified and move on.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/mcp_server/netlist_parser.py src/mcp_server/tools/board_tools.py tests/test_netlist_parser.py CHANGELOG.md
 git commit -m "docs: netlist format coverage in tool schema, module docstring and changelog"
 ```
 
-- [ ] **Step 8: Close the parent plan**
+- [x] **Step 8: Close the parent plan**
 
 In `docs/superpowers/plans/2026-07-01-netlist-board-model.md`, change the Status section's last line from `- [ ] **Tier 4** — Altium / OrCAD / CSV importers.` to `- [x] **Tier 4** — Altium / OrCAD / CSV importers. *Done.*`, then:
 

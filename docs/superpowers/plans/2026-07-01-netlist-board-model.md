@@ -144,4 +144,4 @@ existing history.
 - [x] **Tier 1** — `board_model.py` + `netlist_parser.py` + tests. *Done, committed.*
 - [x] **Tier 2** — `import_netlist` / `describe_board` tools + per-session persistence + tests. *Done.*
 - [x] **Tier 3** — AF-legality validation + `validate_board`. *Done (DMA-request mapping deferred).*
-- [ ] **Tier 4** — Altium / OrCAD / CSV importers.
+- [x] **Tier 4** — Altium / OrCAD / CSV importers. *Done.*
