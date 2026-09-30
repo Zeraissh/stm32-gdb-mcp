@@ -254,3 +254,19 @@ def test_detect_format_csv():
 def test_parse_netlist_unknown_format_lists_all_supported():
     with pytest.raises(ValueError, match=r"Supported: kicad, altium, orcad, csv"):
         parse_netlist("this is not a netlist at all", fmt="auto")
+
+
+def test_altium_netlist_with_utf8_bom_is_detected_and_parsed():
+    # Real Altium exports are UTF-8 with BOM; it must not break detection or parsing.
+    bommed = "﻿" + ALTIUM_NET
+    assert detect_format(bommed) == "altium"
+    board = parse_netlist(bommed, fmt="auto")
+    assert board["format"] == "altium"
+    assert board["mcu"]["line"] == "STM32L431"
+
+
+def test_load_netlist_file_tolerates_utf8_bom(tmp_path):
+    path = tmp_path / "board.net"
+    path.write_text("﻿" + ALTIUM_NET, encoding="utf-8")
+    board = load_netlist_file(str(path))
+    assert board["format"] == "altium"

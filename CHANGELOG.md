@@ -12,6 +12,9 @@
 - Honest degradation, as everywhere else: Protel `.NET` has no pinfunction and
   `pstxnet.dat` has no part values, so `port_pin` / MCU detection degrade to
   `None` + a warning — never a guess. / 缺失数据降级为 `None` 加警告，绝不猜测。
+- Real Altium exports are UTF-8 **with BOM**; detection and file loading now
+  tolerate it (verified against a real 143-component / 145-net export). /
+  真实 Altium 导出文件带 UTF-8 BOM，探测与文件加载均已兼容（已用真实 143 元件 / 145 网络文件验证）。
 
 ## [0.14.0] - 2026-08-15
 

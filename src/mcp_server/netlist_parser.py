@@ -348,7 +348,7 @@ def parse_csv_netlist(text: str) -> tuple[list, list]:
 
 def detect_format(text: str) -> str:
     """Best-effort netlist format detection."""
-    head = text.lstrip()[:256].lower()
+    head = text.lstrip("﻿").lstrip()[:256].lower()
     if head.startswith("(export") or "(netlist" in head or "(components" in head:
         return "kicad"
     if head.startswith("file_type") and "expandednetlist" in head:
@@ -365,6 +365,7 @@ def detect_format(text: str) -> str:
 
 def parse_netlist(text: str, fmt: str = "auto", source: str = "<memory>") -> dict:
     """Parse netlist text into a normalized BoardDescription."""
+    text = text.lstrip("﻿")  # real ECAD exports (e.g. Altium) are UTF-8 with BOM
     resolved = detect_format(text) if fmt in (None, "auto") else fmt.lower()
     if resolved == "kicad":
         components, nets = parse_kicad_netlist(text)
@@ -383,6 +384,6 @@ def parse_netlist(text: str, fmt: str = "auto", source: str = "<memory>") -> dic
 
 def load_netlist_file(path: str, fmt: str = "auto") -> dict:
     """Read a netlist file and parse it into a BoardDescription."""
-    with open(path, encoding="utf-8") as handle:
+    with open(path, encoding="utf-8-sig") as handle:
         text = handle.read()
     return parse_netlist(text, fmt=fmt, source=path)
