@@ -4,6 +4,7 @@ from mcp_server.netlist_parser import (
     detect_format,
     load_netlist_file,
     parse_altium_netlist,
+    parse_csv_netlist,
     parse_kicad_netlist,
     parse_orcad_netlist,
     parse_netlist,
@@ -77,7 +78,7 @@ def test_parse_netlist_builds_board_description():
 
 def test_parse_netlist_rejects_unknown_format():
     with pytest.raises(ValueError, match="Unsupported or undetected"):
-        parse_netlist("Component, Pin, Net\nU1, 1, GND")
+        parse_netlist("this is not a netlist at all")
 
 
 def test_load_netlist_file(tmp_path):
@@ -205,3 +206,46 @@ def test_parse_orcad_rejects_node_before_net():
 
 def test_detect_format_orcad():
     assert detect_format(ORCAD_PSTXNET) == "orcad"
+
+
+CSV_PINMAP = """\
+ref,pin,net,value
+U1,42,USART1_TX,STM32L431CBT6
+U1,47,GND,STM32L431CBT6
+R5,1,USART1_TX,10K
+"""
+
+
+def test_parse_csv_builds_components_and_nets():
+    components, nets = parse_csv_netlist(CSV_PINMAP)
+
+    by_ref = {c["ref"]: c for c in components}
+    assert by_ref["U1"]["value"] == "STM32L431CBT6"
+    assert by_ref["U1"]["pins"] == {"42": "USART1_TX", "47": "GND"}
+    assert {n["name"] for n in nets} == {"USART1_TX", "GND"}
+
+
+def test_parse_csv_board_description_infers_mcu():
+    board = parse_netlist(CSV_PINMAP, fmt="auto")
+
+    assert board["format"] == "csv"
+    assert board["mcu"]["line"] == "STM32L431"
+    tx_pin = next(p for p in board["mcu"]["pins"] if p["net"] == "USART1_TX")
+    assert tx_pin["function"] == {"peripheral": "USART1", "signal": "TX"}
+
+
+def test_parse_csv_accepts_column_aliases_and_port_pin():
+    text = "Designator,Pad,Signal,Value,Pin_Name\nU1,42,USART1_TX,STM32L431CBT6,PA9\n"
+    components, nets = parse_csv_netlist(text)
+
+    assert components[0]["value"] == "STM32L431CBT6"
+    assert nets[0]["nodes"][0]["port_pin"] == "PA9"
+
+
+def test_parse_csv_missing_column_lists_header():
+    with pytest.raises(ValueError, match="missing required column"):
+        parse_csv_netlist("foo,bar\n1,2\n")
+
+
+def test_detect_format_csv():
+    assert detect_format(CSV_PINMAP) == "csv"

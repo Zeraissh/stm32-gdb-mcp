@@ -7,6 +7,9 @@ inference. Additional formats (Altium, OrCAD, CSV pin-maps) are planned in later
 tiers; see ``docs/superpowers/plans/2026-07-01-netlist-board-model.md``.
 """
 
+import csv
+import io
+
 from mcp_server.board_model import build_board_description
 
 # --- S-expression reader -----------------------------------------------------
@@ -280,6 +283,65 @@ def parse_orcad_netlist(text: str) -> tuple[list, list]:
     return components, nets
 
 
+# --- Generic CSV pin-map ------------------------------------------------------
+
+
+def parse_csv_netlist(text: str) -> tuple[list, list]:
+    """Parse a generic CSV pin-map into ``(components, nets)``.
+
+    One row per component pin; a header row is required. Column names are
+    matched case-insensitively: ref (``ref``/``designator``/``reference``/``refdes``),
+    pin (``pin``/``pad``/``pin_number``/``pinnumber``), net (``net``/``net_name``/
+    ``netname``/``signal``/``name``); optional value (``value``/``comment``/``part``)
+    and port_pin (``port_pin``/``portpin``/``pin_name``/``pinname``). Missing
+    required columns raise ``ValueError`` listing the header that WAS found —
+    never a guessed mapping.
+    """
+    reader = csv.DictReader(io.StringIO(text))
+    if reader.fieldnames is None:
+        raise ValueError("CSV pin-map: empty input (no header row)")
+    canon = {(name or "").strip().lower(): name for name in reader.fieldnames}
+
+    def pick(*candidates: str) -> str | None:
+        for candidate in candidates:
+            if candidate in canon:
+                return canon[candidate]
+        return None
+
+    ref_col = pick("ref", "designator", "reference", "refdes")
+    pin_col = pick("pin", "pad", "pin_number", "pinnumber")
+    net_col = pick("net", "net_name", "netname", "signal", "name")
+    value_col = pick("value", "comment", "part")
+    port_pin_col = pick("port_pin", "portpin", "pin_name", "pinname")
+    missing = [label for label, col in
+               (("ref", ref_col), ("pin", pin_col), ("net", net_col)) if col is None]
+    if missing:
+        raise ValueError(
+            f"CSV pin-map: missing required column(s) {missing}; header was {reader.fieldnames}. "
+            "Accepted: ref/designator, pin/pad, net/net_name/signal.")
+
+    components: dict[str, dict] = {}
+    nets: dict[str, dict] = {}
+    for row in reader:
+        ref = (row.get(ref_col) or "").strip()
+        pin = (row.get(pin_col) or "").strip()
+        net = (row.get(net_col) or "").strip()
+        if not (ref and pin and net):
+            continue  # tolerate blank/export-artifact rows
+        comp = components.setdefault(ref, {"ref": ref, "value": None, "footprint": None, "pins": {}})
+        if value_col and (row.get(value_col) or "").strip():
+            comp["value"] = row[value_col].strip()
+        comp["pins"][pin] = net
+        bucket = nets.setdefault(net, {"name": net, "nodes": []})
+        node: dict = {"ref": ref, "pin": pin}
+        if port_pin_col and (row.get(port_pin_col) or "").strip():
+            node["port_pin"] = row[port_pin_col].strip()
+        bucket["nodes"].append(node)
+    if not nets:
+        raise ValueError("CSV pin-map: header parsed but no data rows produced any nets")
+    return list(components.values()), list(nets.values())
+
+
 # --- Dispatch ----------------------------------------------------------------
 
 
@@ -309,6 +371,8 @@ def parse_netlist(text: str, fmt: str = "auto", source: str = "<memory>") -> dic
         components, nets = parse_altium_netlist(text)
     elif resolved == "orcad":
         components, nets = parse_orcad_netlist(text)
+    elif resolved == "csv":
+        components, nets = parse_csv_netlist(text)
     else:
         raise ValueError(
             f"Unsupported or undetected netlist format: {resolved!r}. "
