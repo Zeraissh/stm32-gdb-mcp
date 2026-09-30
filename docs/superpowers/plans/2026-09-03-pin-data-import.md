@@ -43,7 +43,7 @@
     `{"ref_name": str|None, "family": str|None, "line": str|None, "package": str|None, "db_version": str|None, "gpio_version": str|None, "pins": {port_pin: [{"peripheral": str, "signal": str}]}}`.
     Raises `ValueError` on malformed XML or a root that is not `Mcu`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/test_pin_data_import.py`:
 
@@ -119,12 +119,12 @@ def test_parse_mcu_xml_rejects_non_mcu_root():
         parse_mcu_xml('<Foo xmlns="http://dummy.com"/>')
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_pin_data_import.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'mcp_server.pin_data_import'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Create `src/mcp_server/pin_data_import.py`:
 
@@ -207,12 +207,12 @@ def parse_mcu_xml(text: str) -> dict:
     }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_pin_data_import.py -v`
 Expected: 4 passed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/mcp_server/pin_data_import.py tests/test_pin_data_import.py
@@ -233,7 +233,7 @@ git commit -m "feat: parse ST MCU XML into per-pin peripheral/signal pairs"
   maps `(port_pin, "PERIPHERAL_SIGNAL")` → numeric AF. AFIO-remap values
   (F1 family, `__HAL_AFIO_REMAP_*`) are simply absent from the table.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/test_pin_data_import.py`:
 
@@ -298,12 +298,12 @@ def test_parse_gpio_modes_afio_remap_yields_no_numeric_af():
     assert table == {}
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_pin_data_import.py -v`
 Expected: FAIL with `ImportError: cannot import name 'parse_gpio_modes_xml'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Append to `src/mcp_server/pin_data_import.py`:
 
@@ -337,12 +337,12 @@ def parse_gpio_modes_xml(text: str) -> dict[tuple[str, str], int]:
     return table
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_pin_data_import.py -v`
 Expected: 6 passed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/mcp_server/pin_data_import.py tests/test_pin_data_import.py
@@ -365,7 +365,7 @@ git commit -m "feat: extract numeric alternate functions from GPIO modes XML"
   `ref_names` (list[str]), `warnings` (list[str]).
   Raises `ValueError` when an MCU has neither `line` nor `family`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/test_pin_data_import.py`:
 
@@ -428,12 +428,12 @@ def test_build_db_requires_line_or_family():
         build_db([mcu], {}, source="/data")
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_pin_data_import.py -v`
 Expected: FAIL with `ImportError: cannot import name 'build_db'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Append to `src/mcp_server/pin_data_import.py`:
 
@@ -494,12 +494,12 @@ def build_db(mcus: list[dict], modes_by_version: dict[str, dict], source: str) -
     return db
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_pin_data_import.py -v`
 Expected: 10 passed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/mcp_server/pin_data_import.py tests/test_pin_data_import.py
@@ -520,7 +520,7 @@ git commit -m "feat: merge parsed MCUs into provenance-carrying capability DB"
   `PinCapabilityDB.af_map() -> dict`.
 - Produces: no new API; proves the generated JSON is loadable and `_meta` is inert.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/test_pin_data_import.py`:
 
@@ -554,12 +554,12 @@ def test_generated_db_round_trips_through_capability_db(tmp_path):
     assert "_meta" not in af_map
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_pin_data_import.py::test_generated_db_round_trips_through_capability_db -v`
 Expected: FAIL — `_meta` leaks into `af_map()` (its nested string values iterate as non-dicts, but the `"ref_names"`/`"warnings"` lists and string values produce an empty `pin_map`... actually verify the real failure mode: the test fails on whichever assertion `_meta` violates; if it unexpectedly PASSES because `af_map()` already filters `_meta` safely, keep the test as the regression guard and continue).
 
-- [ ] **Step 3: Fix only if needed**
+- [x] **Step 3: Fix only if needed**
 
 Read `PinCapabilityDB.af_map()` in `src/mcp_server/board_validation.py`. If
 `_meta` leaks, add an explicit guard at the top of the scope loop:
@@ -572,12 +572,12 @@ Read `PinCapabilityDB.af_map()` in `src/mcp_server/board_validation.py`. If
                 continue
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_pin_data_import.py -v`
 Expected: 11 passed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/mcp_server/board_validation.py tests/test_pin_data_import.py
@@ -601,7 +601,7 @@ git commit -m "test: prove generated capability DB round-trips through load_capa
   Exit 0 on success (prints summary: lines written, entry count, warnings);
   exit 1 with a clear message on fatal input errors.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/test_pin_data_import.py`:
 
@@ -656,12 +656,12 @@ def test_cli_missing_source_root_fails(tmp_path):
     assert "mcu" in result.stderr
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_pin_data_import.py -k cli -v`
 Expected: FAIL — `scripts/import_pin_data.py` does not exist (returncode 1 / file-not-found from subprocess).
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `scripts/import_pin_data.py`:
 
@@ -772,12 +772,12 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_pin_data_import.py -v`
 Expected: 14 passed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add scripts/import_pin_data.py tests/test_pin_data_import.py
@@ -795,7 +795,7 @@ git commit -m "feat: import_pin_data CLI converting ST pin data to capability DB
 - Consumes: everything above.
 - Produces: a clean repo-wide verification result.
 
-- [ ] **Step 1: Lint, type-check, full test suite, compile**
+- [x] **Step 1: Lint, type-check, full test suite, compile**
 
 Run:
 
@@ -812,7 +812,7 @@ Expected: ruff clean; mypy clean (the new module is typed; if mypy flags
 `-> dict` return type, which is what the plan specifies); all tests pass;
 compileall exits 0.
 
-- [ ] **Step 2: Real-data smoke (optional, network-dependent)**
+- [x] **Step 2: Real-data smoke (optional, network-dependent)**
 
 If network is available:
 
@@ -825,7 +825,7 @@ python -c "import json; db=json.load(open('/tmp/caps.json')); print(db['STM32L43
 Expected: exits 0; `PA9` includes `{"peripheral": "USART1", "signal": "TX", "af": 7}`.
 If network is unavailable, note it in the final summary as unverified and move on.
 
-- [ ] **Step 3: Final commit (if any fixups)**
+- [x] **Step 3: Final commit (if any fixups)**
 
 ```bash
 git add -A
