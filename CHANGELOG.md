@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Physical-first pin resolution / 物理事实优先的引脚解析
+
+- The capability DB now carries a **package-pin position map** (per RefName, from
+  ST's official pin data), and a new resolver layers evidence honestly: physical
+  position fills `port_pin`, AF candidates corroborate or hint `function`
+  (`name+db` / `db_hint` / `name_only` / `package_position` source tags), and
+  `validate_board` detects debug/reset pins physically — nets named `U2TX` or
+  `SW_CLK` resolve correctly without touching the name table. Verified against a
+  real STM32L151 board (143 components): `no_debug_pins` false positives gone. /
+  能力库新增封装管脚位置映射，解析按证据强度分层，调试/复位检测改走物理真值；
+  已在真实 STM32L151 板卡上验证。
+
 ### Import netlists from Altium, OrCAD, and CSV pin-maps / 网表导入支持 Altium、OrCAD 与 CSV
 
 - `import_netlist` gains three formats alongside KiCad: **Altium/Protel `.NET`**,
