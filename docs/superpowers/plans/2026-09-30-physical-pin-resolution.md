@@ -45,7 +45,7 @@ Never fabricated: no position map → `port_pin` stays `None`; zero or multiple 
   - `parse_mcu_xml(text)` return dict gains `"positions": {position_str: port_pin}` covering **all** pin Types (I/O names normalized via `normalize_port_pin` — `"PC14-OSC32_IN"` → `"PC14"`; non-I/O names pass through unchanged — `"NRST"` → `"NRST"`).
   - `build_db(...)` emits, inside each line scope, `"_positions": {"<RefName>": {position_str: port_pin}}` (per-RefName, so different packages of one line never merge).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/test_pin_data_import.py`:
 
@@ -93,12 +93,12 @@ def test_build_db_emits_positions_per_ref_name():
     assert "NRST" not in scope  # non-I/O pins never enter the AF table
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_pin_data_import.py -k positions -v`
 Expected: FAIL — `KeyError: 'positions'`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `src/mcp_server/pin_data_import.py`, extend `parse_mcu_xml`. Replace the pin loop and return dict:
 
@@ -147,12 +147,12 @@ Then in `build_db`, after `table = db.setdefault(scope, {})`, add the per-RefNam
             table.setdefault("_positions", {})[mcu["ref_name"]] = mcu["positions"]
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_pin_data_import.py -v`
 Expected: all tests pass (24 pre-existing + 2 new). Watch for regressions in `test_generated_db_round_trips_through_capability_db` — the `_positions` key must flow through `PinCapabilityDB` harmlessly (it ignores non-list entries).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/mcp_server/pin_data_import.py tests/test_pin_data_import.py
@@ -173,7 +173,7 @@ git commit -m "feat: extract package-pin position map into capability DB (_posit
   - `PinCapabilityDB.position_map(line, family, part_normalized) -> dict | None` — finds the scope's `_positions`, wildcard-matches RefNames against `part_normalized` (`x` and `(...)` groups each match one alphanumeric run, e.g. RefName `STM32L151CCUx` matches part `STM32L151CCU6`). Exactly one match → its map; zero → `None`; multiple matches with IDENTICAL maps → the map; multiple DIFFERING maps → `None` (cannot arbitrate honestly).
   - `PinCapabilityDB.candidates(line, family, port_pin) -> list[dict] | None` — the AF entries for a port pin; `None` when scope or pin unknown.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/test_board_validation.py`:
 
@@ -216,12 +216,12 @@ def test_candidates_returns_af_entries_or_none():
     assert db.candidates("STM32L151", "STM32L1", "_positions") is None
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_board_validation.py -k "position_map or candidates" -v`
 Expected: FAIL — `AttributeError: 'PinCapabilityDB' object has no attribute 'position_map'`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `src/mcp_server/board_validation.py`, add a module-level helper after the imports, and two methods to `PinCapabilityDB`:
 
@@ -270,12 +270,12 @@ def _ref_name_matches(ref_name: str, part_normalized: str) -> bool:
         return entries if isinstance(entries, list) else None
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_board_validation.py -v`
 Expected: all tests pass (pre-existing + 3 new).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/mcp_server/board_validation.py tests/test_board_validation.py
@@ -303,7 +303,7 @@ Resolution algorithm per pin (in order; first hit wins):
 
 Debug-signal normalization (SYS candidates): `JTMS-SWDIO` → `("SWD", "SWDIO")`, `JTCK-SWCLK` → `("SWD", "SWCLK")`, `JTDO-TRACESWO` → `("SWD", "SWO")`, `JTDI` → `("JTAG", "JTDI")`, `JTRST`/`NJTRST` → `("JTAG", "NJTRST")` — applied when a db_hint match lands on a `SYS` debug candidate, so `validate_board`'s `{"SWD", "JTAG"}` check sees them.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/test_pin_resolver.py`:
 
@@ -420,12 +420,12 @@ def test_netlist_port_pin_disagreement_is_a_note_not_an_override():
     assert any("PB7" in n and "PA2" in n for n in out["resolution_notes"])
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_pin_resolver.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'mcp_server.pin_resolver'`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `src/mcp_server/pin_resolver.py`:
 
@@ -554,12 +554,12 @@ def resolve_board(board: dict, db) -> dict:
     return out
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_pin_resolver.py -v`
 Expected: 7 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/mcp_server/pin_resolver.py tests/test_pin_resolver.py
@@ -581,7 +581,7 @@ git commit -m "feat: layered physical-first pin resolver (position map, corrobor
   - `validate_board(board, capability_db)` resolves first when `capability_db` is not None, then runs all checks on the RESOLVED board. `_detect_missing_critical(board, pins, db)` treats debug as present when any MCU pin's `function` is SWD/JTAG **or** its port_pin has a SYS SWD/JTAG candidate in the DB; reset as present when any pin's `port_pin` == `NRST` **or** `function` is SYS/NRST.
   - `import_netlist` schema gains optional `"db_path"`; when a DB loads, the stashed board is the resolved one and the summary adds `resolution` counts.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/test_board_validation.py`:
 
@@ -620,12 +620,12 @@ def test_resolve_board_is_idempotent():
     assert twice["mcu"]["pins"][0] == once["mcu"]["pins"][0]
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_board_validation.py -k physically -v`
 Expected: FAIL — `no_debug_pins` still in warning types (name-based check can't see SW_DIO).
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `src/mcp_server/board_validation.py`, add the import at the top (below `import json`):
 
@@ -727,12 +727,12 @@ Then pass `resolved_note` into the summary data: change the `content_success(sum
 
 (Move the `ctx.board["current"] = parsed` line so it stores the RESOLVED board — the snippet above already reassigns before stashing; delete the original stash line.)
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_board_validation.py tests/test_pin_resolver.py -v`
 Expected: all pass, including the two new ones.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/mcp_server/board_validation.py src/mcp_server/tools/board_tools.py \
@@ -751,7 +751,7 @@ git commit -m "feat: physical debug/reset detection and DB-backed resolution in 
 - Consumes: everything above.
 - Produces: real-evidence verification on the WR350 board + a clean repo-wide gate.
 
-- [ ] **Step 1: Generate the STM32L151 capability DB from ST's official data**
+- [x] **Step 1: Generate the STM32L151 capability DB from ST's official data**
 
 ```bash
 git clone --depth 1 --filter=blob:none --sparse https://github.com/STMicroelectronics/STM32_open_pin_data .tmp_open_pin_data
@@ -761,7 +761,7 @@ python scripts/import_pin_data.py --source .tmp_open_pin_data --mcu 'STM32L151CC
 
 Expected: `wrote .tmp_caps_l151.json: 1 line(s) ['STM32L151'], <N> entries, 0 warning(s)`.
 
-- [ ] **Step 2: Resolve the real WR350 board and verify the three canonical cases**
+- [x] **Step 2: Resolve the real WR350 board and verify the three canonical cases**
 
 Copy the real netlist into the workspace first (it lives outside the repo), then:
 
@@ -791,13 +791,13 @@ Expected: pin 12 → `PA2` / `USART2_TX` / `db_hint`; SW_DIO → `SWD/SWDIO`; SW
 If any expectation fails, debug and fix — do not weaken the assertions; the physical
 facts were verified by hand against `STM32L151CCUx.xml` (Position 12 = PA2 = USART2_TX).
 
-- [ ] **Step 3: Clean up temp artifacts**
+- [x] **Step 3: Clean up temp artifacts**
 
 ```bash
 rm -rf .tmp_open_pin_data .tmp_caps_l151.json .tmp_wr350.net
 ```
 
-- [ ] **Step 4: CHANGELOG entry**
+- [x] **Step 4: CHANGELOG entry**
 
 Insert under `## [Unreleased]` in `CHANGELOG.md`:
 
@@ -815,7 +815,7 @@ Insert under `## [Unreleased]` in `CHANGELOG.md`:
   已在真实 STM32L151 板卡上验证。
 ```
 
-- [ ] **Step 5: Full verification gate**
+- [x] **Step 5: Full verification gate**
 
 ```bash
 python -m ruff check .
@@ -827,7 +827,7 @@ python -m compileall src tests scripts
 Expected: ruff clean; mypy clean; full suite green (1309 pre-existing + ~13 new);
 compileall exits 0.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add CHANGELOG.md
