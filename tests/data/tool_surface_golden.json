@@ -1719,6 +1719,10 @@
    "description": "Parse a schematic netlist (KiCad .net today) into a machine-readable BoardDescription: the MCU part/family/line, a per-pin map (package pin -> port pin -> net -> inferred peripheral function), and the power/ground nets. This is the input contract for automated framework design. Pass 'path' or 'text'. The result is stored on the session; read views with describe_board.",
    "inputSchema": {
     "properties": {
+     "db_path": {
+      "description": "Optional JSON pin-capability DB; when given (or STM32_GDB_MCP_PIN_DB is set), pins are resolved physically (package position -> port pin, AF corroboration).",
+      "type": "string"
+     },
      "format": {
       "description": "Netlist format: auto (default), kicad, altium (Protel .NET), orcad (pstxnet.dat) or csv (generic pin-map).",
       "type": "string"

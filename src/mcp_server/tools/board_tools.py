@@ -9,6 +9,7 @@ from ..board_model import board_view, summarize_board
 from ..board_validation import load_capability_db
 from ..board_validation import validate_board as validate_board_report
 from ..netlist_parser import load_netlist_file, parse_netlist
+from ..pin_resolver import resolve_board
 from ..tool_response import content_error, content_success
 from .context import ToolContext
 from .registry import register
@@ -29,6 +30,9 @@ from .registry import register
             "format": {"type": "string", "description":
                        "Netlist format: auto (default), kicad, altium (Protel .NET), "
                        "orcad (pstxnet.dat) or csv (generic pin-map)."},
+            "db_path": {"type": "string", "description":
+                        "Optional JSON pin-capability DB; when given (or STM32_GDB_MCP_PIN_DB is set), "
+                        "pins are resolved physically (package position -> port pin, AF corroboration)."},
             "session": {"type": "string", "description": "Target session id (default 'default')."}
         }
     }
@@ -48,9 +52,26 @@ def import_netlist(ctx: ToolContext, arguments: dict) -> list[TextContent]:
         return [content_error(
             str(e), code="netlist_parse_error",
             suggested_next_actions=["import_netlist with format=kicad|altium|orcad|csv"])]
+    resolved_note = None
+    db_path = arguments.get("db_path") or os.environ.get("STM32_GDB_MCP_PIN_DB")
+    if db_path:
+        try:
+            capability_db = load_capability_db(db_path)
+            before = sum(1 for p in (parsed.get("mcu") or {}).get("pins", []) if p.get("function"))
+            parsed = resolve_board(parsed, capability_db)
+            after = sum(1 for p in (parsed.get("mcu") or {}).get("pins", []) if p.get("function"))
+            resolved_note = {"db_path": db_path, "functions_before": before, "functions_after": after,
+                             "notes": parsed.get("resolution_notes", [])}
+        except (OSError, ValueError) as e:
+            return [content_error(
+                f"Failed to load pin-capability DB: {e}", code="db_load_error",
+                suggested_next_actions=["import_netlist without db_path"])]
     ctx.board["current"] = parsed
+    summary = summarize_board(parsed)
+    if resolved_note:
+        summary["resolution"] = resolved_note
     return [content_success(
-        summarize_board(parsed),
+        summary,
         suggested_next_actions=["describe_board (what=pins)", "describe_board (what=peripherals)"])]
 
 

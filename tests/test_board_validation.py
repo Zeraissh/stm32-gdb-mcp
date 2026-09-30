@@ -226,3 +226,24 @@ def test_candidates_returns_af_entries_or_none():
     assert db.candidates("STM32L151", "STM32L1", None) is None
     # The reserved _positions key is not a port pin and must not leak through:
     assert db.candidates("STM32L151", "STM32L1", "_positions") is None
+
+
+def test_validate_board_detects_debug_and_reset_physically():
+    db = PinCapabilityDB(POSITION_DB)
+    board = {
+        "source": "t", "format": "altium",
+        "mcu": {"ref": "U6", "part": "STM32L151CCU6", "part_normalized": "STM32L151CCU6",
+                "family": "STM32L1", "line": "STM32L151",
+                "pins": [
+                    {"package_pin": "7", "port_pin": None, "net": "NRST", "function": None},
+                    {"package_pin": "34", "port_pin": None, "net": "SW_DIO", "function": None},
+                    {"package_pin": "37", "port_pin": None, "net": "SW_CLK", "function": None},
+                ]},
+        "components": [], "nets": [], "power_nets": {"power": ["VDD"], "ground": ["GND"]},
+        "warnings": [], "stats": {},
+    }
+    report = validate_board(board, db)
+
+    warning_types = {w["type"] for w in report["warnings"]}
+    assert "no_debug_pins" not in warning_types
+    assert "no_reset_pin" not in warning_types

@@ -30,6 +30,8 @@ import json
 import re
 from collections import defaultdict
 
+from mcp_server.pin_resolver import resolve_board
+
 
 def _ref_name_matches(ref_name: str, part_normalized: str) -> bool:
     """Wildcard-match an ST RefName (``STM32L151CCUx``) against a concrete part
@@ -223,7 +225,8 @@ def _detect_illegal_af(pins: list[dict], db: PinCapabilityDB, line, family) -> t
     return conflicts, unverified
 
 
-def _detect_missing_critical(board: dict, pins: list[dict]) -> list[dict]:
+def _detect_missing_critical(board: dict, pins: list[dict], db: PinCapabilityDB | None = None,
+                             line=None, family=None) -> list[dict]:
     warnings = []
     power = board.get("power_nets") or {}
     if not power.get("power"):
@@ -233,15 +236,31 @@ def _detect_missing_critical(board: dict, pins: list[dict]) -> list[dict]:
 
     functions = {(p["function"]["peripheral"], p["function"]["signal"]) for p in pins if p.get("function")}
     peripherals = {peripheral for peripheral, _ in functions}
-    if not ({"SWD", "JTAG"} & peripherals):
+
+    debug_found = bool({"SWD", "JTAG"} & peripherals)
+    reset_found = ("SYS", "NRST") in functions
+    if db is not None:
+        for pin in pins:
+            port_pin = pin.get("port_pin")
+            if not port_pin:
+                continue
+            if port_pin == "NRST":
+                reset_found = True
+            for candidate in db.candidates(line, family, port_pin) or []:
+                signal = candidate.get("signal") or ""
+                if candidate.get("peripheral") == "SYS" and ("SWD" in signal or signal.startswith("JT")):
+                    debug_found = True
+    if not debug_found:
         warnings.append({"type": "no_debug_pins", "detail": "No SWD/JTAG debug pins found; on-chip debug may be unavailable."})
-    if ("SYS", "NRST") not in functions:
+    if not reset_found:
         warnings.append({"type": "no_reset_pin", "detail": "No NRST reset net found."})
     return warnings
 
 
 def validate_board(board: dict, capability_db: PinCapabilityDB | None = None) -> dict:
     """Validate a BoardDescription; return a structured conflict/warning report."""
+    if capability_db is not None:
+        board = resolve_board(board, capability_db)
     mcu = board.get("mcu")
     pins = _mcu_pins(board)
 
@@ -257,7 +276,9 @@ def validate_board(board: dict, capability_db: PinCapabilityDB | None = None) ->
         conflicts += af_conflicts
         af_checked = True
 
-    warnings = _detect_missing_critical(board, pins)
+    warnings = _detect_missing_critical(
+        board, pins, capability_db,
+        mcu.get("line") if mcu else None, mcu.get("family") if mcu else None)
     if not mcu:
         warnings.append({"type": "no_mcu", "detail": "No MCU in the board description; import a netlist with an MCU first."})
 

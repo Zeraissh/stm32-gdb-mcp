@@ -107,3 +107,11 @@ def test_netlist_port_pin_disagreement_is_a_note_not_an_override():
 
     assert pin["port_pin"] == "PB7"  # netlist value kept
     assert any("PB7" in n and "PA2" in n for n in out["resolution_notes"])
+
+
+def test_resolve_board_is_idempotent():
+    board = _board([{"package_pin": "12", "port_pin": None, "net": "U2TX", "function": None}])
+    once = resolve_board(board, DB)
+    twice = resolve_board(once, DB)
+
+    assert twice["mcu"]["pins"][0] == once["mcu"]["pins"][0]
