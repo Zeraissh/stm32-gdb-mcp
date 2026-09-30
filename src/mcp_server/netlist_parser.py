@@ -226,6 +226,60 @@ def parse_altium_netlist(text: str) -> tuple[list, list]:
     return components, nets
 
 
+# --- OrCAD/Cadence pstxnet.dat ------------------------------------------------
+
+
+def parse_orcad_netlist(text: str) -> tuple[list, list]:
+    """Parse a Cadence/OrCAD ``pstxnet.dat`` netlist into ``(components, nets)``.
+
+    Supported subset (the structural skeleton of ``FILE_TYPE=EXPANDEDNETLIST``):
+    a ``NET_NAME`` line followed by the quoted net name starts a net record;
+    ``NODE_NAME <ref> <pin>`` lines attach nodes to the current net; canonical
+    -path and property lines are skipped; ``END.`` terminates the file.
+
+    ``pstxnet.dat`` carries no part values (those live in ``pstxprt.dat``), so
+    every component is synthesized from node references with ``value=None``;
+    MCU detection then emits the usual no-MCU warning rather than guessing.
+    """
+    nets: list[dict] = []
+    refs: dict[str, dict] = {}
+    current: dict | None = None
+    lines = text.splitlines()
+    i, n = 0, len(lines)
+    while i < n:
+        line = lines[i].strip()
+        if line == "NET_NAME":
+            i += 1
+            while i < n and not lines[i].strip():
+                i += 1
+            name_line = lines[i].strip() if i < n else ""
+            if not (name_line.startswith("'") and name_line.endswith("'")):
+                raise ValueError("OrCAD netlist: NET_NAME not followed by a quoted name")
+            current = {"name": name_line.strip("'"), "nodes": []}
+            nets.append(current)
+        elif line.startswith("NODE_NAME"):
+            if current is None:
+                raise ValueError("OrCAD netlist: NODE_NAME before any NET_NAME")
+            parts = line.split()
+            if len(parts) != 3:
+                raise ValueError(f"OrCAD netlist: bad NODE_NAME line {line!r}")
+            _, ref, pin = parts
+            current["nodes"].append({"ref": ref, "pin": pin})
+            refs.setdefault(ref, {"ref": ref, "value": None, "footprint": None, "pins": {}})
+        elif line == "END.":
+            break
+        i += 1
+    if not nets:
+        raise ValueError("OrCAD netlist: no NET_NAME records found")
+
+    components = list(refs.values())
+    comp_index = {c["ref"]: c for c in components}
+    for net in nets:
+        for node in net["nodes"]:
+            comp_index[node["ref"]]["pins"][node["pin"]] = net["name"]
+    return components, nets
+
+
 # --- Dispatch ----------------------------------------------------------------
 
 
@@ -253,6 +307,8 @@ def parse_netlist(text: str, fmt: str = "auto", source: str = "<memory>") -> dic
         components, nets = parse_kicad_netlist(text)
     elif resolved == "altium":
         components, nets = parse_altium_netlist(text)
+    elif resolved == "orcad":
+        components, nets = parse_orcad_netlist(text)
     else:
         raise ValueError(
             f"Unsupported or undetected netlist format: {resolved!r}. "

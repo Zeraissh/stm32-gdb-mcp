@@ -5,6 +5,7 @@ from mcp_server.netlist_parser import (
     load_netlist_file,
     parse_altium_netlist,
     parse_kicad_netlist,
+    parse_orcad_netlist,
     parse_netlist,
 )
 
@@ -151,3 +152,56 @@ def test_parse_altium_rejects_bad_node_line():
 
 def test_detect_format_altium():
     assert detect_format(ALTIUM_NET) == "altium"
+
+
+ORCAD_PSTXNET = """\
+FILE_TYPE=EXPANDEDNETLIST;
+{ Using PSTWRITER 17.4-2019 }
+NET_NAME
+'USART1_TX'
+'@BOARD.SCHEMATIC1(SCH_1):USART1_TX':
+C_SIGNAL='@board.schematic1(sch_1):usart1_tx';
+NODE_NAME U1 42
+'@BOARD.SCHEMATIC1(SCH_1):PAGE1_42@STM.STM32L431CBT6.NORMAL(CHIPS)':
+'IO':;
+NODE_NAME R5 1
+'@BOARD.SCHEMATIC1(SCH_1):PAGE1_1@DISCRETE.R.NORMAL(CHIPS)':
+'I':;
+NET_NAME
+'GND'
+'@BOARD.SCHEMATIC1(SCH_1):GND':
+C_SIGNAL='@board.schematic1(sch_1):gnd';
+NODE_NAME U1 47
+'@BOARD.SCHEMATIC1(SCH_1):PAGE1_47@STM.STM32L431CBT6.NORMAL(CHIPS)':
+'I':;
+END.
+"""
+
+
+def test_parse_orcad_nets_and_nodes():
+    components, nets = parse_orcad_netlist(ORCAD_PSTXNET)
+
+    assert [n["name"] for n in nets] == ["USART1_TX", "GND"]
+    usart = nets[0]
+    assert usart["nodes"] == [{"ref": "U1", "pin": "42"}, {"ref": "R5", "pin": "1"}]
+    by_ref = {c["ref"]: c for c in components}
+    assert by_ref["U1"]["pins"] == {"42": "USART1_TX", "47": "GND"}
+    assert by_ref["U1"]["value"] is None  # pstxnet.dat carries no part values
+
+
+def test_parse_orcad_board_description_degrades_honestly():
+    board = parse_netlist(ORCAD_PSTXNET, fmt="auto")
+
+    assert board["format"] == "orcad"
+    assert board["mcu"] is None  # no part values -> no MCU detection, never a guess
+    assert any("No STM32 MCU" in w for w in board["warnings"])
+    assert board["power_nets"]["ground"] == ["GND"]
+
+
+def test_parse_orcad_rejects_node_before_net():
+    with pytest.raises(ValueError, match="NODE_NAME before any NET_NAME"):
+        parse_orcad_netlist("FILE_TYPE=EXPANDEDNETLIST;\nNODE_NAME U1 1\n':\nEND.\n")
+
+
+def test_detect_format_orcad():
+    assert detect_format(ORCAD_PSTXNET) == "orcad"
