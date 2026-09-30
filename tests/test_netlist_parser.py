@@ -3,6 +3,7 @@ import pytest
 from mcp_server.netlist_parser import (
     detect_format,
     load_netlist_file,
+    parse_altium_netlist,
     parse_kicad_netlist,
     parse_netlist,
 )
@@ -30,7 +31,8 @@ KICAD_FIXTURE = """
 
 def test_detect_format():
     assert detect_format(KICAD_FIXTURE) == "kicad"
-    assert detect_format("Component, Pin, Net\nU1, 1, GND") == "unknown"
+    # CSV support (Tier 4): a header with pin+net columns is now detected as csv.
+    assert detect_format("Component, Pin, Net\nU1, 1, GND") == "csv"
 
 
 def test_parse_kicad_components_and_pinmap():
@@ -85,3 +87,67 @@ def test_load_netlist_file(tmp_path):
 
     assert board["source"] == str(path)
     assert board["mcu"]["part_normalized"] == "STM32L431CBT6"
+
+
+ALTIUM_NET = """\
+[
+U1
+LQFP-48
+STM32L431CBT6
+
+]
+[
+R5
+R0603
+10K
+
+]
+(
++3V3
+U1-8
+R5-1
+)
+(
+USART1_TX
+U1-42
+R5-2
+)
+(
+GND
+U1-47
+)
+"""
+
+
+def test_parse_altium_components_and_nets():
+    components, nets = parse_altium_netlist(ALTIUM_NET)
+
+    by_ref = {c["ref"]: c for c in components}
+    assert by_ref["U1"]["value"] == "STM32L431CBT6"
+    assert by_ref["U1"]["footprint"] == "LQFP-48"
+    assert by_ref["U1"]["pins"] == {"8": "+3V3", "42": "USART1_TX", "47": "GND"}
+    assert {n["name"] for n in nets} == {"+3V3", "USART1_TX", "GND"}
+    usart = next(n for n in nets if n["name"] == "USART1_TX")
+    assert usart["nodes"] == [{"ref": "U1", "pin": "42"}, {"ref": "R5", "pin": "2"}]
+
+
+def test_parse_altium_board_description_infers_mcu():
+    board = parse_netlist(ALTIUM_NET, fmt="auto")
+
+    assert board["format"] == "altium"
+    assert board["mcu"]["part_normalized"] == "STM32L431CBT6"
+    assert board["mcu"]["line"] == "STM32L431"
+    tx_pin = next(p for p in board["mcu"]["pins"] if p["net"] == "USART1_TX")
+    assert tx_pin["package_pin"] == "42"
+    assert tx_pin["port_pin"] is None  # Protel .NET carries no pinfunction
+    assert tx_pin["function"] == {"peripheral": "USART1", "signal": "TX"}
+    assert board["power_nets"] == {"power": ["+3V3"], "ground": ["GND"]}
+
+
+def test_parse_altium_rejects_bad_node_line():
+    with pytest.raises(ValueError, match="bad node"):
+        parse_altium_netlist("[\nU1\nLQFP-48\nSTM32L431CBT6\n]\n(\nNETX\nU1\n)\n")
+
+
+def test_detect_format_altium():
+    assert detect_format(ALTIUM_NET) == "altium"

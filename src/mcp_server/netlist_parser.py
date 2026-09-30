@@ -145,6 +145,87 @@ def parse_kicad_netlist(text: str) -> tuple[list, list]:
     return components, nets
 
 
+# --- Altium/Protel .NET ------------------------------------------------------
+
+
+def parse_altium_netlist(text: str) -> tuple[list, list]:
+    """Parse an Altium/Protel ``.NET`` netlist into ``(components, nets)``.
+
+    Component record (``[`` … ``]``; designator / footprint / comment on the
+    first three lines, optional extra lines ignored)::
+
+        [
+        U1
+        LQFP-48
+        STM32L431CBT6
+        ]
+
+    Net record (``(`` … ``)``; net name on the first line, then REF-PIN
+    nodes, split on the LAST dash)::
+
+        (
+        USART1_TX
+        U1-42
+        R5-1
+        )
+
+    The format has no pinfunction concept, so nodes never carry ``port_pin``.
+    """
+    components: list[dict] = []
+    nets: list[dict] = []
+    lines = text.splitlines()
+    i, n = 0, len(lines)
+    while i < n:
+        line = lines[i].strip()
+        if line == "[":
+            block: list[str] = []
+            i += 1
+            while i < n and lines[i].strip() != "]":
+                block.append(lines[i].strip())
+                i += 1
+            padded = block + ["", "", ""]
+            ref, footprint, value = padded[0], padded[1], padded[2]
+            if ref:
+                components.append({
+                    "ref": ref,
+                    "value": value or None,
+                    "footprint": footprint or None,
+                    "pins": {},
+                })
+            i += 1  # consume ']'
+        elif line == "(":
+            block = []
+            i += 1
+            while i < n and lines[i].strip() != ")":
+                block.append(lines[i].strip())
+                i += 1
+            if block:
+                name = block[0]
+                nodes = []
+                for entry in block[1:]:
+                    if not entry:
+                        continue
+                    if "-" not in entry:
+                        raise ValueError(
+                            f"Altium netlist: bad node {entry!r} in net {name!r} (expected REF-PIN)")
+                    ref, pin = entry.rsplit("-", 1)
+                    nodes.append({"ref": ref, "pin": pin})
+                nets.append({"name": name, "nodes": nodes})
+            i += 1  # consume ')'
+        else:
+            if line:
+                raise ValueError(f"Altium netlist: unexpected content outside a record: {line!r}")
+            i += 1
+
+    comp_index = {c["ref"]: c for c in components}
+    for net in nets:
+        for node in net["nodes"]:
+            comp = comp_index.get(node["ref"])
+            if comp is not None:
+                comp["pins"][node["pin"]] = net["name"]
+    return components, nets
+
+
 # --- Dispatch ----------------------------------------------------------------
 
 
@@ -153,6 +234,15 @@ def detect_format(text: str) -> str:
     head = text.lstrip()[:256].lower()
     if head.startswith("(export") or "(netlist" in head or "(components" in head:
         return "kicad"
+    if head.startswith("file_type") and "expandednetlist" in head:
+        return "orcad"
+    if "net_name" in head and "node_name" in head:
+        return "orcad"
+    if head.startswith("["):
+        return "altium"
+    first_line = head.splitlines()[0] if head else ""
+    if "," in first_line and "net" in first_line and "pin" in first_line:
+        return "csv"
     return "unknown"
 
 
@@ -161,8 +251,12 @@ def parse_netlist(text: str, fmt: str = "auto", source: str = "<memory>") -> dic
     resolved = detect_format(text) if fmt in (None, "auto") else fmt.lower()
     if resolved == "kicad":
         components, nets = parse_kicad_netlist(text)
+    elif resolved == "altium":
+        components, nets = parse_altium_netlist(text)
     else:
-        raise ValueError(f"Unsupported or undetected netlist format: {resolved!r}. Supported: kicad.")
+        raise ValueError(
+            f"Unsupported or undetected netlist format: {resolved!r}. "
+            "Supported: kicad, altium, orcad, csv.")
     return build_board_description(components, nets, source=source, fmt=resolved)
 
 
