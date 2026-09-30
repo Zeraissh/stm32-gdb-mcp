@@ -27,7 +27,18 @@ source for GPIO alternate-function *numbers* during framework synthesis (see
 """
 
 import json
+import re
 from collections import defaultdict
+
+
+def _ref_name_matches(ref_name: str, part_normalized: str) -> bool:
+    """Wildcard-match an ST RefName (``STM32L151CCUx``) against a concrete part
+    (``STM32L151CCU6``). ``x`` and ``(...)`` groups each match one or more
+    alphanumerics; everything else is literal."""
+    pattern = re.escape(ref_name)
+    pattern = re.sub(r"\\\(.*?\\\)", r"[A-Z0-9]+", pattern)  # escaped (B-C) groups
+    pattern = pattern.replace("x", "[A-Z0-9]")
+    return re.fullmatch(pattern, part_normalized, flags=re.IGNORECASE) is not None
 
 
 class PinCapabilityDB:
@@ -52,6 +63,36 @@ class PinCapabilityDB:
             if entry.get("peripheral") == peripheral and entry.get("signal") == signal:
                 return True
         return False
+
+    def position_map(self, line, family, part_normalized) -> dict | None:
+        """Return the package-pin → port-pin map for a concrete part number.
+
+        Wildcard-matches the scope's per-RefName position tables against
+        ``part_normalized``. Multiple matches only resolve when every matched
+        table is identical; differing tables return ``None`` — never arbitrated.
+        """
+        pins = self._pins_for(line, family)
+        if not pins or not part_normalized:
+            return None
+        tables = pins.get("_positions")
+        if not isinstance(tables, dict):
+            return None
+        matches = [table for ref, table in tables.items()
+                   if _ref_name_matches(ref, part_normalized)]
+        if not matches:
+            return None
+        first = matches[0]
+        if all(table == first for table in matches[1:]):
+            return dict(first)
+        return None
+
+    def candidates(self, line, family, port_pin) -> list[dict] | None:
+        """Return the AF candidate entries for a port pin, or ``None`` when unknown."""
+        pins = self._pins_for(line, family)
+        if pins is None or not port_pin or port_pin.startswith("_"):
+            return None
+        entries = pins.get(port_pin)
+        return entries if isinstance(entries, list) else None
 
     def af_map(self) -> dict:
         """Project the DB into an ``af_map`` for framework synthesis.

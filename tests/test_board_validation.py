@@ -188,3 +188,41 @@ def test_capability_db_af_map_rejects_bool_and_non_int_af():
     )
 
     assert db.af_map() == {}
+
+
+POSITION_DB = {
+    "_meta": {"source": "test", "generated_by": "test", "db_version": None,
+              "ref_names": ["STM32L151CCUx"], "warnings": []},
+    "STM32L151": {
+        "PA2": [{"peripheral": "ADC", "signal": "IN2"},
+                {"peripheral": "USART2", "signal": "TX", "af": 4}],
+        "PA13": [{"peripheral": "SYS", "signal": "JTMS-SWDIO"}],
+        "PA14": [{"peripheral": "SYS", "signal": "JTCK-SWCLK"}],
+        "_positions": {"STM32L151CCUx": {"7": "NRST", "12": "PA2", "34": "PA13", "37": "PA14"}},
+    },
+}
+
+
+def test_position_map_matches_part_against_ref_name_wildcards():
+    db = PinCapabilityDB(POSITION_DB)
+
+    pmap = db.position_map("STM32L151", "STM32L1", "STM32L151CCU6")
+    assert pmap == {"7": "NRST", "12": "PA2", "34": "PA13", "37": "PA14"}
+
+
+def test_position_map_returns_none_without_match():
+    db = PinCapabilityDB(POSITION_DB)
+
+    assert db.position_map("STM32L151", "STM32L1", "STM32L431CBT6") is None
+    assert db.position_map(None, None, "STM32L151CCU6") is None
+    assert PinCapabilityDB({}).position_map("STM32L151", "STM32L1", "STM32L151CCU6") is None
+
+
+def test_candidates_returns_af_entries_or_none():
+    db = PinCapabilityDB(POSITION_DB)
+
+    assert db.candidates("STM32L151", "STM32L1", "PA13") == [{"peripheral": "SYS", "signal": "JTMS-SWDIO"}]
+    assert db.candidates("STM32L151", "STM32L1", "PA99") is None
+    assert db.candidates("STM32L151", "STM32L1", None) is None
+    # The reserved _positions key is not a port pin and must not leak through:
+    assert db.candidates("STM32L151", "STM32L1", "_positions") is None
