@@ -188,3 +188,11 @@ def test_tool_rejects_a_bad_state(hub_session):
     payload = _call({"action": "dashboard", "state": "maybe"})
     assert payload["ok"] is False
     assert payload["error"]["code"] == "invalid_argument"
+
+
+def test_responses_are_not_held_back_by_nagle():
+    # The handler writes headers and body as two sends. With Nagle on, Windows'
+    # ~200 ms delayed ACK was added to every hub daemon RPC (seen on Windows CI).
+    from mcp_server.hub_dashboard import _Handler
+
+    assert _Handler.disable_nagle_algorithm is True

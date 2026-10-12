@@ -300,6 +300,10 @@ def _bit(value: Any) -> int | None:
 
 class _Handler(BaseHTTPRequestHandler):
     server_version = "stm32-gdb-mcp-hub-dashboard"
+    # TCP_NODELAY. BaseHTTPRequestHandler writes the headers and the body as two
+    # sends; with Nagle on, the body waits for the peer to ACK the headers, and
+    # Windows delays that ACK ~200 ms -- added to every hub daemon RPC.
+    disable_nagle_algorithm = True
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 - stdlib signature
         # stdout is the MCP transport and stderr is the server log; a request line
