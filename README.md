@@ -212,9 +212,14 @@ Nothing changes in how you call `hub(...)`. /
 Hub 控制口同一时间只能被一个进程打开。因此默认情况下，第一次调用 hub 会拉起一个**Hub 守护进程**
 独占它，所有 MCP 服务器都改为与守护进程通信；`hub(...)` 的用法完全不变。
 
-- Reads are shared; writes are serialized by one daemon-wide lock, so a power cycle never
-  interleaves with another server's switch. / 读取共享；写操作由守护进程内一把全局锁串行执行，
-  电源循环不会与其他服务器的开关交错。
+- Reads are shared. Writes lock only the channels they touch: a power cycle on CH1 never
+  interleaves with another switch on CH1, but a switch on CH4 runs alongside it. Exclusive
+  isolation locks the whole rack, and `hub(action=discover)` holds a rack-wide lease for
+  its whole run, so no other server's switch can corrupt the map. Waiting is FIFO among
+  conflicting requests, so a rack-wide request is never starved. / 读取共享；写操作只锁住
+  涉及的通道：CH1 的电源循环不会与 CH1 上的其他开关交错，但 CH4 的操作可以同时进行。exclusive
+  隔离锁住整个机架；`hub(action=discover)` 在整个运行期间持有全机架租约，其他服务器的开关无法
+  插入。冲突请求按先来后到排队，整机架请求不会被饿死。
 - Each server's **guard mode stays its own** (`guard: allow` on a CI server does not relax
   anyone else), and the audit trail records which server did what. / 每个服务器的 **guard
   模式各自独立**，审计日志记录是哪台服务器执行的操作。
@@ -246,12 +251,10 @@ python -m mcp_server.hub_daemon serve --config bench_hub.yaml   # run it yoursel
 `STM32_GDB_MCP_HUB_MODE=auto` (default) uses the daemon and falls back to in-process when
 the `[hub]` extra is absent or the daemon cannot start; `daemon` never falls back; `local`
 is the old single-process behaviour. Everything binds to `127.0.0.1`; writes need the token
-in the per-user state file. Not yet: per-channel write locks (one write at a time, rack-wide),
-and discovery is not atomic against another server's writes. /
+in the per-user state file. /
 `STM32_GDB_MCP_HUB_MODE=auto`（默认）使用守护进程，未安装 `[hub]` extra 或守护进程无法启动时
 退回进程内模式；`daemon` 不回退；`local` 为原来的单进程行为。全部仅监听 `127.0.0.1`，写操作需
-要用户私有状态文件中的 token。尚未实现：按通道加锁（目前整个机架一次只执行一个写操作）；
-discover 过程中仍可能穿插其他服务器的写操作。
+要用户私有状态文件中的 token。
 
 #### Live dashboard / 实时看板
 

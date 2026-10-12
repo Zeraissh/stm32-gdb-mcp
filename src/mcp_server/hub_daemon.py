@@ -8,10 +8,12 @@ ever show its own server's view. This daemon is the single owner instead:
 - **Reads** go through one ``HubManager``. The dashboard sampler publishes one
   snapshot per interval to every viewer, and a client's ``describe`` is a fresh
   read (a cached one could show "on" right after that client switched a port off).
-- **Writes** are serialized by one daemon-wide lock, so a power cycle (cut,
-  wait, restore, settle) can never interleave with another client's switch.
-  The guard decides with the CALLING client's guard mode, so one server set to
-  ``allow`` for CI does not relax the guard for every other server on the rack.
+- **Writes** lock only the channels they touch (``hub_locks``): a power cycle
+  on channel 1 never interleaves with another switch on channel 1, but a switch
+  on channel 4 runs alongside it. Exclusive isolation and port changes lock the
+  whole rack; a discovery run holds a rack-wide lease across its calls. The
+  guard decides with the CALLING client's guard mode (thread-local), so one
+  server set to ``allow`` for CI does not relax the guard for any other.
 - **Restore-on-exit** is tracked per client: what a client switched off is put
   back when that client closes, or when its PID is found dead.
 
@@ -46,12 +48,13 @@ from typing import Any
 from . import __version__
 from .hub import GUARD_MODES, HubBusyError, HubGuardError, HubManager, HubUnavailableError
 from .hub_dashboard import DEFAULT_INTERVAL_SEC, DEFAULT_PORT, HubDashboard
+from .hub_locks import ALL, ChannelLocks
 from .probe_lock import _pid_alive
 
 # Bumped whenever an RPC's shape changes. A client refuses a daemon speaking a
 # different protocol rather than half-working against it (the usual cause is a
 # daemon still running from before an upgrade).
-PROTOCOL = 2
+PROTOCOL = 3
 
 # With nobody calling and nobody watching for this long, the daemon exits and
 # hands the hub back -- unless it still owes a channel its power or data line.
@@ -65,6 +68,10 @@ DEFAULT_MAX_WAIT_SEC = 30.0
 # dashboard. Its sessions still count as live for the interlock until its PID
 # is gone: assuming a silent server is idle is how a flash gets interrupted.
 HEARTBEAT_STALE_SEC = 10.0
+# A lease (held across several calls, e.g. by discovery) expires on its own after
+# this long unless released, so a hung client cannot lock the rack forever.
+DEFAULT_LEASE_TTL_SEC = 600.0
+MAX_LEASE_TTL_SEC = 3600.0
 
 _ERROR_TYPES: dict[str, type[Exception]] = {
     "HubUnavailableError": HubUnavailableError,
@@ -209,7 +216,8 @@ class HubDaemon:
         self.idle_exit_sec = idle_exit_sec
         self._clock = clock
         self.dashboard = HubDashboard(clock=clock)
-        self._write_lock = threading.RLock()
+        # Per-channel write locks: writes on different channels run concurrently.
+        self.locks = ChannelLocks()
         self._meta_lock = threading.Lock()
         self._clients: dict[str, dict] = {}
         self._specs: dict[str, dict] = {}
@@ -224,8 +232,8 @@ class HubDaemon:
         # Bumped on every applied switch. Clients compare it before serving a
         # cached detect_probe, so one server's switch invalidates everyone's cache.
         self.generation = 0
-        # The write currently holding the lock, for "busy" errors and the page.
-        self._busy: dict | None = None
+        # lease id -> {"client", "name", "token", "expires_at", "reason"}.
+        self._leases: dict[str, dict] = {}
         self.manager.live_session_for = self._live_on
 
     # -------------------------------------------------------------- lifecycle
@@ -246,18 +254,32 @@ class HubDaemon:
         """Stop serving and put back everything any client still owes."""
         self.stopped.set()
         self.dashboard.stop()
-        with self._write_lock:
-            restored = self.manager.close(restore_power=True, restore_data=True)
-        return restored
+        # Let an in-flight cycle finish its restore before closing, but do not
+        # let a stuck one keep the daemon from ever shutting down.
+        token = self.locks.acquire(ALL, {"client": "daemon", "method": "shutdown"}, timeout=10.0)
+        try:
+            return self.manager.close(restore_power=True, restore_data=True)
+        finally:
+            self.locks.release(token)
 
     def maintain(self) -> bool:
         """Periodic housekeeping. Returns True when the daemon should exit."""
+        now = self._clock()
+        with self._meta_lock:
+            expired = [lid for lid, lease in self._leases.items() if lease["expires_at"] <= now]
+        for lease_id in expired:
+            self._drop_lease(lease_id)
         for client_id, meta in list(self._clients.items()):
             if meta.get("pid") and not _pid_alive(meta["pid"]):
                 # Its MCP server died without saying goodbye; do what its own
-                # shutdown would have done.
-                self._release(client_id, restore_power=True, restore_data=True, reason="client exited")
-                self._forget(client_id)
+                # shutdown would have done. A restore that cannot get its
+                # channels yet keeps the debt, and the client entry, for the
+                # next pass.
+                self._drop_leases_of(client_id)
+                result = self._release(client_id, restore_power=True, restore_data=True,
+                                       reason="client exited", wait=0.5)
+                if not result.get("deferred"):
+                    self._forget(client_id)
         if not self.idle_exit_sec:
             return False
         last = max(self._last_activity, self.dashboard.last_viewed or 0)
@@ -333,14 +355,16 @@ class HubDaemon:
             # queue behind a running power cycle (every call pushes its spec first).
             self.manager.configure(merged)
             return {"configured": True}
-        # A different hub port drops the connection; never between a cycle's
-        # cut and its restore.
-        if not self._write_lock.acquire(timeout=DEFAULT_MAX_WAIT_SEC):
-            raise HubBusyError(self._busy_message("configure", None, DEFAULT_MAX_WAIT_SEC))
+        # A different hub port drops the connection: take EVERY channel, so it
+        # never lands between some cycle's cut and its restore.
+        token = self.locks.acquire(ALL, {"client": self._name(client), "method": "configure"},
+                                   timeout=DEFAULT_MAX_WAIT_SEC)
+        if token is None:
+            raise HubBusyError(self._busy_message("configure", ALL, DEFAULT_MAX_WAIT_SEC))
         try:
             self.manager.configure(merged)
         finally:
-            self._write_lock.release()
+            self.locks.release(token)
         return {"configured": True}
 
     def _rpc_channels(self, client: str, params: dict) -> list[int]:
@@ -388,25 +412,61 @@ class HubDaemon:
         return [row for row in self._session_rows() if row["server_alive"]]
 
     def _rpc_power(self, client: str, params: dict) -> dict:
-        return self._write(client, "power", params, lambda: self.manager.power(
+        return self._write(client, "power", params, _one(params), lambda: self.manager.power(
             params["channel"], params["state"], confirm=bool(params.get("confirm")),
             live_session=params.get("live_session")))
 
     def _rpc_data(self, client: str, params: dict) -> dict:
-        return self._write(client, "data", params, lambda: self.manager.data(
+        # exclusive touches every channel's data line, so it locks them all.
+        channels = ALL if params.get("exclusive") else _one(params)
+        return self._write(client, "data", params, channels, lambda: self.manager.data(
             params["channel"], params["state"], confirm=bool(params.get("confirm")),
             live_session=params.get("live_session"), exclusive=bool(params.get("exclusive"))))
 
     def _rpc_power_cycle(self, client: str, params: dict) -> dict:
-        return self._write(client, "power_cycle", params, lambda: self.manager.power_cycle(
+        return self._write(client, "power_cycle", params, _one(params), lambda: self.manager.power_cycle(
             params["channel"], off_ms=int(params.get("off_ms", 400)),
             settle_ms=int(params.get("settle_ms", 1500)), confirm=bool(params.get("confirm")),
             live_session=params.get("live_session")))
 
+    def _rpc_lease_acquire(self, client: str, params: dict) -> dict:
+        """Hold EVERY channel across several calls (discovery's toggle-and-look loop).
+
+        Writes that carry the lease id run without taking channel locks; every
+        other write waits behind it like behind any other holder, and is refused
+        after its max_wait -- so discovery is never interleaved with a switch
+        from another server.
+        """
+        ttl = min(max(float(params.get("ttl_sec", DEFAULT_LEASE_TTL_SEC)), 1.0), MAX_LEASE_TTL_SEC)
+        max_wait = max(float(params.get("max_wait_sec", DEFAULT_MAX_WAIT_SEC)), 0.0)
+        reason = str(params.get("reason") or "lease")
+        name = self._name(client)
+        token = self.locks.acquire(ALL, {"client": name, "method": reason, "lease": True,
+                                         "since": round(self._clock(), 3)}, timeout=max_wait)
+        if token is None:
+            raise HubBusyError(self._busy_message(reason, ALL, max_wait))
+        lease_id = secrets.token_hex(8)
+        with self._meta_lock:
+            self._leases[lease_id] = {"client": client, "name": name, "token": token, "reason": reason,
+                                      "expires_at": self._clock() + ttl}
+        return {"lease": lease_id, "ttl_sec": ttl}
+
+    def _rpc_lease_release(self, client: str, params: dict) -> dict:
+        lease_id = str(params.get("lease") or "")
+        with self._meta_lock:
+            lease = self._leases.get(lease_id)
+            if lease is None or lease["client"] != client:
+                return {"released": False}
+        self._drop_lease(lease_id)
+        return {"released": True}
+
     def _rpc_release(self, client: str, params: dict) -> dict:
+        self._drop_leases_of(client)
         result = self._release(client, restore_power=bool(params.get("restore_power", True)),
-                               restore_data=bool(params.get("restore_data", True)), reason="client closed")
-        self._forget(client)
+                               restore_data=bool(params.get("restore_data", True)), reason="client closed",
+                               wait=5.0)
+        if not result.get("deferred"):
+            self._forget(client)
         return result
 
     def _rpc_shutdown(self, client: str, params: dict) -> dict:
@@ -415,61 +475,84 @@ class HubDaemon:
 
     # ------------------------------------------------------------- internals
 
-    def _write(self, client: str, method: str, params: dict, action) -> dict:
-        """Run one mutating call under the daemon-wide lock, as the calling client.
+    def _write(self, client: str, method: str, params: dict, channels, action) -> dict:
+        """Run one mutating call holding only ``channels``, as the calling client.
 
-        The guard mode is the CALLER's, swapped in for this call only; the lock
-        makes the swap invisible to everyone else. Everything the guard looks at
-        -- including who is live on the channel -- is read once the lock is held,
-        so a write that queued behind another is judged on the hub as it is now,
-        not as it was when it was sent. New audit entries are tagged with the
-        client so the shared trail says who did what.
+        Writes on other channels run concurrently, so the caller's guard mode and
+        audit attribution are thread-local (``HubPowerGuard.acting_as``), never a
+        swap of the shared guard. Everything the guard looks at -- including who
+        is live on the channel -- is read once the channels are held, so a write
+        that queued is judged on the hub as it is now, not as it was when sent.
         """
         mode = params.get("guard_mode")
         if mode is not None and mode not in GUARD_MODES:
             raise ValueError(f"guard_mode must be one of: {', '.join(GUARD_MODES)}")
         max_wait = max(float(params.get("max_wait_sec", DEFAULT_MAX_WAIT_SEC)), 0.0)
-        name = self._clients.get(client, {}).get("name", client)
-        queued_at = time.monotonic()
-        if not self._write_lock.acquire(timeout=max_wait):
-            raise HubBusyError(self._busy_message(method, params.get("channel"), max_wait))
-        try:
+        name = self._name(client)
+        token = None
+        waited_ms = 0
+        if not self._holds_lease(client, params.get("lease")):
+            queued_at = time.monotonic()
+            token = self.locks.acquire(channels, {"client": name, "method": method,
+                                                  "since": round(self._clock(), 3)}, timeout=max_wait)
+            if token is None:
+                raise HubBusyError(self._busy_message(method, channels, max_wait))
             waited_ms = int(round((time.monotonic() - queued_at) * 1000))
-            self._busy = {"client": name, "method": method, "channel": params.get("channel"),
-                          "since": round(self._clock(), 3), "_t0": time.monotonic()}
-            guard = self.manager.guard
-            previous = guard.mode
-            seen = len(guard.audit_log)
-            if mode is not None:
-                guard.mode = mode
-            try:
+        try:
+            with self.manager.guard.acting_as(mode=mode, client=name):
                 result = action()
-            finally:
-                guard.mode = previous
-                for entry in guard.audit_log[seen:]:
-                    entry.setdefault("client", name)
             self._account(client, result)
             if result.get("applied") is True or result.get("action") == "power_cycle":
-                self.generation += 1
+                self._bump()
         finally:
-            self._busy = None
-            self._write_lock.release()
+            self.locks.release(token)
         if waited_ms >= 50:
             result["queued_ms"] = waited_ms
         return result
 
-    def _busy_message(self, method: str, channel: Any, waited: float) -> str:
-        busy = self._busy
-        if busy is None:
-            holder = "another write"
+    def _busy_message(self, method: str, channels, waited: float) -> str:
+        holders = self.locks.holders(channels)
+        if holders:
+            described = []
+            for row in holders[:3]:
+                chans = "every channel" if row["channels"] == "all" else \
+                    "channel " + ", ".join(str(ch) for ch in row["channels"])
+                described.append(f"{row['client']}'s {row['method']} on {chans} "
+                                 f"(running {row['running_sec']:.1f}s)")
+            holder = "; ".join(described)
         else:
-            held = time.monotonic() - busy["_t0"]
-            target = f" on channel {busy['channel']}" if busy.get("channel") is not None else ""
-            holder = f"{busy['client']}'s {busy['method']}{target} (running {held:.1f}s)"
-        on = f" on channel {channel}" if channel is not None else ""
-        return (f"hub busy: {holder} held the hub for the whole {waited:.0f}s this {method}{on} "
-                f"waited, so it was NOT executed -- a cut decided that long ago may no longer be "
-                f"wanted. Check hub(action=describe) and retry if it still is.")
+            holder = "earlier queued writes"
+        on = " on every channel" if channels is ALL else \
+            " on channel " + ", ".join(str(ch) for ch in sorted(channels))
+        return (f"hub busy: {holder} held what this {method}{on} needs for the whole "
+                f"{waited:.0f}s it waited, so it was NOT executed -- a cut decided that long ago "
+                f"may no longer be wanted. Check hub(action=describe) and retry if it still is.")
+
+    def _holds_lease(self, client: str, lease_id: Any) -> bool:
+        if not lease_id:
+            return False
+        with self._meta_lock:
+            lease = self._leases.get(str(lease_id))
+            return bool(lease and lease["client"] == client and lease["expires_at"] > self._clock())
+
+    def _drop_lease(self, lease_id: str) -> None:
+        with self._meta_lock:
+            lease = self._leases.pop(lease_id, None)
+        if lease is not None:
+            self.locks.release(lease["token"])
+
+    def _drop_leases_of(self, client: str) -> None:
+        with self._meta_lock:
+            ids = [lid for lid, lease in self._leases.items() if lease["client"] == client]
+        for lease_id in ids:
+            self._drop_lease(lease_id)
+
+    def _bump(self) -> None:
+        with self._meta_lock:
+            self.generation += 1
+
+    def _name(self, client: str) -> str:
+        return str(self._clients.get(client, {}).get("name") or client)
 
     def _live_on(self, channel: int) -> str | None:
         """Who, on any connected server, has a live GDB server on ``channel``."""
@@ -503,6 +586,10 @@ class HubDaemon:
     def _account(self, client: str, result: dict) -> None:
         if result.get("applied") is not True:
             return
+        with self._meta_lock:
+            self._account_locked(client, result)
+
+    def _account_locked(self, client: str, result: dict) -> None:
         owed = self._owed.setdefault(client, {"power": set(), "data": set()})
         action, channel = result.get("action"), result.get("channel")
         if not isinstance(channel, int):
@@ -519,31 +606,51 @@ class HubDaemon:
         for off in result.get("data_off_channels") or ():
             owed["data"].add(off)
 
-    def _release(self, client: str, restore_power: bool, restore_data: bool, reason: str) -> dict:
+    def _release(self, client: str, restore_power: bool, restore_data: bool, reason: str,
+                 wait: float = DEFAULT_MAX_WAIT_SEC) -> dict:
+        """Put back what ``client`` switched off, holding just those channels.
+
+        If they cannot be had within ``wait`` (someone is mid-cycle on one), the
+        debt is kept and the result says ``deferred`` -- dropping it would leave
+        a board dark with nobody left who knows.
+        """
         restored: list[int] = []
         reconnected: list[int] = []
         failed: list[dict] = []
-        with self._write_lock:
+        with self._meta_lock:
             owed = self._owed.pop(client, {"power": set(), "data": set()})
-            seen = len(self.manager.guard.audit_log)
-            for kind, enabled, done, still_off in (
-                    ("power", restore_power, restored, self.manager._we_turned_off),
-                    ("data", restore_data, reconnected, self.manager._we_disconnected)):
-                if not enabled:
-                    continue
-                for channel in sorted(owed[kind]):
-                    if channel not in still_off:
-                        continue
-                    try:
-                        switch = self.manager.power if kind == "power" else self.manager.data
-                        switch(channel, "on", confirm=True)
-                        done.append(channel)
-                    except Exception as exc:  # noqa: BLE001 - restore every channel we can
-                        failed.append({"channel": channel, "kind": kind, "reason": str(exc)})
-            for entry in self.manager.guard.audit_log[seen:]:
-                entry.setdefault("client", f"{self._clients.get(client, {}).get('name', client)} ({reason})")
+        wanted = {kind: set(owed[kind]) if enabled else set()
+                  for kind, enabled in (("power", restore_power), ("data", restore_data))}
+        channels = wanted["power"] | wanted["data"]
+        if not channels:
+            return {"restored_channels": restored, "reconnected_channels": reconnected, "failed": failed}
+        name = self._name(client)
+        token = self.locks.acquire(channels, {"client": name, "method": f"restore ({reason})",
+                                              "since": round(self._clock(), 3)}, timeout=wait)
+        if token is None:
+            with self._meta_lock:
+                kept = self._owed.setdefault(client, {"power": set(), "data": set()})
+                kept["power"] |= owed["power"]
+                kept["data"] |= owed["data"]
+            return {"restored_channels": [], "reconnected_channels": [], "failed": [],
+                    "deferred": self._busy_message("restore", channels, wait)}
+        try:
+            with self.manager.guard.acting_as(client=f"{name} ({reason})"):
+                for kind, done, still_off in (("power", restored, self.manager._we_turned_off),
+                                              ("data", reconnected, self.manager._we_disconnected)):
+                    for channel in sorted(wanted[kind]):
+                        if channel not in still_off:
+                            continue
+                        try:
+                            switch = self.manager.power if kind == "power" else self.manager.data
+                            switch(channel, "on", confirm=True)
+                            done.append(channel)
+                        except Exception as exc:  # noqa: BLE001 - restore every channel we can
+                            failed.append({"channel": channel, "kind": kind, "reason": str(exc)})
             if restored or reconnected:
-                self.generation += 1
+                self._bump()
+        finally:
+            self.locks.release(token)
         return {"restored_channels": restored, "reconnected_channels": reconnected, "failed": failed}
 
     def _merged_spec(self) -> dict:
@@ -584,11 +691,15 @@ class HubDaemon:
                 clients.append(row)
         for row in clients:
             row["heartbeat_at"] = (self._sessions.get(row["id"]) or {}).get("at")
-        busy = self._busy
-        if busy is not None:
-            busy = {k: v for k, v in busy.items() if not k.startswith("_")}
         return {"mode": "daemon", "daemon": self._daemon_summary(), "clients": clients,
-                "busy": busy, "generation": self.generation}
+                "inflight": self.locks.holders(), "waiting": self.locks.waiting(),
+                "generation": self.generation}
+
+
+def _one(params: dict):
+    """The single channel a call targets, as a lock set (ALL if it is not an int)."""
+    channel = params.get("channel")
+    return {channel} if isinstance(channel, int) and not isinstance(channel, bool) else ALL
 
 
 # ------------------------------------------------------------------ cli

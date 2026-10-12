@@ -224,56 +224,32 @@ def test_probe_cache_is_dropped_when_another_server_switches(monkeypatch):
 
 
 def test_a_write_that_waits_too_long_is_refused_and_names_the_holder(daemon, fake_hub):
-    daemon._busy = {"client": "bench-B", "method": "power_cycle", "channel": 3,
-                    "since": time.time(), "_t0": time.monotonic()}
-    held = threading.Event()
-    release = threading.Event()
-
-    def hold():
-        with daemon._write_lock:
-            held.set()
-            release.wait(5)
-
-    holder = threading.Thread(target=hold)
-    holder.start()
-    held.wait(2)
+    token = daemon.locks.acquire({1}, {"client": "bench-B", "method": "power_cycle"}, timeout=1)
     try:
         client = _server(daemon, "ci", guard="allow")
-        with pytest.raises(HubBusyError, match=r"bench-B's power_cycle on channel 3.*NOT executed"):
+        with pytest.raises(HubBusyError, match=r"bench-B's power_cycle on channel 1.*NOT executed"):
             client._write("power", {"channel": 1, "state": "off", "max_wait_sec": 0.2})
         assert fake_hub.power[1] == 1
     finally:
-        release.set()
-        holder.join()
+        daemon.locks.release(token)
 
 
 def test_a_write_that_queued_reports_how_long(daemon):
-    release = threading.Event()
-    held = threading.Event()
-
-    def hold():
-        with daemon._write_lock:
-            held.set()
-            release.wait(5)
-
-    holder = threading.Thread(target=hold)
-    holder.start()
-    held.wait(2)
-    threading.Timer(0.3, release.set).start()
+    token = daemon.locks.acquire({1}, {"client": "bench-B", "method": "power_cycle"}, timeout=1)
+    threading.Timer(0.3, daemon.locks.release, args=(token,)).start()
     result = _server(daemon, "ci", guard="allow").power(1, "off")
-    holder.join()
     assert result["applied"] is True
     assert result["queued_ms"] >= 200
 
 
-def test_the_page_shows_the_write_in_progress(daemon):
-    daemon._busy = {"client": "bench-B", "method": "power_cycle", "channel": 3,
-                    "since": 1.0, "_t0": time.monotonic()}
+def test_the_page_shows_the_writes_in_progress(daemon):
+    token = daemon.locks.acquire({3}, {"client": "bench-B", "method": "power_cycle", "since": 1.0}, timeout=1)
     try:
-        busy = daemon.dashboard.state()["busy"]
+        inflight = daemon.dashboard.state()["inflight"]
     finally:
-        daemon._busy = None
-    assert busy == {"client": "bench-B", "method": "power_cycle", "channel": 3, "since": 1.0}
+        daemon.locks.release(token)
+    assert [(row["client"], row["method"], row["channels"]) for row in inflight] == \
+        [("bench-B", "power_cycle", [3])]
 
 
 # ------------------------------------------------------------------ server wiring

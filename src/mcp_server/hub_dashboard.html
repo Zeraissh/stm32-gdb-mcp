@@ -383,7 +383,8 @@ footer { color: var(--text-muted); font-size: 12px; margin-top: 14px; }
     else if (hub.guard && hub.guard.mode) bits.push(`guard: ${hub.guard.mode}`);
     if (st.hub) bits.push(hub.adc ? "ADC ✓" : "无 ADC");
     if (st.mode === "daemon" && st.daemon) bits.push(`共享守护进程 pid ${st.daemon.pid}`);
-    if (st.busy) bits.push(`执行中：${st.busy.method}${st.busy.channel != null ? " CH " + st.busy.channel : ""} · ${st.busy.client} · ${fmtAgo(st.now - st.busy.since)}`);
+    const inflight = st.inflight || [];
+    if (inflight.length) bits.push(`执行中 ${inflight.length} 项` + (st.waiting ? ` · 排队 ${st.waiting}` : ""));
     if (st.last_ok) bits.push(`更新 ${fmtAgo(st.now - st.last_ok)}`);
     bits.push(`采样 ${st.interval_sec}s`);
     $("meta").replaceChildren(...bits.map((b) => el("span", { class: "num" }, b)));
@@ -424,7 +425,10 @@ footer { color: var(--text-muted); font-size: 12px; margin-top: 14px; }
       const states = el("div", { class: "states" },
         statePill("电源", port.power, "ON", "OFF"),
         statePill("数据", port.data, "ON", "OFF"),
-        isLive ? el("span", { class: "pill warn" }, el("span", { class: "dot" }), "GDB 运行中") : null);
+        isLive ? el("span", { class: "pill warn" }, el("span", { class: "dot" }), "GDB 运行中") : null,
+        ...(st.inflight || []).filter((op) => op.channels === "all" || (op.channels || []).includes(ch))
+          .map((op) => el("span", { class: "pill warn", title: `${op.client} · ${op.running_sec}s` },
+            el("span", { class: "dot" }), `${op.lease ? "锁定" : "执行中"}：${op.method} · ${op.client}`)));
 
       const figures = el("div", { class: "figures" },
         el("div", { class: "fig" }, el("div", { class: "k" }, "电流"),

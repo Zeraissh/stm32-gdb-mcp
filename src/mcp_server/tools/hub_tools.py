@@ -9,6 +9,7 @@ attached -- ``hub_unavailable`` with an install hint, never a traceback.
 """
 
 import time
+from contextlib import nullcontext
 
 from mcp.types import TextContent, Tool
 
@@ -243,10 +244,18 @@ def discover_hub_map(ctx: ToolContext, arguments: dict) -> list[TextContent]:
                 )]
 
         channels = manager.channels()
-        result = discover_by_toggle(
-            _GuardBypass(manager), ctx.fns.detect_probe, channels,
-            sleep=time.sleep, settle_sec=float(arguments.get("settle_sec", 1.0)),
-        )
+        settle_sec = float(arguments.get("settle_sec", 1.0))
+        # With the shared daemon, hold the whole rack for the run: a switch from
+        # another server between "disconnect channel N" and "see which probe went"
+        # would pin that probe on the wrong channel. Generous TTL -- each step is a
+        # full detect_probe (~8.5 s on Windows) -- and released as soon as we finish.
+        hold = getattr(manager, "hold", None)
+        guard = hold("discover", ttl_sec=60 + len(channels) * (30 + 2 * settle_sec)) if hold else nullcontext()
+        with guard:
+            result = discover_by_toggle(
+                _GuardBypass(manager), ctx.fns.detect_probe, channels,
+                sleep=time.sleep, settle_sec=settle_sec,
+            )
 
         # Probes with no serial number are common (ST-Link/V2 clones all share
         # VID:PID 0483:3748 and report none), and for those `key` -- derived from

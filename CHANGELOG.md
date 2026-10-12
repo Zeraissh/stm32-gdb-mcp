@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Per-channel hub write locks and discovery leases / Hub 按通道加锁与 discover 租约
+
+- The hub daemon's single write lock is replaced by per-channel locks
+  (`hub_locks.ChannelLocks`): writes on different channels run concurrently — two 8 s
+  power cycles on CH1 and CH3 now take 8 s, not 16 — while writes on the same channel
+  still queue. Exclusive isolation and hub-port changes lock the whole rack. Waiting is
+  FIFO among conflicting requests, so a rack-wide request is not starved by later
+  single-channel writes. / 守护进程的全局写锁改为按通道加锁：不同通道并行，同通道排队；
+  exclusive 与换端口锁整个机架；冲突请求先来先得，不会饿死。
+- `hub(action=discover)` holds a rack-wide **lease** for its whole run; only the thread
+  that took it may write through it, everyone else queues and is refused after
+  `max_wait_sec`. Leases expire (TTL) and are dropped when their holder's PID dies. /
+  `discover` 运行期间持有全机架租约，其他写操作排队、超时拒绝；租约有 TTL，持有者进程消失即释放。
+- Guard mode and audit attribution are now thread-local (`HubPowerGuard.acting_as`)
+  instead of a swap of the shared guard, which concurrent writes would have leaked
+  between servers. A restore that cannot get its channel in time keeps the debt
+  (`deferred`) instead of dropping it. Vendor sampling during a power cycle and
+  `measure` now take the manager lock like every other round-trip. The dashboard shows
+  every write in flight per channel. Daemon protocol bumped to 3. /
+  guard 模式与审计归属改为线程局部；恢复拿不到通道时保留待恢复记录；采样读也走管理器锁；
+  看板按通道显示正在执行的操作。守护进程协议升至 3。
+
 ### Cross-server hub interlock / 跨服务器的 Hub 互锁
 
 - Every MCP server registers its sessions that have a `hub` block with the hub daemon —

@@ -26,12 +26,21 @@ import threading
 import time
 import urllib.error
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from . import hub as hub_module
 from .hub import HubManager, HubUnavailableError, _normalize_map
-from .hub_daemon import DEFAULT_MAX_WAIT_SEC, _ensure_dir, log_path, read_state, rpc_call, state_dir
+from .hub_daemon import (
+    DEFAULT_LEASE_TTL_SEC,
+    DEFAULT_MAX_WAIT_SEC,
+    _ensure_dir,
+    log_path,
+    read_state,
+    rpc_call,
+    state_dir,
+)
 
 MODE_ENV = "STM32_GDB_MCP_HUB_MODE"
 MODES = ("auto", "daemon", "local")
@@ -159,6 +168,10 @@ class RemoteHubManager(HubManager):
         self._pushed_rows: list[dict] | None = None
         self._heartbeat: threading.Thread | None = None
         self._heartbeat_stop = threading.Event()
+        # The lease this THREAD holds, if any. Thread-local because named sessions
+        # in this server dispatch concurrently: only the thread that took the lease
+        # (discovery) may skip the queue with it.
+        self._local = threading.local()
         self.client_id = uuid.uuid4().hex
         self.client_name = client_name or f"{os.path.basename(os.getcwd()) or 'mcp'} (pid {os.getpid()})"
 
@@ -311,8 +324,36 @@ class RemoteHubManager(HubManager):
                                       "duration_sec": duration_sec, "interval_sec": interval_sec},
                           timeout=30.0 + max(duration_sec, 0.0) * 1.5)
 
+    @contextmanager
+    def hold(self, reason: str = "lease", ttl_sec: float = DEFAULT_LEASE_TTL_SEC,
+             max_wait_sec: float = DEFAULT_MAX_WAIT_SEC) -> Iterator[dict]:
+        """Hold every channel of the rack for the duration of the block.
+
+        For multi-call sequences that must not interleave with another server's
+        writes -- discovery toggles one data line at a time and looks at what
+        disappeared, and a switch from elsewhere in between would corrupt the map.
+        Writes made by THIS thread inside the block go straight through; every
+        other writer, on any server, queues (and is refused after its max_wait).
+        """
+        lease = self._call("lease_acquire", {"reason": reason, "ttl_sec": ttl_sec,
+                                             "max_wait_sec": max_wait_sec},
+                           timeout=10.0 + max_wait_sec)
+        previous = getattr(self._local, "lease", None)
+        self._local.lease = lease["lease"]
+        try:
+            yield lease
+        finally:
+            self._local.lease = previous
+            try:
+                self._call("lease_release", {"lease": lease["lease"]}, timeout=10.0, spawn=False)
+            except Exception:  # noqa: BLE001 - the lease expires on its own (ttl)
+                pass
+
     def _write(self, method: str, params: dict, timeout: float = 30.0) -> dict:
         params["guard_mode"] = self.guard.mode
+        lease = getattr(self._local, "lease", None)
+        if lease:
+            params["lease"] = lease
         params.setdefault("max_wait_sec", DEFAULT_MAX_WAIT_SEC)
         try:
             # The HTTP timeout must outlast the daemon's own queue wait, or the
