@@ -1,0 +1,570 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>USB Hub 看板</title>
+<link rel="icon" href="data:,">
+<style>
+:root {
+  color-scheme: light;
+  --surface-0: #f4f4f2;
+  --surface-1: #fcfcfb;
+  --surface-2: #f0efec;
+  --border: #e2e1dc;
+  --grid: #e9e8e4;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #7a7974;
+  --series-current: #2a78d6;
+  --series-voltage: #eb6834;
+  --off-band: rgba(11, 11, 11, 0.06);
+  --good: #0ca30c;
+  --warning: #fab219;
+  --serious: #ec835a;
+  --critical: #d03b3b;
+  --critical-wash: rgba(208, 59, 59, 0.08);
+  --warning-wash: rgba(250, 178, 25, 0.14);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface-0: #121211;
+    --surface-1: #1a1a19;
+    --surface-2: #262624;
+    --border: #33332f;
+    --grid: #2b2b28;
+    --text-primary: #f0efec;
+    --text-secondary: #c3c2b7;
+    --text-muted: #8f8e86;
+    --series-current: #3987e5;
+    --series-voltage: #d95926;
+    --off-band: rgba(240, 239, 236, 0.07);
+    --critical-wash: rgba(208, 59, 59, 0.16);
+    --warning-wash: rgba(250, 178, 25, 0.12);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-0: #121211;
+  --surface-1: #1a1a19;
+  --surface-2: #262624;
+  --border: #33332f;
+  --grid: #2b2b28;
+  --text-primary: #f0efec;
+  --text-secondary: #c3c2b7;
+  --text-muted: #8f8e86;
+  --series-current: #3987e5;
+  --series-voltage: #d95926;
+  --off-band: rgba(240, 239, 236, 0.07);
+  --critical-wash: rgba(208, 59, 59, 0.16);
+  --warning-wash: rgba(250, 178, 25, 0.12);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--surface-0);
+  color: var(--text-primary);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+.num { font-variant-numeric: tabular-nums; }
+.wrap { max-width: 1280px; margin: 0 auto; padding: 16px; }
+header {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
+  margin-bottom: 12px;
+}
+h1 { font-size: 18px; margin: 0; font-weight: 650; }
+.meta { color: var(--text-secondary); font-size: 13px; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.spacer { flex: 1; }
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  background: var(--surface-2); color: var(--text-secondary); white-space: nowrap;
+}
+.pill .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.pill.good .dot { background: var(--good); }
+.pill.off .dot { background: var(--text-muted); }
+.pill.crit .dot { background: var(--critical); }
+.pill.warn .dot { background: var(--warning); }
+.pill.crit { color: var(--critical); }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg button, .btn {
+  border: 0; background: var(--surface-1); color: var(--text-secondary);
+  padding: 4px 10px; font: inherit; font-size: 13px; cursor: pointer;
+}
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button[aria-pressed="true"] { background: var(--surface-2); color: var(--text-primary); font-weight: 600; }
+.btn { border: 1px solid var(--border); border-radius: 8px; }
+.banner {
+  display: none; padding: 10px 12px; border-radius: 8px; margin-bottom: 12px;
+  background: var(--critical-wash); border: 1px solid var(--critical); font-size: 13px;
+}
+.banner.show { display: block; }
+.banner strong { color: var(--critical); }
+.banner.warn { background: var(--warning-wash); border-color: var(--warning); }
+.banner.warn strong { color: var(--text-primary); }
+.ports { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 12px; }
+.card {
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px;
+  padding: 12px 14px; min-width: 0; transition: opacity .2s;
+}
+.stale .card, .stale .panel { opacity: .55; }
+.card.live { border-color: var(--warning); box-shadow: inset 0 0 0 1px var(--warning); }
+.card-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.ch { font-size: 16px; font-weight: 700; }
+.label { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.states { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.figures { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 6px; }
+.fig .k { font-size: 11px; color: var(--text-muted); }
+.fig .v { font-size: 20px; font-weight: 650; }
+.fig .v small { font-size: 12px; font-weight: 500; color: var(--text-secondary); margin-left: 2px; }
+.chart-title { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-top: 6px; }
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.stats { font-size: 11px; color: var(--text-muted); }
+.ident { font-size: 11px; color: var(--text-muted); margin-top: 6px; word-break: break-all; }
+.live-note { font-size: 12px; margin-top: 6px; color: var(--text-primary); }
+.live-note b { color: var(--critical); }
+.tip {
+  position: fixed; pointer-events: none; z-index: 10; display: none;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+  padding: 6px 8px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.12); min-width: 130px;
+}
+.tip .t { color: var(--text-muted); margin-bottom: 2px; }
+.tip .row { display: flex; align-items: center; gap: 6px; }
+.tip .key { width: 12px; height: 2px; border-radius: 1px; }
+.tip .row b { font-weight: 650; }
+.tip .row span:last-child { color: var(--text-secondary); }
+.lower { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; margin-top: 12px; }
+@media (max-width: 860px) { .lower { grid-template-columns: 1fr; } }
+.panel { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; min-width: 0; }
+.panel h2 { font-size: 14px; margin: 0 0 8px; font-weight: 650; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; font-weight: 600; color: var(--text-muted); font-size: 12px; border-bottom: 1px solid var(--border); padding: 4px 6px; }
+td { border-bottom: 1px solid var(--grid); padding: 5px 6px; vertical-align: top; }
+.events { max-height: 340px; overflow: auto; }
+.scroll-x { overflow-x: auto; }
+.empty { color: var(--text-muted); font-size: 13px; padding: 6px 0; }
+.kind { font-size: 11px; color: var(--text-muted); }
+.kind.error { color: var(--critical); font-weight: 600; }
+.why { color: var(--text-muted); font-size: 12px; }
+footer { color: var(--text-muted); font-size: 12px; margin-top: 14px; }
+@media (max-width: 520px) { .wrap { padding: 12px 16px; } .fig .v { font-size: 17px; } }
+</style>
+</head>
+<body>
+<div class="wrap" id="root">
+  <header>
+    <h1>USB Hub 看板</h1>
+    <span class="pill off" id="conn"><span class="dot"></span><span>连接中…</span></span>
+    <div class="meta" id="meta"></div>
+    <span class="spacer"></span>
+    <button class="btn" id="theme" type="button" title="切换明暗">◐ 主题</button>
+  </header>
+
+  <div class="banner" id="banner"></div>
+
+  <div class="controls">
+    <span class="kind">时间窗口</span>
+    <div class="seg" id="window">
+      <button type="button" data-sec="60">1 分钟</button>
+      <button type="button" data-sec="300" aria-pressed="true">5 分钟</button>
+      <button type="button" data-sec="900">15 分钟</button>
+    </div>
+    <span class="spacer"></span>
+    <button class="btn" id="pause" type="button">⏸ 暂停刷新</button>
+  </div>
+
+  <div class="ports" id="ports"></div>
+
+  <div class="lower">
+    <section class="panel">
+      <h2>调试会话 Sessions</h2>
+      <div class="scroll-x" id="sessions"></div>
+    </section>
+    <section class="panel">
+      <h2>事件 Events</h2>
+      <div class="events" id="events"></div>
+    </section>
+  </div>
+
+  <footer id="footer">只读看板：所有断电/断数据操作仍需通过 hub 工具（带确认与审计）。</footer>
+</div>
+<div class="tip" id="tip" role="status"></div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const NS = "http://www.w3.org/2000/svg";
+  const W = 300, H = 92, PAD_L = 34, PAD_R = 6, PAD_T = 6, PAD_B = 16;
+  const VH = 40;
+
+  let windowSec = 300;
+  let paused = false;
+  let last = null;
+  let timer = null;
+
+  // ------------------------------------------------------------ helpers
+  function el(tag, attrs, ...children) {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v === undefined || v === null || v === false) continue;
+      if (k === "class") node.className = v;
+      else node.setAttribute(k, v);
+    }
+    for (const c of children) {
+      if (c === null || c === undefined) continue;
+      node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+    }
+    return node;
+  }
+  function svg(tag, attrs) {
+    const node = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs || {})) node.setAttribute(k, v);
+    return node;
+  }
+  function fmtTime(t) {
+    const d = new Date(t * 1000);
+    return d.toLocaleTimeString([], { hour12: false });
+  }
+  function fmtAgo(sec) {
+    if (sec < 1.5) return "刚刚";
+    if (sec < 90) return Math.round(sec) + " 秒前";
+    return Math.round(sec / 60) + " 分钟前";
+  }
+  function fmtV(mv) { return mv == null ? "—" : (mv / 1000).toFixed(2); }
+  function fmtI(ma) { return ma == null ? "—" : (Math.abs(ma) >= 100 ? ma.toFixed(0) : (+ma).toFixed(1)); }
+  function fmtP(mv, ma) {
+    if (mv == null || ma == null) return "—";
+    const mw = mv * ma / 1000;
+    return mw >= 100 ? mw.toFixed(0) : mw.toFixed(1);
+  }
+  function niceMax(v) {
+    if (!(v > 0)) return 1;
+    const p = Math.pow(10, Math.floor(Math.log10(v)));
+    for (const m of [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) if (m * p >= v) return m * p;
+    return 10 * p;
+  }
+  function statePill(label, value, onText, offText) {
+    if (value === "on") return el("span", { class: "pill good" }, el("span", { class: "dot" }), `${label} ${onText}`);
+    if (value === "off") return el("span", { class: "pill off" }, el("span", { class: "dot" }), `${label} ${offText}`);
+    return el("span", { class: "pill" }, `${label} 未知`);
+  }
+
+  // ------------------------------------------------------------ chart
+  // One measure per chart, one y-axis. Power-off spans are shaded so a
+  // current drop can be read against the switch that caused it.
+  function drawChart(points, idx, now, opts) {
+    const h = opts.height, padB = opts.axis ? PAD_B : 4;
+    const box = svg("svg", { viewBox: `0 0 ${W} ${h}`, role: "img", "aria-label": opts.aria });
+    const t0 = now - windowSec;
+    const xs = (t) => PAD_L + (t - t0) / windowSec * (W - PAD_L - PAD_R);
+    const visible = points.filter((p) => p[0] >= t0 - 2);
+    const vals = visible.map((p) => p[idx]).filter((v) => typeof v === "number");
+    const ymax = niceMax(Math.max(opts.floor, ...vals) * (opts.headroom || 1.1));
+    const ys = (v) => PAD_T + (1 - v / ymax) * (h - PAD_T - padB);
+
+    // off-power bands
+    let bandStart = null;
+    const bands = [];
+    for (const p of visible) {
+      if (p[3] === 0 && bandStart === null) bandStart = p[0];
+      if (p[3] !== 0 && bandStart !== null) { bands.push([bandStart, p[0]]); bandStart = null; }
+    }
+    if (bandStart !== null) bands.push([bandStart, now]);
+    for (const [a, b] of bands) {
+      const x1 = Math.max(xs(a), PAD_L), x2 = Math.max(xs(b), x1 + 1.5);
+      box.append(svg("rect", { x: x1, y: PAD_T, width: x2 - x1, height: h - PAD_T - padB, fill: "var(--off-band)" }));
+    }
+
+    // gridlines + y labels
+    const ticks = opts.axis ? [0, 0.5, 1] : [0, 1];
+    for (const f of ticks) {
+      const y = ys(ymax * f);
+      box.append(svg("line", { x1: PAD_L, x2: W - PAD_R, y1: y, y2: y, stroke: "var(--grid)", "stroke-width": 1 }));
+      const lab = svg("text", { x: PAD_L - 4, y: y + 3, "text-anchor": "end", "font-size": 9, fill: "var(--text-muted)" });
+      lab.textContent = opts.fmt(ymax * f);
+      box.append(lab);
+    }
+    if (opts.axis) {
+      for (const [frac, txt] of [[0, `-${windowSec >= 120 ? windowSec / 60 + "m" : windowSec + "s"}`], [1, "现在"]]) {
+        const lab = svg("text", { x: PAD_L + frac * (W - PAD_L - PAD_R), y: h - 3,
+          "text-anchor": frac ? "end" : "start", "font-size": 9, fill: "var(--text-muted)" });
+        lab.textContent = txt;
+        box.append(lab);
+      }
+    }
+
+    // line, broken at missing samples
+    let d = "", pen = false, lastPt = null;
+    for (const p of visible) {
+      const v = p[idx];
+      if (typeof v !== "number") { pen = false; continue; }
+      const x = Math.max(xs(p[0]), PAD_L), y = ys(v);
+      d += (pen ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
+      pen = true; lastPt = [x, y];
+    }
+    if (d) {
+      box.append(svg("path", { d, fill: "none", stroke: opts.color, "stroke-width": 2,
+        "stroke-linejoin": "round", "stroke-linecap": "round" }));
+      if (lastPt) box.append(svg("circle", { cx: lastPt[0], cy: lastPt[1], r: 3, fill: opts.color,
+        stroke: "var(--surface-1)", "stroke-width": 2 }));
+    }
+    return { box, xs, t0, visible };
+  }
+
+  function attachHover(container, charts, visible, now) {
+    const tip = $("tip");
+    const hair = [];
+    for (const c of charts) {
+      const line = svg("line", { y1: 0, y2: c.height, stroke: "var(--text-muted)", "stroke-width": 1, visibility: "hidden" });
+      c.chart.box.append(line);
+      hair.push(line);
+    }
+    function hide() { tip.style.display = "none"; hair.forEach((l) => l.setAttribute("visibility", "hidden")); }
+    function show(ev) {
+      if (!visible.length) return hide();
+      const rect = charts[0].chart.box.getBoundingClientRect();
+      const x = (ev.clientX - rect.left) / rect.width * W;
+      const t = charts[0].chart.t0 + (x - PAD_L) / (W - PAD_L - PAD_R) * windowSec;
+      let best = visible[0];
+      for (const p of visible) if (Math.abs(p[0] - t) < Math.abs(best[0] - t)) best = p;
+      const hx = Math.max(charts[0].chart.xs(best[0]), PAD_L);
+      hair.forEach((l) => { l.setAttribute("x1", hx); l.setAttribute("x2", hx); l.setAttribute("visibility", "visible"); });
+      tip.replaceChildren(
+        el("div", { class: "t" }, fmtTime(best[0])),
+        el("div", { class: "row" }, el("span", { class: "key", style: "background:var(--series-current)" }),
+          el("b", { class: "num" }, `${fmtI(best[2])} mA`), el("span", {}, "电流")),
+        el("div", { class: "row" }, el("span", { class: "key", style: "background:var(--series-voltage)" }),
+          el("b", { class: "num" }, `${fmtV(best[1])} V`), el("span", {}, "电压")),
+        el("div", { class: "row" }, el("span", {}, `电源 ${best[3] === 1 ? "ON" : best[3] === 0 ? "OFF" : "?"} · 数据 ${best[4] === 1 ? "ON" : best[4] === 0 ? "OFF" : "?"}`)),
+      );
+      tip.style.display = "block";
+      const tw = tip.offsetWidth, th = tip.offsetHeight;
+      let left = ev.clientX + 14, top = ev.clientY - th - 10;
+      if (left + tw > window.innerWidth - 8) left = ev.clientX - tw - 14;
+      if (top < 8) top = ev.clientY + 14;
+      tip.style.left = left + "px"; tip.style.top = top + "px";
+    }
+    container.addEventListener("pointermove", show);
+    container.addEventListener("pointerleave", hide);
+  }
+
+  // ------------------------------------------------------------ render
+  function liveByChannel(sessions) {
+    const map = {};
+    for (const s of sessions || []) {
+      if (s.channel == null) continue;
+      (map[s.channel] = map[s.channel] || []).push(s);
+    }
+    return map;
+  }
+
+  function renderHeader(st) {
+    const conn = $("conn");
+    const hub = st.hub || {};
+    const dev = hub.device || {};
+    if (st.connected) {
+      conn.className = "pill good";
+      conn.replaceChildren(el("span", { class: "dot" }), "Hub 在线");
+    } else {
+      conn.className = "pill crit";
+      conn.replaceChildren(el("span", { class: "dot" }), st.hub ? "Hub 离线（显示旧数据）" : "Hub 未连接");
+    }
+    const bits = [];
+    const name = dev.product_name || dev.model || dev.name;
+    if (name) bits.push(String(name));
+    if (dev.serial_no) bits.push(`SN ${dev.serial_no}`);
+    if (dev.firmware_version || dev.fw_version) bits.push(`FW ${dev.firmware_version || dev.fw_version}`);
+    if (hub.guard && hub.guard.mode) bits.push(`guard: ${hub.guard.mode}`);
+    if (st.hub) bits.push(hub.adc ? "ADC ✓" : "无 ADC");
+    if (st.last_ok) bits.push(`更新 ${fmtAgo(st.now - st.last_ok)}`);
+    bits.push(`采样 ${st.interval_sec}s`);
+    $("meta").replaceChildren(...bits.map((b) => el("span", { class: "num" }, b)));
+
+    const banner = $("banner");
+    if (st.error) {
+      banner.className = "banner show";
+      banner.replaceChildren(el("strong", {}, "✖ 读取 Hub 失败："), " ", st.error);
+    } else if (hub.interlock) {
+      banner.className = "banner warn show";
+      banner.replaceChildren(el("strong", {}, "▲ Hub 处于 interlock 模式："),
+        " 同一时间只给一个端口供电，本服务器会拒绝电源操作。");
+    } else {
+      banner.className = "banner";
+      banner.replaceChildren();
+    }
+  }
+
+  function renderPorts(st) {
+    const hub = st.hub;
+    const box = $("ports");
+    if (!hub || !hub.ports) {
+      box.replaceChildren(el("div", { class: "empty" }, st.error ? "还没有拿到任何 Hub 数据。" : "等待第一次采样…"));
+      return;
+    }
+    const live = liveByChannel(st.sessions);
+    const cards = hub.ports.map((port) => {
+      const ch = port.channel;
+      const pts = (st.history && st.history[String(ch)]) || [];
+      const mapped = port.mapped || {};
+      const bound = live[ch] || [];
+      const isLive = bound.some((s) => s.server_alive);
+      const title = mapped.label || port.name || "";
+
+      const head = el("div", { class: "card-head" },
+        el("span", { class: "ch" }, `CH ${ch}`),
+        title ? el("span", { class: "label", title }, title) : null);
+      const states = el("div", { class: "states" },
+        statePill("电源", port.power, "ON", "OFF"),
+        statePill("数据", port.data, "ON", "OFF"),
+        isLive ? el("span", { class: "pill warn" }, el("span", { class: "dot" }), "GDB 运行中") : null);
+
+      const figures = el("div", { class: "figures" },
+        el("div", { class: "fig" }, el("div", { class: "k" }, "电流"),
+          el("div", { class: "v num" }, fmtI(port.current_ma), el("small", {}, "mA"))),
+        el("div", { class: "fig" }, el("div", { class: "k" }, "电压"),
+          el("div", { class: "v num" }, fmtV(port.voltage_mv), el("small", {}, "V"))),
+        el("div", { class: "fig" }, el("div", { class: "k" }, "功率"),
+          el("div", { class: "v num" }, fmtP(port.voltage_mv, port.current_ma), el("small", {}, "mW"))));
+
+      const card = el("div", { class: "card" + (isLive ? " live" : "") }, head, states, figures);
+
+      if (hub.adc) {
+        const cur = drawChart(pts, 2, st.now, { height: H, axis: true, floor: 1, color: "var(--series-current)",
+          fmt: (v) => v >= 10 ? v.toFixed(0) : v.toFixed(1), aria: `CH ${ch} 电流曲线 mA` });
+        const vol = drawChart(pts, 1, st.now, { height: VH, axis: false, floor: 1000, headroom: 1.05, color: "var(--series-voltage)",
+          fmt: (v) => (v / 1000).toFixed(1), aria: `CH ${ch} 电压曲线 V` });
+        const curVals = cur.visible.map((p) => p[2]).filter((v) => typeof v === "number");
+        const stats = curVals.length
+          ? `min ${fmtI(Math.min(...curVals))} · avg ${fmtI(curVals.reduce((a, b) => a + b, 0) / curVals.length)} · max ${fmtI(Math.max(...curVals))} mA`
+          : "无有效样本";
+        const chartBox = el("div", { class: "chart" },
+          el("div", { class: "chart-title" }, el("span", {}, "电流 mA"), el("span", { class: "stats num" }, stats)),
+          cur.box,
+          el("div", { class: "chart-title" }, el("span", {}, "电压 V"), el("span", {}, "灰色 = 断电区间")),
+          vol.box);
+        attachHover(chartBox, [{ chart: cur, height: H }, { chart: vol, height: VH }], cur.visible, st.now);
+        card.append(chartBox);
+      } else {
+        card.append(el("div", { class: "empty" }, "此型号无 ADC，无电压/电流曲线。"));
+      }
+
+      if (isLive) {
+        const names = bound.filter((s) => s.server_alive).map((s) => s.session).join(", ");
+        card.append(el("div", { class: "live-note" }, el("b", {}, "▲ "), `会话 ${names} 的 GDB server 正在此端口运行，断电会中断烧录/调试。`));
+      }
+      const ident = [];
+      if (mapped.serial) ident.push(`probe SN ${mapped.serial}`);
+      if (mapped.key && !mapped.serial) ident.push(`USB ${mapped.key}`);
+      if (port.name && mapped.label) ident.push(`name ${port.name}`);
+      if (ident.length) card.append(el("div", { class: "ident" }, ident.join(" · ")));
+      return card;
+    });
+    box.replaceChildren(...cards);
+  }
+
+  function renderSessions(st) {
+    const rows = st.sessions || [];
+    if (!rows.length) {
+      $("sessions").replaceChildren(el("div", { class: "empty" }, "没有调试会话。"));
+      return;
+    }
+    const table = el("table", {},
+      el("thead", {}, el("tr", {}, ...["会话", "GDB server", "Hub 通道", "探针 SN", "MCU"].map((h) => el("th", {}, h)))),
+      el("tbody", {}, ...rows.map((s) => el("tr", {},
+        el("td", {}, s.session),
+        el("td", {}, s.server_alive
+          ? el("span", { class: "pill warn" }, el("span", { class: "dot" }), "运行中")
+          : el("span", { class: "pill off" }, el("span", { class: "dot" }), "未运行")),
+        el("td", { class: "num" }, s.channel != null ? `CH ${s.channel}` : "—",
+          s.channel_source ? el("div", { class: "why" }, s.channel_source) : null,
+          s.channel == null && s.channel_error ? el("div", { class: "why", title: s.channel_error }, "未映射") : null),
+        el("td", { class: "num" }, s.probe_serial || "—"),
+        el("td", {}, s.mcu || "—")))));
+    $("sessions").replaceChildren(table);
+  }
+
+  function renderEvents(st) {
+    const evs = (st.events || []).slice().reverse();
+    if (!evs.length) {
+      $("events").replaceChildren(el("div", { class: "empty" }, "看板启动后还没有事件。"));
+      return;
+    }
+    const kindName = { power: "电源", data: "数据", audit: "操作", error: "错误", recovered: "恢复" };
+    const table = el("table", {},
+      el("thead", {}, el("tr", {}, ...["时间", "通道", "类型", "内容"].map((h) => el("th", {}, h)))),
+      el("tbody", {}, ...evs.map((e) => el("tr", {},
+        el("td", { class: "num" }, fmtTime(e.t)),
+        el("td", { class: "num" }, e.channel != null ? `CH ${e.channel}` : "—"),
+        el("td", {}, el("span", { class: "kind" + (e.kind === "error" ? " error" : "") },
+          (e.kind === "error" ? "✖ " : "") + (kindName[e.kind] || e.kind))),
+        el("td", {}, e.text, e.reason ? el("div", { class: "why" }, e.reason) : null)))));
+    $("events").replaceChildren(table);
+  }
+
+  function render(st) {
+    renderHeader(st);
+    renderPorts(st);
+    renderSessions(st);
+    renderEvents(st);
+  }
+
+  // ------------------------------------------------------------ polling
+  async function tick() {
+    if (paused) return schedule(1000);
+    try {
+      const res = await fetch("/api/state", { cache: "no-store" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      last = await res.json();
+      $("root").classList.remove("stale");
+      render(last);
+      $("footer").textContent = "只读看板：所有断电/断数据操作仍需通过 hub 工具（带确认与审计）。";
+    } catch (err) {
+      // Keep the last frame on screen, dimmed, rather than blanking it.
+      $("root").classList.add("stale");
+      const conn = $("conn");
+      conn.className = "pill crit";
+      conn.replaceChildren(el("span", { class: "dot" }), "看板服务已断开");
+      $("footer").textContent = "无法连接看板服务（MCP 服务器可能已退出，或看板已停止）。会自动重试。";
+    }
+    schedule(Math.max(1000, ((last && last.interval_sec) || 1) * 1000));
+  }
+  function schedule(ms) { clearTimeout(timer); timer = setTimeout(tick, ms); }
+
+  // ------------------------------------------------------------ controls
+  try {
+    const saved = localStorage.getItem("hubdash.window");
+    if (saved && [60, 300, 900].includes(+saved)) windowSec = +saved;
+    const theme = localStorage.getItem("hubdash.theme");
+    if (theme) document.documentElement.setAttribute("data-theme", theme);
+  } catch (e) { /* storage may be unavailable */ }
+  for (const b of $("window").querySelectorAll("button")) {
+    b.setAttribute("aria-pressed", String(+b.dataset.sec === windowSec));
+    b.addEventListener("click", () => {
+      windowSec = +b.dataset.sec;
+      for (const o of $("window").querySelectorAll("button")) o.setAttribute("aria-pressed", String(o === b));
+      try { localStorage.setItem("hubdash.window", String(windowSec)); } catch (e) { /* ignore */ }
+      if (last) render(last);
+    });
+  }
+  $("pause").addEventListener("click", () => {
+    paused = !paused;
+    $("pause").textContent = paused ? "▶ 继续刷新" : "⏸ 暂停刷新";
+    if (!paused) tick();
+  });
+  $("theme").addEventListener("click", () => {
+    const cur = document.documentElement.getAttribute("data-theme")
+      || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    const next = cur === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem("hubdash.theme", next); } catch (e) { /* ignore */ }
+  });
+
+  tick();
+})();
+</script>
+</body>
+</html>

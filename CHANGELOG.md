@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Hub dashboard / Hub 数据看板
+
+- New `hub(action=dashboard)` serves a **read-only live web page** on `127.0.0.1`
+  (default port 8765) and returns its URL: every port's power / data-line state,
+  live voltage, current and power with a 1/5/15-minute history (power-off spans
+  shaded), which debug session sits on which channel and whether its GDB server is
+  live, and a timeline of hub actions from the guard's audit trail. One sampler
+  thread inside the MCP server reads the shared `HubManager`, so the page never
+  fights the agent for the hub's exclusive control port; `state=off` stops it and
+  hands the port back. `python -m mcp_server.hub_dashboard --config bench_hub.yaml`
+  runs it standalone when no MCP server is up. /
+  新增 `hub(action=dashboard)`：在 `127.0.0.1` 上提供只读实时网页，展示各端口电源/数据线
+  状态、电压电流功率及历史曲线（断电区间灰色标出）、会话与通道的对应关系及 GDB 是否运行、
+  hub 操作时间线。采样在 MCP 进程内进行，与智能体共享同一 Hub 连接，不会争抢独占控制口；
+  `state=off` 停止并释放端口。无 MCP 服务器时可用 `python -m mcp_server.hub_dashboard` 独立运行。
+
 ### Physical-first pin resolution / 物理事实优先的引脚解析
 
 - The capability DB now carries a **package-pin position map** (per RefName, from

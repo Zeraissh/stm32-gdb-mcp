@@ -203,6 +203,23 @@ When it works, the result carries `channel_source: "map_label"` — check that f
 than assuming the right port was chosen. /
 生效时结果会带 `channel_source: "map_label"`——请以该字段为准，不要想当然认为选对了端口。
 
+#### Live dashboard / 实时看板
+
+```text
+hub(action=dashboard)                 # -> data.url, e.g. http://localhost:8765/
+hub(action=dashboard, state=off)      # stop and hand the hub port back
+```
+
+A read-only page on `127.0.0.1`: per-port power/data state, live V/I/P with a
+1/5/15-minute history, which session is on which channel (and whether its GDB server
+is live), and a timeline of hub actions. It samples through the server's own hub
+connection, so it never competes with the agent; while it runs, no *other* process can
+open the hub. Without an MCP server: `python -m mcp_server.hub_dashboard --config bench_hub.yaml`. /
+只读页面，仅监听 `127.0.0.1`：各端口电源/数据线状态、电压电流功率及 1/5/15 分钟历史、
+会话与通道对应关系（及其 GDB 是否运行）、hub 操作时间线。采样复用服务器自身的 Hub 连接，
+不与智能体争抢；运行期间其他进程无法打开 Hub。没有 MCP 服务器时可独立运行：
+`python -m mcp_server.hub_dashboard --config bench_hub.yaml`。
+
 ## Response shape / 响应结构
 
 Every tool returns a stable JSON envelope inside the MCP `TextContent` transport:

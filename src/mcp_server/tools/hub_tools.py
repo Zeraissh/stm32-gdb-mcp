@@ -13,6 +13,7 @@ import time
 from mcp.types import TextContent, Tool
 
 from ..hub import HubBusyError, HubGuardError, HubUnavailableError
+from ..hub_dashboard import DEFAULT_INTERVAL_SEC, DEFAULT_PORT, hub_dashboard
 from ..hub_topology import discover_by_toggle
 from ..tool_response import content_error, content_success
 from ._helpers import core_state
@@ -376,3 +377,91 @@ def power_cycle_target(ctx: ToolContext, arguments: dict) -> list[TextContent]:
         return _error(exc)
     except ValueError as exc:
         return [content_error(str(exc), code="invalid_argument")]
+
+
+def _session_rows(ctx: ToolContext, manager):
+    """A callable listing every debug session and the hub channel it resolves to.
+
+    The dashboard calls it from its sampler thread, long after this dispatch has
+    returned, so it re-reads the session registry each time instead of closing
+    over this call's session bundle.
+    """
+    default_session = ctx.default_session
+    session_manager = ctx.session_manager
+
+    def rows() -> list[dict]:
+        bundles = [default_session()]
+        bundles += [sess for sid, sess in list(session_manager.sessions.items()) if sid != "default"]
+        out = []
+        for sess in bundles:
+            sid = getattr(sess, "id", None) or "default"
+            try:
+                profile = sess.debug_profile.get()
+            except Exception:  # noqa: BLE001 - a half-torn-down session still gets a row
+                profile = {}
+            serial = getattr(sess, "serial", None) or profile.get("serial")
+            try:
+                alive = bool(sess.gdb_manager.is_alive())
+            except Exception:  # noqa: BLE001 - liveness is advisory
+                alive = False
+            row = {"session": sid, "server_alive": alive, "probe_serial": serial,
+                   "mcu": profile.get("mcu"), "channel": None}
+            try:
+                row["channel"], row["channel_source"] = manager.channel_for(
+                    profile=profile, session_id=sid, probe_serial=serial)
+            except Exception as exc:  # noqa: BLE001 - unmapped is a normal state here
+                row["channel_error"] = str(exc).split(". ")[0]
+            out.append(row)
+        return out
+
+    return rows
+
+
+@register(Tool(
+    name="hub_dashboard",
+    description=(
+        "Starts (or stops) a local, read-only web dashboard for the hub: every port's power and "
+        "data-line state, live voltage/current with a few minutes of history, which debug session "
+        "sits on which channel (and whether its GDB server is live), and a timeline of hub actions. "
+        "Serves on 127.0.0.1 only and returns the URL. The dashboard samples the hub from inside "
+        "this server, so it never fights the agent for the control port -- but while it runs, no "
+        "OTHER process can open the hub; state=off hands the port back."
+    ),
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "state": {"type": "string", "enum": ["on", "off"],
+                      "description": "on (default) starts or re-points the dashboard; off stops it."},
+            "port": {"type": "integer", "description": f"HTTP port on 127.0.0.1 (default {DEFAULT_PORT})."},
+            "interval_sec": {"type": "number",
+                             "description": f"Seconds between hub samples (default {DEFAULT_INTERVAL_SEC}, min 0.2)."},
+            "open_browser": {"type": "boolean", "description": "Also open the page in the default browser."},
+        },
+    }
+))
+def hub_dashboard_tool(ctx: ToolContext, arguments: dict) -> list[TextContent]:
+    state = arguments.get("state", "on")
+    if state not in ("on", "off"):
+        return [content_error("state must be 'on' or 'off'", code="invalid_argument")]
+    if state == "off":
+        return [content_success(hub_dashboard.stop())]
+    try:
+        manager = _manager(ctx)
+        info = hub_dashboard.start(
+            manager, sessions=_session_rows(ctx, manager),
+            port=int(arguments.get("port", DEFAULT_PORT)),
+            interval_sec=float(arguments.get("interval_sec", DEFAULT_INTERVAL_SEC)),
+        )
+    except OSError as exc:
+        return [content_error(f"could not open the dashboard port: {exc}", code="dashboard_port_unavailable",
+                              suggested_next_actions=["hub(action=dashboard, port=0)"])]
+    except (TypeError, ValueError) as exc:
+        return [content_error(str(exc), code="invalid_argument")]
+    if arguments.get("open_browser"):
+        import webbrowser
+        try:
+            info["browser_opened"] = bool(webbrowser.open(info["url"]))
+        except Exception:  # noqa: BLE001 - a headless host simply has no browser
+            info["browser_opened"] = False
+    info["message"] = f"Hub dashboard running at {info['url']}"
+    return [content_success(info, suggested_next_actions=["hub(action=dashboard, state=off)"])]

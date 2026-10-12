@@ -28,6 +28,7 @@ from .gdb_manager import GdbServerManager
 # _make_context reads it via globals() on every dispatch so tests that monkeypatch
 # mcp_server.server.hub_manager keep working (ctx.fns.hub_manager).
 from .hub import hub_manager  # noqa: F401
+from .hub_dashboard import hub_dashboard
 
 # file_issue stays a module global for the same reason as the composites above.
 from .issue_reporter import file_issue  # noqa: F401
@@ -128,6 +129,12 @@ def _shutdown_all_sessions():
             getattr(obj, method)()
         except Exception:  # noqa: BLE001
             pass
+    # Stop the dashboard's sampler first, or it would reconnect the hub right
+    # after close() below hands it back.
+    try:
+        hub_dashboard.stop()
+    except Exception:  # noqa: BLE001 - shutdown must not raise
+        pass
     # Re-power any hub port this process switched off. A client that kills the
     # server must not leave a bench board dark with no way to notice.
     try:

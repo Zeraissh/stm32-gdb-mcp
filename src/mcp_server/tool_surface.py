@@ -138,12 +138,13 @@ MERGED = {
     "hub": ("action",
         {"describe": "describe_hub", "power": "set_hub_power", "data": "set_hub_data",
          "cycle": "power_cycle_target", "measure": "measure_hub_channel",
-         "discover": "discover_hub_map"},
+         "discover": "discover_hub_map", "dashboard": "hub_dashboard"},
         "Programmable USB hub: per-port power, USB2 data lines, cold boot, and V/I sampling.",
         "action=describe | power(state[,channel,confirm]) | data(state[,channel,exclusive,confirm]) | "
         "cycle([channel,off_ms,settle_ms,confirm]) | "
         "measure([channel,duration_sec,interval_sec,all_channels]) | "
-        "discover([apply,force,settle_sec]). "
+        "discover([apply,force,settle_sec]) | dashboard([state,port,interval_sec,open_browser]). "
+        "dashboard serves a read-only live web page on 127.0.0.1 and returns its URL. "
         "state=on|off; channel is 1-based and defaults to the session's mapped hub channel. "
         "Removing port power cold-boots that board and un-enumerates its probe."),
 }

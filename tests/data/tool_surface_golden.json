@@ -3608,7 +3608,7 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Programmable USB hub: per-port power, USB2 data lines, cold boot, and V/I sampling. action=describe | power(state[,channel,confirm]) | data(state[,channel,exclusive,confirm]) | cycle([channel,off_ms,settle_ms,confirm]) | measure([channel,duration_sec,interval_sec,all_channels]) | discover([apply,force,settle_sec]). state=on|off; channel is 1-based and defaults to the session's mapped hub channel. Removing port power cold-boots that board and un-enumerates its probe.",
+   "description": "Programmable USB hub: per-port power, USB2 data lines, cold boot, and V/I sampling. action=describe | power(state[,channel,confirm]) | data(state[,channel,exclusive,confirm]) | cycle([channel,off_ms,settle_ms,confirm]) | measure([channel,duration_sec,interval_sec,all_channels]) | discover([apply,force,settle_sec]) | dashboard([state,port,interval_sec,open_browser]). dashboard serves a read-only live web page on 127.0.0.1 and returns its URL. state=on|off; channel is 1-based and defaults to the session's mapped hub channel. Removing port power cold-boots that board and un-enumerates its probe.",
    "inputSchema": {
     "oneOf": [
      {
@@ -3678,6 +3678,29 @@
        "action"
       ],
       "title": "discover"
+     },
+     {
+      "properties": {
+       "action": {
+        "const": "dashboard"
+       },
+       "interval_sec": {
+        "description": "Seconds between hub samples (default 1.0, min 0.2).",
+        "type": "number"
+       },
+       "state": {
+        "description": "on (default) starts or re-points the dashboard; off stops it.",
+        "enum": [
+         "on",
+         "off"
+        ],
+        "type": "string"
+       }
+      },
+      "required": [
+       "action"
+      ],
+      "title": "dashboard"
      }
     ],
     "properties": {
@@ -3689,7 +3712,8 @@
        "data",
        "cycle",
        "measure",
-       "discover"
+       "discover",
+       "dashboard"
       ],
       "type": "string"
      },
@@ -3727,6 +3751,14 @@
      },
      "off_ms": {
       "description": "Milliseconds to hold power off (default 400).",
+      "type": "integer"
+     },
+     "open_browser": {
+      "description": "Also open the page in the default browser.",
+      "type": "boolean"
+     },
+     "port": {
+      "description": "HTTP port on 127.0.0.1 (default 8765).",
       "type": "integer"
      },
      "session": {
