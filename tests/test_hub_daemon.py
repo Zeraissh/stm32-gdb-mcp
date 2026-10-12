@@ -327,3 +327,16 @@ def test_spawned_daemon_end_to_end(tmp_path, monkeypatch):
             time.sleep(0.1)
     assert daemon_module.read_state() is None
     assert not os.path.exists(os.path.join(str(tmp_path), "daemon.lock"))
+
+
+def test_rpc_never_builds_a_tls_context(daemon, monkeypatch):
+    # urllib's build_opener built an HTTPS handler -- and so loaded the system CA
+    # store -- on every call: 25 ms on Linux, ~150-350 ms per RPC on Windows CI.
+    import ssl
+
+    def fail(*_args, **_kwargs):
+        raise AssertionError("loopback RPC loaded a CA store")
+
+    monkeypatch.setattr(ssl.SSLContext, "load_default_certs", fail)
+    monkeypatch.setattr(ssl, "create_default_context", fail)
+    assert rpc_call(daemon.info["url"], TOKEN, "ping")["protocol"] == daemon_module.PROTOCOL

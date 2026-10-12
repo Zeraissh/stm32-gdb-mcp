@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import hmac
+import http.client
 import json
 import os
 import secrets
@@ -41,8 +42,7 @@ import sys
 import tempfile
 import threading
 import time
-import urllib.error
-import urllib.request
+import urllib.parse
 from typing import Any
 
 from . import __version__
@@ -174,24 +174,36 @@ def rpc_call(url: str, token: str, method: str, params: dict | None = None,
              client: dict | None = None, timeout: float = 30.0) -> Any:
     """POST one call to the daemon; re-raise its error as the original type.
 
-    Transport failures surface as ``OSError`` (``urllib.error.URLError`` is
-    one) so the caller can tell "daemon gone" apart from "hub said no".
+    Transport failures surface as ``OSError`` (``ConnectionRefusedError`` when
+    nothing is listening) so the caller can tell "daemon gone" apart from "hub
+    said no".
+
+    Plain ``http.client``, not urllib: ``build_opener`` builds an HTTPS handler
+    whose SSL context loads the system CA store on EVERY call -- 25 ms on Linux,
+    and enough on Windows to add ~150-350 ms to each hub RPC. This is loopback
+    HTTP; it needs neither TLS nor proxy handling (and must not be proxied).
     """
     body = json.dumps({"method": method, "params": params or {}, "client": client or {},
                        "protocol": PROTOCOL}).encode("utf-8")
-    request = urllib.request.Request(
-        url.rstrip("/") + "/rpc", data=body, method="POST",
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"})
-    # Loopback only: never route the call through a configured HTTP proxy.
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    parts = urllib.parse.urlsplit(url)
+    conn = http.client.HTTPConnection(parts.hostname or "127.0.0.1", parts.port, timeout=timeout)
     try:
-        with opener.open(request, timeout=timeout) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        try:
-            payload = json.loads(exc.read().decode("utf-8"))
-        except Exception:  # noqa: BLE001 - a non-JSON error body is just a status
-            raise HubUnavailableError(f"hub daemon answered HTTP {exc.code}") from exc
+        conn.request("POST", "/rpc", body=body,
+                     headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"})
+        response = conn.getresponse()
+        raw = response.read()
+        status = response.status
+    except http.client.HTTPException as exc:
+        # A garbled or truncated reply is a transport failure, like a reset.
+        raise ConnectionError(f"hub daemon reply unreadable: {exc!r}") from exc
+    finally:
+        conn.close()
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise HubUnavailableError(f"hub daemon answered HTTP {status} without a JSON body") from exc
+    if not isinstance(payload, dict):
+        raise HubUnavailableError(f"hub daemon answered HTTP {status} with a non-object body")
     if payload.get("ok"):
         return payload.get("result")
     error = payload.get("error") or {}

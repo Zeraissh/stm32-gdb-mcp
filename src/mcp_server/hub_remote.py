@@ -24,7 +24,6 @@ import subprocess
 import sys
 import threading
 import time
-import urllib.error
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -147,8 +146,7 @@ def session_rows(bundles: list[Any], manager: HubManager, only_hub: bool = True)
 
 
 def _refused(exc: OSError) -> bool:
-    reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
-    return isinstance(reason, ConnectionRefusedError)
+    return isinstance(exc, ConnectionRefusedError)
 
 
 # ------------------------------------------------------------------ manager
