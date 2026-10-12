@@ -1,6 +1,6 @@
 # Changelog / 更新日志
 
-## [Unreleased]
+## [0.15.0] - 2026-10-12
 
 ### Per-channel hub write locks and discovery leases / Hub 按通道加锁与 discover 租约
 
