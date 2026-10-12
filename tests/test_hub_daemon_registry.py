@@ -238,10 +238,23 @@ def test_a_write_that_queued_reports_how_long(daemon):
     client = _server(daemon, "ci", guard="allow")
     client.channels()  # connect and push the spec first, so only the write itself can queue
     token = daemon.locks.acquire({1}, {"client": "bench-B", "method": "power_cycle"}, timeout=1)
-    threading.Timer(0.3, daemon.locks.release, args=(token,)).start()
+
+    def release_once_queued():
+        # Hold for a fixed time measured from when the write is SEEN waiting, not
+        # from when it was sent: request latency (slow CI, Windows timer
+        # granularity) must not eat into the interval being asserted on.
+        deadline = time.monotonic() + 10
+        while daemon.locks.waiting() == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        time.sleep(0.3)
+        daemon.locks.release(token)
+
+    releaser = threading.Thread(target=release_once_queued)
+    releaser.start()
     result = client.power(1, "off")
+    releaser.join()
     assert result["applied"] is True
-    assert result["queued_ms"] >= 200
+    assert result["queued_ms"] >= 250
 
 
 def test_the_page_shows_the_writes_in_progress(daemon):

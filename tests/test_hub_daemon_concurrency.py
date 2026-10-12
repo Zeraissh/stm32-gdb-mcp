@@ -62,6 +62,18 @@ def _in_thread(fn):
     return join
 
 
+def _wait_inflight(daemon, timeout=10.0):
+    """Block until some write holds a channel -- i.e. the cycle under test is running.
+
+    Replaces a fixed sleep, which on a slow runner could return before the
+    cycle's request even reached the daemon.
+    """
+    deadline = time.monotonic() + timeout
+    while not daemon.locks.holders() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert daemon.locks.holders(), "the background write never started"
+
+
 # ------------------------------------------------------------------ ChannelLocks
 
 
@@ -135,7 +147,7 @@ def test_cycles_on_different_channels_overlap(daemon):
 def test_writes_on_the_same_channel_still_queue(daemon):
     a, b = _server(daemon, "A"), _server(daemon, "B", guard="allow")
     cycle = _in_thread(lambda: a.power_cycle(3, off_ms=400, settle_ms=0, confirm=True))
-    time.sleep(0.1)
+    _wait_inflight(daemon)
     result = b.power(3, "off")
     cycle()
     assert result["applied"] is True
@@ -145,7 +157,7 @@ def test_writes_on_the_same_channel_still_queue(daemon):
 def test_guard_mode_and_attribution_stay_per_call_under_concurrency(daemon, fake_hub, hub_manager):
     ci, human = _server(daemon, "ci", guard="allow"), _server(daemon, "human")
     cycle = _in_thread(lambda: ci.power_cycle(1, off_ms=400, settle_ms=0))  # allowed: ci's own mode
-    time.sleep(0.1)
+    _wait_inflight(daemon)
     # While ci's call is running with ITS mode, the human's cut must still be
     # judged in confirm mode -- the old swap-the-shared-guard approach leaked here.
     with pytest.raises(HubGuardError, match="confirm"):
@@ -163,7 +175,7 @@ def test_guard_mode_and_attribution_stay_per_call_under_concurrency(daemon, fake
 def test_exclusive_waits_for_an_in_flight_cycle(daemon, fake_hub):
     a, b = _server(daemon, "A"), _server(daemon, "B")
     cycle = _in_thread(lambda: a.power_cycle(2, off_ms=400, settle_ms=0, confirm=True))
-    time.sleep(0.1)
+    _wait_inflight(daemon)
     result = b.data(1, "on", confirm=True, exclusive=True)
     cycle()
     assert result["queued_ms"] >= 200
