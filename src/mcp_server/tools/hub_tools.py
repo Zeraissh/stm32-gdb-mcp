@@ -14,6 +14,7 @@ from mcp.types import TextContent, Tool
 
 from ..hub import HubBusyError, HubGuardError, HubUnavailableError
 from ..hub_dashboard import DEFAULT_INTERVAL_SEC, DEFAULT_PORT, hub_dashboard
+from ..hub_remote import session_rows
 from ..hub_topology import discover_by_toggle
 from ..tool_response import content_error, content_success
 from ._helpers import core_state
@@ -225,6 +226,22 @@ def discover_hub_map(ctx: ToolContext, arguments: dict) -> list[TextContent]:
                 suggested_next_actions=["stop_debug_session", "hub(action=discover, force=true)"],
             )]
 
+        # Discovery un-enumerates every probe on the rack in turn, so a live GDB
+        # server on ANY connected MCP server would lose its probe -- not only ours.
+        remote_live = getattr(manager, "live_sessions", None)
+        if remote_live is not None and not arguments.get("force"):
+            others = remote_live()
+            if others:
+                names = ", ".join(f"{row['session']} @ {row['client']} (channel {row.get('channel')})"
+                                  for row in others)
+                return [content_error(
+                    f"live GDB servers on the rack: {names}. Discovery disconnects every channel's "
+                    "data line in turn and would drop them. Stop those sessions, or pass force=true.",
+                    code="hub_busy_sessions",
+                    raw_response={"live_sessions": others},
+                    suggested_next_actions=["hub(action=dashboard)", "hub(action=discover, force=true)"],
+                )]
+
         channels = manager.channels()
         result = discover_by_toggle(
             _GuardBypass(manager), ctx.fns.detect_probe, channels,
@@ -392,27 +409,7 @@ def _session_rows(ctx: ToolContext, manager):
     def rows() -> list[dict]:
         bundles = [default_session()]
         bundles += [sess for sid, sess in list(session_manager.sessions.items()) if sid != "default"]
-        out = []
-        for sess in bundles:
-            sid = getattr(sess, "id", None) or "default"
-            try:
-                profile = sess.debug_profile.get()
-            except Exception:  # noqa: BLE001 - a half-torn-down session still gets a row
-                profile = {}
-            serial = getattr(sess, "serial", None) or profile.get("serial")
-            try:
-                alive = bool(sess.gdb_manager.is_alive())
-            except Exception:  # noqa: BLE001 - liveness is advisory
-                alive = False
-            row = {"session": sid, "server_alive": alive, "probe_serial": serial,
-                   "mcu": profile.get("mcu"), "channel": None}
-            try:
-                row["channel"], row["channel_source"] = manager.channel_for(
-                    profile=profile, session_id=sid, probe_serial=serial)
-            except Exception as exc:  # noqa: BLE001 - unmapped is a normal state here
-                row["channel_error"] = str(exc).split(". ")[0]
-            out.append(row)
-        return out
+        return session_rows(bundles, manager, only_hub=False)
 
     return rows
 

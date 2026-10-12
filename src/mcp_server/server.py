@@ -40,7 +40,7 @@ from .memory_guard import MemoryWriteGuard
 # detect_probe/suggest_server_args/find_openocd_scripts stay module globals for the same
 # reason as the composites above: _make_context reads them via globals() on every dispatch
 # so tests that monkeypatch mcp_server.server.<name> keep working (ctx.fns.<name>).
-from .openocd_config import detect_probe, find_openocd_scripts, suggest_server_args  # noqa: F401
+from .openocd_config import detect_probe, find_openocd_scripts, set_probe_cache_generation, suggest_server_args  # noqa: F401
 from .scenario import load_scenario, replay_scenario, step_summary
 from .server_metadata import SERVER_INSTRUCTIONS
 from .session_journal import SessionJournal
@@ -147,6 +147,38 @@ def _shutdown_all_sessions():
 
 _process_guard.install()
 _process_guard.register_shutdown(_shutdown_all_sessions)
+
+
+def _hub_session_bundles() -> list:
+    """Every session bundle in this server: default first, then the named ones."""
+    return [_resolve_session({})] + [sess for sid, sess in list(session_manager.sessions.items())
+                                     if sid != "default"]
+
+
+def _report_hub_sessions() -> None:
+    """Tell the shared hub daemon which of our sessions are live on which channel.
+
+    Runs after every tool call, synchronously, so a GDB server that
+    start_debug_session just launched is registered BEFORE its result reaches
+    the agent -- another server's power cut on that channel then needs confirm.
+    Does nothing (and decides nothing, spawns nothing) until a session here has
+    a hub block. Never raises: this is bookkeeping, not part of the tool call.
+    """
+    try:
+        if not any((sess.debug_profile.get() or {}).get("hub") for sess in _hub_session_bundles()):
+            return
+        report = getattr(globals()["hub_manager"], "report_sessions", None)
+        if report is not None:
+            report()
+    except Exception:  # noqa: BLE001 - a daemon hiccup must never fail the tool call
+        logger.debug("hub session report failed", exc_info=True)
+
+
+_hub_selector = hub_manager
+if hasattr(_hub_selector, "set_session_provider"):
+    _hub_selector.set_session_provider(_hub_session_bundles)
+set_probe_cache_generation(lambda: globals()["hub_manager"].bus_generation()
+                           if hasattr(globals()["hub_manager"], "bus_generation") else None)
 
 
 def _resolve_session(arguments: dict):
@@ -571,6 +603,7 @@ async def handle_call_tool(name: str, arguments: dict | None) -> CallToolResult:
     # like run_and_wait/verify_flash); run it off the event loop so the loop stays responsive.
     result = await asyncio.to_thread(_locked_dispatch)
     duration_ms = round((time.monotonic() - start) * 1000, 1)
+    await asyncio.to_thread(_report_hub_sessions)
 
     # Prune the closed session's lock so _session_locks doesn't grow forever. Safe here:
     # this runs on the event-loop thread (the only thread that touches the dict) and only

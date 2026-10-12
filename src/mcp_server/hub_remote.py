@@ -31,11 +31,16 @@ from typing import Any
 
 from . import hub as hub_module
 from .hub import HubManager, HubUnavailableError, _normalize_map
-from .hub_daemon import _ensure_dir, log_path, read_state, rpc_call, state_dir
+from .hub_daemon import DEFAULT_MAX_WAIT_SEC, _ensure_dir, log_path, read_state, rpc_call, state_dir
 
 MODE_ENV = "STM32_GDB_MCP_HUB_MODE"
 MODES = ("auto", "daemon", "local")
 SPAWN_TIMEOUT_SEC = 10.0
+# Session registration cadence. Sessions are also pushed synchronously after
+# every tool call (server._report_hub_sessions); the heartbeat covers what no
+# tool call announces -- a GDB server that died on its own -- and proves to the
+# daemon that this server is still here.
+HEARTBEAT_SEC = 2.0
 
 
 def hub_mode() -> str:
@@ -100,6 +105,38 @@ def connect(spawn: bool = True, timeout: float = SPAWN_TIMEOUT_SEC) -> tuple[str
         time.sleep(0.1)
 
 
+def session_rows(bundles: list[Any], manager: HubManager, only_hub: bool = True) -> list[dict]:
+    """One row per debug session: its hub channel (if any) and GDB liveness.
+
+    With ``only_hub`` (what the daemon is sent), sessions without a hub block
+    are left out: they cannot be mapped to a channel, so they have nothing to
+    protect. The local dashboard lists them all, unmapped ones included.
+    """
+    rows = []
+    for sess in bundles:
+        sid = getattr(sess, "id", None) or "default"
+        try:
+            profile = sess.debug_profile.get() or {}
+        except Exception:  # noqa: BLE001 - a half-torn-down session still gets a row
+            profile = {}
+        if only_hub and not profile.get("hub"):
+            continue
+        serial = getattr(sess, "serial", None) or profile.get("serial")
+        try:
+            alive = bool(sess.gdb_manager.is_alive())
+        except Exception:  # noqa: BLE001 - liveness is advisory
+            alive = False
+        row: dict[str, Any] = {"session": sid, "server_alive": alive, "probe_serial": serial,
+                               "mcu": profile.get("mcu"), "channel": None}
+        try:
+            row["channel"], row["channel_source"] = manager.channel_for(
+                profile=profile, session_id=sid, probe_serial=serial)
+        except Exception as exc:  # noqa: BLE001 - unmapped is a normal state here
+            row["channel_error"] = str(exc).split(". ")[0]
+        rows.append(row)
+    return rows
+
+
 def _refused(exc: OSError) -> bool:
     reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
     return isinstance(reason, ConnectionRefusedError)
@@ -118,6 +155,10 @@ class RemoteHubManager(HubManager):
         self._connector = connector
         self._endpoint: tuple[str, str] | None = None
         self._pushed_spec: dict | None = None
+        self._session_provider: Callable[[], list[Any]] | None = None
+        self._pushed_rows: list[dict] | None = None
+        self._heartbeat: threading.Thread | None = None
+        self._heartbeat_stop = threading.Event()
         self.client_id = uuid.uuid4().hex
         self.client_name = client_name or f"{os.path.basename(os.getcwd()) or 'mcp'} (pid {os.getpid()})"
 
@@ -133,11 +174,14 @@ class RemoteHubManager(HubManager):
                 # Module lookup at call time, so a patched ``connect`` is honoured.
                 self._endpoint = (self._connector or connect)(spawn=spawn)
                 self._pushed_spec = None  # a new daemon knows nothing about us
+                self._pushed_rows = None
+                self._start_heartbeat()
             url, token = self._endpoint
             try:
                 if push_spec and self._pushed_spec != self._spec:
                     spec = {k: v for k, v in self._spec.items() if k != "guard"}
-                    rpc_call(url, token, "configure", {"spec": spec}, client=self._client(), timeout=10)
+                    rpc_call(url, token, "configure", {"spec": spec}, client=self._client(),
+                             timeout=10 + DEFAULT_MAX_WAIT_SEC)
                     self._pushed_spec = dict(self._spec)
                 return rpc_call(url, token, method, params, client=self._client(), timeout=timeout)
             except OSError as exc:
@@ -152,6 +196,63 @@ class RemoteHubManager(HubManager):
 
     def _ensure(self):
         raise HubUnavailableError("internal: RemoteHubManager has no local hub connection")
+
+    # ------------------------------------------------------------ sessions
+
+    def set_session_provider(self, provider: Callable[[], list[Any]] | None) -> None:
+        """``provider()`` returns this server's session bundles (default + named)."""
+        self._session_provider = provider
+        if provider is not None and self._endpoint is not None:
+            self._start_heartbeat()
+
+    def _rows(self) -> list[dict]:
+        return session_rows(list(self._session_provider()), self) if self._session_provider else []
+
+    def report_sessions(self, force: bool = False, spawn: bool = True) -> None:
+        """Push this server's sessions to the daemon if they changed (or ``force``).
+
+        This is what lets ANOTHER server's power cut on channel N see that a
+        session here is mid-flash on N: the daemon's interlock reads these rows.
+        """
+        if self._session_provider is None:
+            return
+        rows = self._rows()
+        if not force and rows == self._pushed_rows and self._endpoint is not None:
+            return
+        self._call("heartbeat", {"sessions": rows}, timeout=5.0, spawn=spawn)
+        self._pushed_rows = rows
+
+    def _start_heartbeat(self) -> None:
+        if self._session_provider is None or (self._heartbeat and self._heartbeat.is_alive()):
+            return
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat = threading.Thread(target=self._heartbeat_loop, args=(self._heartbeat_stop,),
+                                           name="hub-heartbeat", daemon=True)
+        self._heartbeat.start()
+
+    def _heartbeat_loop(self, stop: threading.Event) -> None:
+        while not stop.wait(HEARTBEAT_SEC):
+            try:
+                # spawn=False: a heartbeat finds a daemon some other server
+                # restarted, but never starts one on its own.
+                self.report_sessions(force=True, spawn=False)
+            except Exception:  # noqa: BLE001 - the next beat retries
+                pass
+
+    def live_sessions(self) -> list[dict]:
+        """Every connected server's sessions that have a live GDB server."""
+        return list(self._call("live_sessions"))
+
+    def bus_generation(self) -> int | None:
+        """The daemon's switch counter, or None when not connected (never spawns)."""
+        if self._endpoint is None:
+            return None
+        url, token = self._endpoint
+        try:
+            result = rpc_call(url, token, "generation", client=self._client(), timeout=1.0)
+        except Exception:  # noqa: BLE001 - unknown generation just means "do not trust the cache"
+            return None
+        return result.get("generation") if isinstance(result, dict) else None
 
     # ------------------------------------------------------------ surface
 
@@ -212,8 +313,11 @@ class RemoteHubManager(HubManager):
 
     def _write(self, method: str, params: dict, timeout: float = 30.0) -> dict:
         params["guard_mode"] = self.guard.mode
+        params.setdefault("max_wait_sec", DEFAULT_MAX_WAIT_SEC)
         try:
-            return self._call(method, params, timeout=timeout)
+            # The HTTP timeout must outlast the daemon's own queue wait, or the
+            # client gives up on a write the daemon then executes anyway.
+            return self._call(method, params, timeout=timeout + params["max_wait_sec"])
         finally:
             # The daemon invalidated ITS probe cache; this process has its own,
             # and detect_probe here is how the caller confirms the switch.
@@ -222,6 +326,7 @@ class RemoteHubManager(HubManager):
 
     def close(self, restore_power: bool = True, restore_data: bool = True) -> dict:
         """Hand back what this server switched off; the daemon keeps running."""
+        self._heartbeat_stop.set()
         if self._endpoint is None:
             return {"restored_channels": [], "reconnected_channels": []}
         try:
@@ -251,7 +356,28 @@ class HubManagerSelector:
         self._lock = threading.Lock()
         self._mode: str | None = None
         self._remote: RemoteHubManager | None = None
+        self._session_provider: Callable[[], list[Any]] | None = None
         self.fallback_reason: str | None = None
+
+    # These three are defined here rather than forwarded, because forwarding
+    # would DECIDE the mode -- and possibly spawn a daemon -- as a side effect of
+    # server startup or of a detect_probe cache check.
+
+    def set_session_provider(self, provider: Callable[[], list[Any]] | None) -> None:
+        self._session_provider = provider
+        if self._remote is not None:
+            self._remote.set_session_provider(provider)
+
+    def report_sessions(self) -> None:
+        """Register this server's hub sessions with the daemon (deciding the mode if needed)."""
+        target = self.resolve()
+        report = getattr(target, "report_sessions", None)
+        if report is not None:
+            report()
+
+    def bus_generation(self) -> int | None:
+        remote = self._remote if self._mode == "daemon" else None
+        return remote.bus_generation() if remote is not None else None
 
     @property
     def selected_mode(self) -> str | None:
@@ -278,6 +404,7 @@ class HubManagerSelector:
             self.fallback_reason = "smartusbhub is not installed"
             return
         remote = RemoteHubManager()
+        remote.set_session_provider(self._session_provider)
         if requested == "auto":
             try:
                 remote._endpoint = connect()

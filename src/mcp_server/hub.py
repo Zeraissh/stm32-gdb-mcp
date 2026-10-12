@@ -253,6 +253,12 @@ class HubManager:
         self._idle_timer: threading.Timer | None = None
         self._touched_at: float = 0.0
         self.guard = HubPowerGuard()
+        # Optional channel -> "who has a live GDB server here" lookup, consulted
+        # when a caller did not name a live session itself. The hub daemon sets it
+        # from every connected server's registered sessions, which is what lets a
+        # cut on channel N see a DIFFERENT server mid-flash there. None in-process,
+        # where only the calling session's own liveness is known.
+        self.live_session_for: Any = None
 
     # ---------------------------------------------------------------- config
 
@@ -776,7 +782,10 @@ class HubManager:
         turned_off, failed = [], []
         for other in [ch for ch in self._channels if ch != channel]:
             try:
-                outcome = self._switch("data", other, "off", confirm, live_session)
+                # None, not the target's live_session: each neighbour is judged on
+                # who is live on IT (see live_session_for). Locally this changes
+                # nothing -- reaching here with a live target needed confirm already.
+                outcome = self._switch("data", other, "off", confirm, None)
             except (HubGuardError, HubUnavailableError) as exc:
                 # A neighbour that the guard refuses, or that the hub does not
                 # acknowledge, must not abort the whole call: the target channel is
@@ -971,6 +980,13 @@ class HubManager:
         with self._lock:
             if kind == "power":
                 self._refuse_interlock(action)
+            if live_session is None and state == "off" and self.live_session_for is not None:
+                # Only cuts consult the registry: switching a port back ON cannot
+                # interrupt a live server, and restores must never be blocked.
+                try:
+                    live_session = self.live_session_for(channel)
+                except Exception:  # noqa: BLE001 - a broken lookup must not hide the hub
+                    live_session = None
             decision = self.guard.evaluate(action, channel, confirm=confirm, live_session=live_session)
             if decision["action"] == "blocked":
                 self.guard.audit(action, channel, decision)

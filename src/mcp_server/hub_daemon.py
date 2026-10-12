@@ -51,12 +51,20 @@ from .probe_lock import _pid_alive
 # Bumped whenever an RPC's shape changes. A client refuses a daemon speaking a
 # different protocol rather than half-working against it (the usual cause is a
 # daemon still running from before an upgrade).
-PROTOCOL = 1
+PROTOCOL = 2
 
 # With nobody calling and nobody watching for this long, the daemon exits and
 # hands the hub back -- unless it still owes a channel its power or data line.
 DEFAULT_IDLE_EXIT_SEC = 600.0
 MAINTENANCE_SEC = 2.0
+# How long a write waits for another client's write to finish before it is
+# refused. Refused, not run late: a power cut decided 30 s ago may no longer be
+# what anyone wants. A caller can pass max_wait_sec per call.
+DEFAULT_MAX_WAIT_SEC = 30.0
+# A client whose heartbeat is older than this is shown as stale on the
+# dashboard. Its sessions still count as live for the interlock until its PID
+# is gone: assuming a silent server is idle is how a flash gets interrupted.
+HEARTBEAT_STALE_SEC = 10.0
 
 _ERROR_TYPES: dict[str, type[Exception]] = {
     "HubUnavailableError": HubUnavailableError,
@@ -211,6 +219,14 @@ class HubDaemon:
         self._last_activity = clock()
         self.stopped = threading.Event()
         self.info: dict = {}
+        # client id -> {"rows": [session rows], "at": last heartbeat}.
+        self._sessions: dict[str, dict] = {}
+        # Bumped on every applied switch. Clients compare it before serving a
+        # cached detect_probe, so one server's switch invalidates everyone's cache.
+        self.generation = 0
+        # The write currently holding the lock, for "busy" errors and the page.
+        self._busy: dict | None = None
+        self.manager.live_session_for = self._live_on
 
     # -------------------------------------------------------------- lifecycle
 
@@ -218,8 +234,9 @@ class HubDaemon:
               base_spec: dict | None = None) -> dict:
         self._base_spec = dict(base_spec or {})
         self.manager.configure(self._merged_spec())
-        status = self.dashboard.start(self.manager, port=port, interval_sec=interval_sec,
-                                      rpc=self.handle_rpc, extra_state=self._extra_state)
+        status = self.dashboard.start(self.manager, sessions=self._session_rows, port=port,
+                                      interval_sec=interval_sec, rpc=self.handle_rpc,
+                                      extra_state=self._extra_state)
         self.info = {"pid": os.getpid(), "port": status["port"], "url": status["url"],
                      "token": self.token, "protocol": PROTOCOL, "version": __version__,
                      "started_at": round(self._clock(), 3)}
@@ -240,9 +257,7 @@ class HubDaemon:
                 # Its MCP server died without saying goodbye; do what its own
                 # shutdown would have done.
                 self._release(client_id, restore_power=True, restore_data=True, reason="client exited")
-                with self._meta_lock:
-                    self._clients.pop(client_id, None)
-                    self._specs.pop(client_id, None)
+                self._forget(client_id)
         if not self.idle_exit_sec:
             return False
         last = max(self._last_activity, self.dashboard.last_viewed or 0)
@@ -311,8 +326,21 @@ class HubDaemon:
         spec = params.get("spec")
         with self._meta_lock:
             self._specs[client] = dict(spec) if isinstance(spec, dict) else {}
-        with self._write_lock:
-            self.manager.configure(self._merged_spec())
+        merged = self._merged_spec()
+        current = self.manager.spec
+        if all(merged.get(key) == current.get(key) for key in ("port", "exclude_ports")):
+            # Labels only: nothing about the connection changes, so this must not
+            # queue behind a running power cycle (every call pushes its spec first).
+            self.manager.configure(merged)
+            return {"configured": True}
+        # A different hub port drops the connection; never between a cycle's
+        # cut and its restore.
+        if not self._write_lock.acquire(timeout=DEFAULT_MAX_WAIT_SEC):
+            raise HubBusyError(self._busy_message("configure", None, DEFAULT_MAX_WAIT_SEC))
+        try:
+            self.manager.configure(merged)
+        finally:
+            self._write_lock.release()
         return {"configured": True}
 
     def _rpc_channels(self, client: str, params: dict) -> list[int]:
@@ -333,18 +361,44 @@ class HubDaemon:
             duration_sec=float(params.get("duration_sec", 0.0)),
             interval_sec=float(params.get("interval_sec", 0.05)))
 
+    def _rpc_heartbeat(self, client: str, params: dict) -> dict:
+        """Register this client's debug sessions (and prove it is alive)."""
+        rows = []
+        for raw in params.get("sessions") or []:
+            if not isinstance(raw, dict):
+                continue
+            channel = raw.get("channel")
+            rows.append({
+                "session": str(raw.get("session") or "default"),
+                "channel": channel if isinstance(channel, int) and not isinstance(channel, bool) else None,
+                "channel_source": raw.get("channel_source"),
+                "channel_error": raw.get("channel_error"),
+                "server_alive": bool(raw.get("server_alive")),
+                "probe_serial": raw.get("probe_serial"),
+                "mcu": raw.get("mcu"),
+            })
+        with self._meta_lock:
+            self._sessions[client] = {"rows": rows, "at": round(self._clock(), 3)}
+        return {"generation": self.generation}
+
+    def _rpc_generation(self, client: str, params: dict) -> dict:
+        return {"generation": self.generation}
+
+    def _rpc_live_sessions(self, client: str, params: dict) -> list[dict]:
+        return [row for row in self._session_rows() if row["server_alive"]]
+
     def _rpc_power(self, client: str, params: dict) -> dict:
-        return self._write(client, params, lambda: self.manager.power(
+        return self._write(client, "power", params, lambda: self.manager.power(
             params["channel"], params["state"], confirm=bool(params.get("confirm")),
             live_session=params.get("live_session")))
 
     def _rpc_data(self, client: str, params: dict) -> dict:
-        return self._write(client, params, lambda: self.manager.data(
+        return self._write(client, "data", params, lambda: self.manager.data(
             params["channel"], params["state"], confirm=bool(params.get("confirm")),
             live_session=params.get("live_session"), exclusive=bool(params.get("exclusive"))))
 
     def _rpc_power_cycle(self, client: str, params: dict) -> dict:
-        return self._write(client, params, lambda: self.manager.power_cycle(
+        return self._write(client, "power_cycle", params, lambda: self.manager.power_cycle(
             params["channel"], off_ms=int(params.get("off_ms", 400)),
             settle_ms=int(params.get("settle_ms", 1500)), confirm=bool(params.get("confirm")),
             live_session=params.get("live_session")))
@@ -352,9 +406,7 @@ class HubDaemon:
     def _rpc_release(self, client: str, params: dict) -> dict:
         result = self._release(client, restore_power=bool(params.get("restore_power", True)),
                                restore_data=bool(params.get("restore_data", True)), reason="client closed")
-        with self._meta_lock:
-            self._clients.pop(client, None)
-            self._specs.pop(client, None)
+        self._forget(client)
         return result
 
     def _rpc_shutdown(self, client: str, params: dict) -> dict:
@@ -363,17 +415,28 @@ class HubDaemon:
 
     # ------------------------------------------------------------- internals
 
-    def _write(self, client: str, params: dict, action) -> dict:
+    def _write(self, client: str, method: str, params: dict, action) -> dict:
         """Run one mutating call under the daemon-wide lock, as the calling client.
 
         The guard mode is the CALLER's, swapped in for this call only; the lock
-        makes the swap invisible to everyone else. New audit entries are tagged
-        with the client so the shared trail says who did what.
+        makes the swap invisible to everyone else. Everything the guard looks at
+        -- including who is live on the channel -- is read once the lock is held,
+        so a write that queued behind another is judged on the hub as it is now,
+        not as it was when it was sent. New audit entries are tagged with the
+        client so the shared trail says who did what.
         """
         mode = params.get("guard_mode")
         if mode is not None and mode not in GUARD_MODES:
             raise ValueError(f"guard_mode must be one of: {', '.join(GUARD_MODES)}")
-        with self._write_lock:
+        max_wait = max(float(params.get("max_wait_sec", DEFAULT_MAX_WAIT_SEC)), 0.0)
+        name = self._clients.get(client, {}).get("name", client)
+        queued_at = time.monotonic()
+        if not self._write_lock.acquire(timeout=max_wait):
+            raise HubBusyError(self._busy_message(method, params.get("channel"), max_wait))
+        try:
+            waited_ms = int(round((time.monotonic() - queued_at) * 1000))
+            self._busy = {"client": name, "method": method, "channel": params.get("channel"),
+                          "since": round(self._clock(), 3), "_t0": time.monotonic()}
             guard = self.manager.guard
             previous = guard.mode
             seen = len(guard.audit_log)
@@ -383,11 +446,59 @@ class HubDaemon:
                 result = action()
             finally:
                 guard.mode = previous
-                name = self._clients.get(client, {}).get("name", client)
                 for entry in guard.audit_log[seen:]:
                     entry.setdefault("client", name)
             self._account(client, result)
+            if result.get("applied") is True or result.get("action") == "power_cycle":
+                self.generation += 1
+        finally:
+            self._busy = None
+            self._write_lock.release()
+        if waited_ms >= 50:
+            result["queued_ms"] = waited_ms
         return result
+
+    def _busy_message(self, method: str, channel: Any, waited: float) -> str:
+        busy = self._busy
+        if busy is None:
+            holder = "another write"
+        else:
+            held = time.monotonic() - busy["_t0"]
+            target = f" on channel {busy['channel']}" if busy.get("channel") is not None else ""
+            holder = f"{busy['client']}'s {busy['method']}{target} (running {held:.1f}s)"
+        on = f" on channel {channel}" if channel is not None else ""
+        return (f"hub busy: {holder} held the hub for the whole {waited:.0f}s this {method}{on} "
+                f"waited, so it was NOT executed -- a cut decided that long ago may no longer be "
+                f"wanted. Check hub(action=describe) and retry if it still is.")
+
+    def _live_on(self, channel: int) -> str | None:
+        """Who, on any connected server, has a live GDB server on ``channel``."""
+        for row in self._session_rows():
+            if row["server_alive"] and row["channel"] == channel:
+                return f"{row['session']} @ {row['client']}"
+        return None
+
+    def _session_rows(self) -> list[dict]:
+        """Every connected server's registered sessions, newest server first."""
+        now = self._clock()
+        rows = []
+        with self._meta_lock:
+            entries = [(cid, dict(entry), dict(self._clients.get(cid) or {}))
+                       for cid, entry in self._sessions.items()]
+        for client_id, entry, meta in sorted(entries, key=lambda e: -(e[1].get("at") or 0)):
+            if meta.get("pid") and not _pid_alive(meta["pid"]):
+                continue  # its GDB servers died with it (job object / PDEATHSIG)
+            stale = now - (entry.get("at") or 0) > HEARTBEAT_STALE_SEC
+            for row in entry["rows"]:
+                rows.append({**row, "client": meta.get("name") or client_id[:8], "client_id": client_id,
+                             "stale": stale})
+        return rows
+
+    def _forget(self, client: str) -> None:
+        with self._meta_lock:
+            self._clients.pop(client, None)
+            self._specs.pop(client, None)
+            self._sessions.pop(client, None)
 
     def _account(self, client: str, result: dict) -> None:
         if result.get("applied") is not True:
@@ -431,6 +542,8 @@ class HubDaemon:
                         failed.append({"channel": channel, "kind": kind, "reason": str(exc)})
             for entry in self.manager.guard.audit_log[seen:]:
                 entry.setdefault("client", f"{self._clients.get(client, {}).get('name', client)} ({reason})")
+            if restored or reconnected:
+                self.generation += 1
         return {"restored_channels": restored, "reconnected_channels": reconnected, "failed": failed}
 
     def _merged_spec(self) -> dict:
@@ -469,7 +582,13 @@ class HubDaemon:
                 row["owes_power"] = sorted(owed.get("power") or ())
                 row["owes_data"] = sorted(owed.get("data") or ())
                 clients.append(row)
-        return {"mode": "daemon", "daemon": self._daemon_summary(), "clients": clients}
+        for row in clients:
+            row["heartbeat_at"] = (self._sessions.get(row["id"]) or {}).get("at")
+        busy = self._busy
+        if busy is not None:
+            busy = {k: v for k, v in busy.items() if not k.startswith("_")}
+        return {"mode": "daemon", "daemon": self._daemon_summary(), "clients": clients,
+                "busy": busy, "generation": self.generation}
 
 
 # ------------------------------------------------------------------ cli

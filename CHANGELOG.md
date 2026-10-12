@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Cross-server hub interlock / 跨服务器的 Hub 互锁
+
+- Every MCP server registers its sessions that have a `hub` block with the hub daemon —
+  synchronously after each tool call, plus a 2 s heartbeat — so a cut on a channel where
+  **any** server has a live GDB server needs `confirm=true` regardless of guard mode, and
+  the refusal names the session and server. Exclusive isolation judges each neighbour on
+  its own; `hub(action=discover)` refuses while any server is live. Closes the documented
+  "only sees the calling session" gap for daemon mode. /
+  每个服务器向守护进程登记带 `hub` 配置的会话；任一服务器在该通道有活跃 GDB 时，断电/断数据
+  都需要 `confirm=true`，并指出是谁。补上了“只看调用方会话”的已知缺口（守护进程模式）。
+- A switch on one server now invalidates every server's `detect_probe` cache (a daemon-wide
+  switch counter checked before serving the cache). /
+  一台服务器的切换会让所有服务器的 `detect_probe` 缓存失效。
+- Writes wait at most 30 s (`max_wait_sec`) behind another server's write and are then
+  refused, naming the holder, rather than run late; a write that waited reports
+  `queued_ms`. The dashboard shows every server's sessions, heartbeats and the write in
+  progress. / 写操作最多排队 30 秒，超时拒绝并指出占用者；看板显示所有服务器的会话、心跳及
+  正在执行的写操作。
+- Daemon protocol bumped to 2: stop a daemon left from an older install
+  (`python -m mcp_server.hub_daemon stop`). / 守护进程协议升至 2，旧版守护进程需先停止。
+
 ### Shared hub daemon for multi-server racks / 多 MCP 服务器共享的 Hub 守护进程
 
 - With several MCP servers on one rack (one IDE window per board), the first one to touch

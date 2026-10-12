@@ -125,9 +125,10 @@ Then point a session at its port (1-based, matching the hub's silkscreen):
 with an ADC. `hub(action=power/data/cycle)` requires `confirm=true` while the guard is in
 its default `confirm` mode, and — in every mode, `guard: allow` included — whenever **the
 calling session's own** GDB server is live on that port: cutting power mid-flash is how a
-board becomes a brick. Note the scope: the check sees only the session making the call, so
-on a rack it will **not** notice that a *different* session is mid-flash on that channel.
-Isolate with `hub(action=data, exclusive=true)` before touching a neighbour's port.
+board becomes a brick. Note the scope: in `local` mode the check sees only the session
+making the call, so it will **not** notice that a *different* session is mid-flash on that
+channel. With the shared hub daemon (the default; see below) it sees every registered
+session on every server.
 Three entry points confirm on their own behalf, deliberately, because naming them *is* the
 confirmation — and their decisions land in the same audit trail `hub(action=describe)`
 returns. `reset_target(strategy="cold")` and `recover_session`'s escalation ladder stop the
@@ -138,8 +139,8 @@ are genuinely on your own. Set `guard: allow` for scripted CI. /
 `hub(action=describe)` 是只读的，带 ADC 的型号还会返回每端口电压/电流。默认 `confirm`
 模式下，`hub(action=power/data/cycle)` 必须显式传 `confirm=true`；**调用方自己的会话**在该端口
 上有活跃 GDB 服务时，任何模式（含 `guard: allow`）下都强制要求——烧录中途断电正是把板子变砖的
-方式。注意这条检查的范围：它只看发起调用的那个会话，因此在机架上**不会**发现另一个会话正在该
-通道上烧录。要动邻居的端口，请先用 `hub(action=data, exclusive=true)` 做隔离。
+方式。注意这条检查的范围：`local` 模式下它只看发起调用的那个会话，**不会**发现另一个会话正在该
+通道上烧录；使用共享 Hub 守护进程时（默认，见下文）则能看到所有服务器登记的全部会话。
 有三处入口会自行确认，这是刻意设计的——点名调用它们本身就是确认，且其决定同样进入
 `hub(action=describe)` 返回的审计日志。`reset_target(strategy="cold")` 与 `recover_session`
 的恢复阶梯会先停掉 GDB 会话再断电，而不是从活跃会话脚下拔掉 VBUS；`hub(action=discover)`
@@ -219,6 +220,20 @@ Hub 控制口同一时间只能被一个进程打开。因此默认情况下，�
   模式各自独立**，审计日志记录是哪台服务器执行的操作。
 - What a server switched off is restored when it exits — or when the daemon finds its PID
   gone. / 某服务器断开的电源/数据线，在它退出（或守护进程发现其进程已消失）时自动恢复。
+- **Cross-server interlock.** Every server registers its sessions that have a `hub` block
+  (after each tool call, plus a 2 s heartbeat). Cutting power or data on a channel where
+  *any* server has a live GDB server needs `confirm=true`, whatever the guard mode, and the
+  refusal names that session and server. `hub(action=discover)` refuses while any server
+  on the rack is live. A session with no `hub` block cannot be mapped to a channel and so
+  is not protected. / **跨服务器互锁**：每个服务器都会登记带 `hub` 配置的会话（每次工具调用后
+  同步登记，另有 2 秒心跳）。只要**任一**服务器在该通道上有活跃 GDB，断电/断数据就必须
+  `confirm=true`（与 guard 模式无关），拒绝信息会指出是哪个服务器的哪个会话；任一服务器有活跃
+  会话时 `hub(action=discover)` 拒绝运行。没有 `hub` 配置的会话无法映射到通道，因此不受保护。
+- A write waits at most 30 s behind another server's write, then is refused (not run late)
+  with the name of what held the hub; one that did wait reports `queued_ms`. Every switch
+  also invalidates every server's `detect_probe` cache. / 写操作最多排队 30 秒，超时则拒绝执行
+  （而不是延后执行）并指出占用者；排过队的结果带 `queued_ms`。每次切换都会让所有服务器的
+  `detect_probe` 缓存失效。
 - The daemon exits after 10 idle minutes unless it still owes a channel. /
   空闲 10 分钟且无待恢复通道时，守护进程自动退出。
 
@@ -231,12 +246,12 @@ python -m mcp_server.hub_daemon serve --config bench_hub.yaml   # run it yoursel
 `STM32_GDB_MCP_HUB_MODE=auto` (default) uses the daemon and falls back to in-process when
 the `[hub]` extra is absent or the daemon cannot start; `daemon` never falls back; `local`
 is the old single-process behaviour. Everything binds to `127.0.0.1`; writes need the token
-in the per-user state file. Not yet: cross-server live-session interlock (each server still
-only sees its own GDB sessions), per-channel write locks. /
+in the per-user state file. Not yet: per-channel write locks (one write at a time, rack-wide),
+and discovery is not atomic against another server's writes. /
 `STM32_GDB_MCP_HUB_MODE=auto`（默认）使用守护进程，未安装 `[hub]` extra 或守护进程无法启动时
 退回进程内模式；`daemon` 不回退；`local` 为原来的单进程行为。全部仅监听 `127.0.0.1`，写操作需
-要用户私有状态文件中的 token。尚未实现：跨服务器的活跃会话互锁（每个服务器仍只看到自己的 GDB
-会话）、按通道加锁。
+要用户私有状态文件中的 token。尚未实现：按通道加锁（目前整个机架一次只执行一个写操作）；
+discover 过程中仍可能穿插其他服务器的写操作。
 
 #### Live dashboard / 实时看板
 

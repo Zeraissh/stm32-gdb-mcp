@@ -146,7 +146,8 @@ td { border-bottom: 1px solid var(--grid); padding: 5px 6px; vertical-align: top
 .events { max-height: 340px; overflow: auto; }
 .scroll-x { overflow-x: auto; }
 .empty { color: var(--text-muted); font-size: 13px; padding: 6px 0; }
-.kind { font-size: 11px; color: var(--text-muted); }
+.kind { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+td.num { white-space: nowrap; }
 .kind.error { color: var(--critical); font-weight: 600; }
 .why { color: var(--text-muted); font-size: 12px; }
 footer { color: var(--text-muted); font-size: 12px; margin-top: 14px; }
@@ -382,6 +383,7 @@ footer { color: var(--text-muted); font-size: 12px; margin-top: 14px; }
     else if (hub.guard && hub.guard.mode) bits.push(`guard: ${hub.guard.mode}`);
     if (st.hub) bits.push(hub.adc ? "ADC ✓" : "无 ADC");
     if (st.mode === "daemon" && st.daemon) bits.push(`共享守护进程 pid ${st.daemon.pid}`);
+    if (st.busy) bits.push(`执行中：${st.busy.method}${st.busy.channel != null ? " CH " + st.busy.channel : ""} · ${st.busy.client} · ${fmtAgo(st.now - st.busy.since)}`);
     if (st.last_ok) bits.push(`更新 ${fmtAgo(st.now - st.last_ok)}`);
     bits.push(`采样 ${st.interval_sec}s`);
     $("meta").replaceChildren(...bits.map((b) => el("span", { class: "num" }, b)));
@@ -455,7 +457,8 @@ footer { color: var(--text-muted); font-size: 12px; margin-top: 14px; }
       }
 
       if (isLive) {
-        const names = bound.filter((s) => s.server_alive).map((s) => s.session).join(", ");
+        const names = bound.filter((s) => s.server_alive)
+          .map((s) => s.client ? `${s.session} @ ${s.client}` : s.session).join(", ");
         card.append(el("div", { class: "live-note" }, el("b", {}, "▲ "), `会话 ${names} 的 GDB server 正在此端口运行，断电会中断烧录/调试。`));
       }
       const ident = [];
@@ -468,48 +471,53 @@ footer { color: var(--text-muted); font-size: 12px; margin-top: 14px; }
     box.replaceChildren(...cards);
   }
 
-  function renderClients(st) {
-    $("sessions-title").textContent = "已连接的 MCP 服务器 Clients";
+  function clientsTable(st) {
     const rows = (st.clients || []).slice().sort((a, b) => (b.last_seen || 0) - (a.last_seen || 0));
-    if (!rows.length) {
-      $("sessions").replaceChildren(el("div", { class: "empty" }, "还没有 MCP 服务器连上来。"));
-      return;
-    }
+    if (!rows.length) return el("div", { class: "empty" }, "还没有 MCP 服务器连上来。");
     const table = el("table", {},
-      el("thead", {}, el("tr", {}, ...["客户端", "PID", "最近调用", "调用数", "待恢复"].map((h) => el("th", {}, h)))),
+      el("thead", {}, el("tr", {}, ...["服务器", "PID", "心跳", "调用数", "待恢复"].map((h) => el("th", {}, h)))),
       el("tbody", {}, ...rows.map((c) => {
         const owes = [...(c.owes_power || []).map((ch) => `CH ${ch} 电源`), ...(c.owes_data || []).map((ch) => `CH ${ch} 数据`)];
+        const beat = c.heartbeat_at != null ? st.now - c.heartbeat_at : null;
         return el("tr", {},
           el("td", {}, c.name || c.id),
           el("td", { class: "num" }, c.pid != null ? c.pid : "—"),
-          el("td", { class: "num" }, c.last_seen ? fmtAgo(st.now - c.last_seen) : "—"),
+          el("td", { class: "num" }, beat == null ? "未注册"
+            : beat > 10 ? el("span", { class: "kind error" }, `✖ ${fmtAgo(beat)}`) : fmtAgo(beat)),
           el("td", { class: "num" }, c.calls != null ? c.calls : "—"),
           el("td", {}, owes.length ? owes.join(", ") : "—"));
       })));
-    $("sessions").replaceChildren(table,
+    return el("div", {}, table,
       el("div", { class: "why" }, "“待恢复”= 该服务器断开的电源/数据线；它退出（或进程消失）时守护进程会自动恢复。"));
   }
 
   function renderSessions(st) {
-    if (st.mode === "daemon") return renderClients(st);
+    const daemon = st.mode === "daemon";
+    $("sessions-title").textContent = daemon ? "调试会话（所有服务器）Sessions" : "调试会话 Sessions";
     const rows = st.sessions || [];
+    const parts = [];
     if (!rows.length) {
-      $("sessions").replaceChildren(el("div", { class: "empty" }, "没有调试会话。"));
-      return;
+      parts.push(el("div", { class: "empty" }, daemon ? "还没有服务器注册带 hub 配置的会话。" : "没有调试会话。"));
+    } else {
+      const heads = ["会话", ...(daemon ? ["服务器"] : []), "GDB server", "Hub 通道", "探针 SN", "MCU"];
+      parts.push(el("table", {},
+        el("thead", {}, el("tr", {}, ...heads.map((h) => el("th", {}, h)))),
+        el("tbody", {}, ...rows.map((s) => el("tr", {},
+          el("td", {}, s.session),
+          daemon ? el("td", {}, s.client || "—", s.stale ? el("div", { class: "why" }, "心跳超时，仍按运行中处理") : null) : null,
+          el("td", {}, s.server_alive
+            ? el("span", { class: "pill warn" }, el("span", { class: "dot" }), "运行中")
+            : el("span", { class: "pill off" }, el("span", { class: "dot" }), "未运行")),
+          el("td", { class: "num" }, s.channel != null ? `CH ${s.channel}` : "—",
+            s.channel_source ? el("div", { class: "why" }, s.channel_source) : null,
+            s.channel == null && s.channel_error ? el("div", { class: "why", title: s.channel_error }, "未映射") : null),
+          el("td", { class: "num" }, s.probe_serial || "—"),
+          el("td", {}, s.mcu || "—"))))));
     }
-    const table = el("table", {},
-      el("thead", {}, el("tr", {}, ...["会话", "GDB server", "Hub 通道", "探针 SN", "MCU"].map((h) => el("th", {}, h)))),
-      el("tbody", {}, ...rows.map((s) => el("tr", {},
-        el("td", {}, s.session),
-        el("td", {}, s.server_alive
-          ? el("span", { class: "pill warn" }, el("span", { class: "dot" }), "运行中")
-          : el("span", { class: "pill off" }, el("span", { class: "dot" }), "未运行")),
-        el("td", { class: "num" }, s.channel != null ? `CH ${s.channel}` : "—",
-          s.channel_source ? el("div", { class: "why" }, s.channel_source) : null,
-          s.channel == null && s.channel_error ? el("div", { class: "why", title: s.channel_error }, "未映射") : null),
-        el("td", { class: "num" }, s.probe_serial || "—"),
-        el("td", {}, s.mcu || "—")))));
-    $("sessions").replaceChildren(table);
+    if (daemon) {
+      parts.push(el("h2", { style: "margin-top:14px" }, "已连接的 MCP 服务器 Clients"), clientsTable(st));
+    }
+    $("sessions").replaceChildren(...parts);
   }
 
   function renderEvents(st) {

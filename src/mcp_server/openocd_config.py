@@ -256,7 +256,25 @@ PROBE_DETECTION_TIMEOUT_S = 45
 # the repeats. It is deliberately short: a human unplugging a probe should not have
 # to wait long for the server to notice.
 PROBE_CACHE_TTL_S = 3.0
-_probe_cache: dict = {"at": 0.0, "key": None, "response": None}
+_probe_cache: dict = {"at": 0.0, "key": None, "response": None, "generation": None}
+# Optional callable returning the shared hub daemon's switch counter. Another MCP
+# server switching a port moves USB topology without touching THIS process, so
+# the TTL alone would serve its stale enumeration; comparing the counter does not.
+_cache_generation = None
+
+
+def set_probe_cache_generation(fn) -> None:
+    global _cache_generation
+    _cache_generation = fn
+
+
+def _current_generation():
+    if _cache_generation is None:
+        return None
+    try:
+        return _cache_generation()
+    except Exception:  # noqa: BLE001 - an unknown generation only costs a fresh scan
+        return object()  # never equal to what was cached
 
 
 def invalidate_probe_cache() -> None:
@@ -283,8 +301,10 @@ def detect_probe(platform_name: str | None = None, sysfs_root: str | Path = "/sy
     # Keyed on the arguments, so a test passing its own platform never reads an
     # entry produced for a different one.
     cache_key = (system, str(sysfs_root))
+    generation = _current_generation() if use_cache and real_hardware else None
     if use_cache and real_hardware and _probe_cache["response"] is not None \
             and _probe_cache["key"] == cache_key \
+            and _probe_cache.get("generation") == generation \
             and (time.monotonic() - _probe_cache["at"]) < PROBE_CACHE_TTL_S:
         return dict(_probe_cache["response"])
     runner = runner or subprocess.run
@@ -337,7 +357,9 @@ def detect_probe(platform_name: str | None = None, sysfs_root: str | Path = "/sy
         # Never cache a failure: the next caller should get a fresh attempt rather
         # than the same error for the rest of the TTL.
         _probe_cache.update({"at": time.monotonic(), "key": cache_key,
-                             "response": dict(response)})
+                             # Read BEFORE the scan: a switch landing mid-scan
+                             # bumps the counter and so voids this entry.
+                             "response": dict(response), "generation": generation})
     return response
 
 
