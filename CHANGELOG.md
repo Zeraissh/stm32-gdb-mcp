@@ -2,6 +2,85 @@
 
 ## [Unreleased]
 
+### Per-channel hub write locks and discovery leases / Hub 按通道加锁与 discover 租约
+
+- The hub daemon's single write lock is replaced by per-channel locks
+  (`hub_locks.ChannelLocks`): writes on different channels run concurrently — two 8 s
+  power cycles on CH1 and CH3 now take 8 s, not 16 — while writes on the same channel
+  still queue. Exclusive isolation and hub-port changes lock the whole rack. Waiting is
+  FIFO among conflicting requests, so a rack-wide request is not starved by later
+  single-channel writes. / 守护进程的全局写锁改为按通道加锁：不同通道并行，同通道排队；
+  exclusive 与换端口锁整个机架；冲突请求先来先得，不会饿死。
+- `hub(action=discover)` holds a rack-wide **lease** for its whole run; only the thread
+  that took it may write through it, everyone else queues and is refused after
+  `max_wait_sec`. Leases expire (TTL) and are dropped when their holder's PID dies. /
+  `discover` 运行期间持有全机架租约，其他写操作排队、超时拒绝；租约有 TTL，持有者进程消失即释放。
+- Guard mode and audit attribution are now thread-local (`HubPowerGuard.acting_as`)
+  instead of a swap of the shared guard, which concurrent writes would have leaked
+  between servers. A restore that cannot get its channel in time keeps the debt
+  (`deferred`) instead of dropping it. Vendor sampling during a power cycle and
+  `measure` now take the manager lock like every other round-trip. The dashboard shows
+  every write in flight per channel. Daemon protocol bumped to 3. /
+  guard 模式与审计归属改为线程局部；恢复拿不到通道时保留待恢复记录；采样读也走管理器锁；
+  看板按通道显示正在执行的操作。守护进程协议升至 3。
+
+### Cross-server hub interlock / 跨服务器的 Hub 互锁
+
+- Every MCP server registers its sessions that have a `hub` block with the hub daemon —
+  synchronously after each tool call, plus a 2 s heartbeat — so a cut on a channel where
+  **any** server has a live GDB server needs `confirm=true` regardless of guard mode, and
+  the refusal names the session and server. Exclusive isolation judges each neighbour on
+  its own; `hub(action=discover)` refuses while any server is live. Closes the documented
+  "only sees the calling session" gap for daemon mode. /
+  每个服务器向守护进程登记带 `hub` 配置的会话；任一服务器在该通道有活跃 GDB 时，断电/断数据
+  都需要 `confirm=true`，并指出是谁。补上了“只看调用方会话”的已知缺口（守护进程模式）。
+- A switch on one server now invalidates every server's `detect_probe` cache (a daemon-wide
+  switch counter checked before serving the cache). /
+  一台服务器的切换会让所有服务器的 `detect_probe` 缓存失效。
+- Writes wait at most 30 s (`max_wait_sec`) behind another server's write and are then
+  refused, naming the holder, rather than run late; a write that waited reports
+  `queued_ms`. The dashboard shows every server's sessions, heartbeats and the write in
+  progress. / 写操作最多排队 30 秒，超时拒绝并指出占用者；看板显示所有服务器的会话、心跳及
+  正在执行的写操作。
+- Daemon protocol bumped to 2: stop a daemon left from an older install
+  (`python -m mcp_server.hub_daemon stop`). / 守护进程协议升至 2，旧版守护进程需先停止。
+
+### Shared hub daemon for multi-server racks / 多 MCP 服务器共享的 Hub 守护进程
+
+- With several MCP servers on one rack (one IDE window per board), the first one to touch
+  the hub used to lock the others out. The first hub call now spawns a **hub daemon**
+  (`python -m mcp_server.hub_daemon`) that owns the hub; every server forwards to it
+  through `RemoteHubManager`, which keeps `HubManager`'s surface so every hub tool,
+  `reset_target(strategy="cold")` and the recovery ladder work unchanged. Reads are
+  shared; writes go through one daemon-wide lock; each write carries its caller's guard
+  mode; audit entries name the server; what a server switched off is restored when it
+  exits or its PID disappears; the dashboard moves into the daemon and lists the
+  connected servers. `STM32_GDB_MCP_HUB_MODE=auto|daemon|local` selects (default auto,
+  falling back to in-process when the extra is absent or the daemon cannot start).
+  Loopback only, token-authenticated writes. On Windows the job object now allows a
+  child that explicitly requests breakaway, so the daemon outlives the server that
+  spawned it. /
+  多个 MCP 服务器共用一个 Hub 时，第一次调用 hub 会拉起守护进程独占 Hub，各服务器通过
+  `RemoteHubManager` 转发调用（接口与 `HubManager` 一致，上层工具无需改动）。读共享、写串行、
+  guard 模式随调用方、审计记录调用方、服务器退出或进程消失时恢复其断开的通道，看板随守护进程
+  显示所有已连接的服务器。由 `STM32_GDB_MCP_HUB_MODE` 选择模式。
+
+### Hub dashboard / Hub 数据看板
+
+- New `hub(action=dashboard)` serves a **read-only live web page** on `127.0.0.1`
+  (default port 8765) and returns its URL: every port's power / data-line state,
+  live voltage, current and power with a 1/5/15-minute history (power-off spans
+  shaded), which debug session sits on which channel and whether its GDB server is
+  live, and a timeline of hub actions from the guard's audit trail. One sampler
+  thread inside the MCP server reads the shared `HubManager`, so the page never
+  fights the agent for the hub's exclusive control port; `state=off` stops it and
+  hands the port back. `python -m mcp_server.hub_dashboard --config bench_hub.yaml`
+  runs it standalone when no MCP server is up. /
+  新增 `hub(action=dashboard)`：在 `127.0.0.1` 上提供只读实时网页，展示各端口电源/数据线
+  状态、电压电流功率及历史曲线（断电区间灰色标出）、会话与通道的对应关系及 GDB 是否运行、
+  hub 操作时间线。采样在 MCP 进程内进行，与智能体共享同一 Hub 连接，不会争抢独占控制口；
+  `state=off` 停止并释放端口。无 MCP 服务器时可用 `python -m mcp_server.hub_dashboard` 独立运行。
+
 ### Physical-first pin resolution / 物理事实优先的引脚解析
 
 - The capability DB now carries a **package-pin position map** (per RefName, from

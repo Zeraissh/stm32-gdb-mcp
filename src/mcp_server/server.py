@@ -23,11 +23,14 @@ from .error_taxonomy import classify_error
 from .freertos_inspector import FreeRTOSInspector
 from .gdb_client import GdbClientManager
 from .gdb_manager import GdbServerManager
+from .hub_dashboard import hub_dashboard
 
 # hub_manager stays a module global for the same reason as the composites above:
 # _make_context reads it via globals() on every dispatch so tests that monkeypatch
-# mcp_server.server.hub_manager keep working (ctx.fns.hub_manager).
-from .hub import hub_manager  # noqa: F401
+# mcp_server.server.hub_manager keep working (ctx.fns.hub_manager). It is the
+# selector, which routes to the shared hub daemon or the in-process manager
+# (STM32_GDB_MCP_HUB_MODE) on first hub use.
+from .hub_remote import hub_manager  # noqa: F401
 
 # file_issue stays a module global for the same reason as the composites above.
 from .issue_reporter import file_issue  # noqa: F401
@@ -37,7 +40,7 @@ from .memory_guard import MemoryWriteGuard
 # detect_probe/suggest_server_args/find_openocd_scripts stay module globals for the same
 # reason as the composites above: _make_context reads them via globals() on every dispatch
 # so tests that monkeypatch mcp_server.server.<name> keep working (ctx.fns.<name>).
-from .openocd_config import detect_probe, find_openocd_scripts, suggest_server_args  # noqa: F401
+from .openocd_config import detect_probe, find_openocd_scripts, set_probe_cache_generation, suggest_server_args  # noqa: F401
 from .scenario import load_scenario, replay_scenario, step_summary
 from .server_metadata import SERVER_INSTRUCTIONS
 from .session_journal import SessionJournal
@@ -128,6 +131,12 @@ def _shutdown_all_sessions():
             getattr(obj, method)()
         except Exception:  # noqa: BLE001
             pass
+    # Stop the dashboard's sampler first, or it would reconnect the hub right
+    # after close() below hands it back.
+    try:
+        hub_dashboard.stop()
+    except Exception:  # noqa: BLE001 - shutdown must not raise
+        pass
     # Re-power any hub port this process switched off. A client that kills the
     # server must not leave a bench board dark with no way to notice.
     try:
@@ -138,6 +147,38 @@ def _shutdown_all_sessions():
 
 _process_guard.install()
 _process_guard.register_shutdown(_shutdown_all_sessions)
+
+
+def _hub_session_bundles() -> list:
+    """Every session bundle in this server: default first, then the named ones."""
+    return [_resolve_session({})] + [sess for sid, sess in list(session_manager.sessions.items())
+                                     if sid != "default"]
+
+
+def _report_hub_sessions() -> None:
+    """Tell the shared hub daemon which of our sessions are live on which channel.
+
+    Runs after every tool call, synchronously, so a GDB server that
+    start_debug_session just launched is registered BEFORE its result reaches
+    the agent -- another server's power cut on that channel then needs confirm.
+    Does nothing (and decides nothing, spawns nothing) until a session here has
+    a hub block. Never raises: this is bookkeeping, not part of the tool call.
+    """
+    try:
+        if not any((sess.debug_profile.get() or {}).get("hub") for sess in _hub_session_bundles()):
+            return
+        report = getattr(globals()["hub_manager"], "report_sessions", None)
+        if report is not None:
+            report()
+    except Exception:  # noqa: BLE001 - a daemon hiccup must never fail the tool call
+        logger.debug("hub session report failed", exc_info=True)
+
+
+_hub_selector = hub_manager
+if hasattr(_hub_selector, "set_session_provider"):
+    _hub_selector.set_session_provider(_hub_session_bundles)
+set_probe_cache_generation(lambda: globals()["hub_manager"].bus_generation()
+                           if hasattr(globals()["hub_manager"], "bus_generation") else None)
 
 
 def _resolve_session(arguments: dict):
@@ -562,6 +603,7 @@ async def handle_call_tool(name: str, arguments: dict | None) -> CallToolResult:
     # like run_and_wait/verify_flash); run it off the event loop so the loop stays responsive.
     result = await asyncio.to_thread(_locked_dispatch)
     duration_ms = round((time.monotonic() - start) * 1000, 1)
+    await asyncio.to_thread(_report_hub_sessions)
 
     # Prune the closed session's lock so _session_locks doesn't grow forever. Safe here:
     # this runs on the event-loop thread (the only thread that touches the dict) and only

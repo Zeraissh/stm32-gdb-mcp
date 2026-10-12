@@ -9,10 +9,13 @@ attached -- ``hub_unavailable`` with an install hint, never a traceback.
 """
 
 import time
+from contextlib import nullcontext
 
 from mcp.types import TextContent, Tool
 
 from ..hub import HubBusyError, HubGuardError, HubUnavailableError
+from ..hub_dashboard import DEFAULT_INTERVAL_SEC, DEFAULT_PORT, hub_dashboard
+from ..hub_remote import session_rows
 from ..hub_topology import discover_by_toggle
 from ..tool_response import content_error, content_success
 from ._helpers import core_state
@@ -224,11 +227,35 @@ def discover_hub_map(ctx: ToolContext, arguments: dict) -> list[TextContent]:
                 suggested_next_actions=["stop_debug_session", "hub(action=discover, force=true)"],
             )]
 
+        # Discovery un-enumerates every probe on the rack in turn, so a live GDB
+        # server on ANY connected MCP server would lose its probe -- not only ours.
+        remote_live = getattr(manager, "live_sessions", None)
+        if remote_live is not None and not arguments.get("force"):
+            others = remote_live()
+            if others:
+                names = ", ".join(f"{row['session']} @ {row['client']} (channel {row.get('channel')})"
+                                  for row in others)
+                return [content_error(
+                    f"live GDB servers on the rack: {names}. Discovery disconnects every channel's "
+                    "data line in turn and would drop them. Stop those sessions, or pass force=true.",
+                    code="hub_busy_sessions",
+                    raw_response={"live_sessions": others},
+                    suggested_next_actions=["hub(action=dashboard)", "hub(action=discover, force=true)"],
+                )]
+
         channels = manager.channels()
-        result = discover_by_toggle(
-            _GuardBypass(manager), ctx.fns.detect_probe, channels,
-            sleep=time.sleep, settle_sec=float(arguments.get("settle_sec", 1.0)),
-        )
+        settle_sec = float(arguments.get("settle_sec", 1.0))
+        # With the shared daemon, hold the whole rack for the run: a switch from
+        # another server between "disconnect channel N" and "see which probe went"
+        # would pin that probe on the wrong channel. Generous TTL -- each step is a
+        # full detect_probe (~8.5 s on Windows) -- and released as soon as we finish.
+        hold = getattr(manager, "hold", None)
+        guard = hold("discover", ttl_sec=60 + len(channels) * (30 + 2 * settle_sec)) if hold else nullcontext()
+        with guard:
+            result = discover_by_toggle(
+                _GuardBypass(manager), ctx.fns.detect_probe, channels,
+                sleep=time.sleep, settle_sec=settle_sec,
+            )
 
         # Probes with no serial number are common (ST-Link/V2 clones all share
         # VID:PID 0483:3748 and report none), and for those `key` -- derived from
@@ -376,3 +403,91 @@ def power_cycle_target(ctx: ToolContext, arguments: dict) -> list[TextContent]:
         return _error(exc)
     except ValueError as exc:
         return [content_error(str(exc), code="invalid_argument")]
+
+
+def _session_rows(ctx: ToolContext, manager):
+    """A callable listing every debug session and the hub channel it resolves to.
+
+    The dashboard calls it from its sampler thread, long after this dispatch has
+    returned, so it re-reads the session registry each time instead of closing
+    over this call's session bundle.
+    """
+    default_session = ctx.default_session
+    session_manager = ctx.session_manager
+
+    def rows() -> list[dict]:
+        bundles = [default_session()]
+        bundles += [sess for sid, sess in list(session_manager.sessions.items()) if sid != "default"]
+        return session_rows(bundles, manager, only_hub=False)
+
+    return rows
+
+
+@register(Tool(
+    name="hub_dashboard",
+    description=(
+        "Starts (or stops) a local, read-only web dashboard for the hub: every port's power and "
+        "data-line state, live voltage/current with a few minutes of history, which debug session "
+        "sits on which channel (and whether its GDB server is live), and a timeline of hub actions. "
+        "Serves on 127.0.0.1 only and returns the URL. When the shared hub daemon owns the hub "
+        "(the default with several MCP servers on a rack) this returns the daemon's always-on "
+        "page, which also lists every connected server. In local mode the page runs inside this "
+        "server and, while it runs, no OTHER process can open the hub; state=off stops it."
+    ),
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "state": {"type": "string", "enum": ["on", "off"],
+                      "description": "on (default) starts or re-points the dashboard; off stops it."},
+            "port": {"type": "integer", "description": f"HTTP port on 127.0.0.1 (default {DEFAULT_PORT})."},
+            "interval_sec": {"type": "number",
+                             "description": f"Seconds between hub samples (default {DEFAULT_INTERVAL_SEC}, min 0.2)."},
+            "open_browser": {"type": "boolean", "description": "Also open the page in the default browser."},
+        },
+    }
+))
+def hub_dashboard_tool(ctx: ToolContext, arguments: dict) -> list[TextContent]:
+    state = arguments.get("state", "on")
+    if state not in ("on", "off"):
+        return [content_error("state must be 'on' or 'off'", code="invalid_argument")]
+    try:
+        manager = _manager(ctx)
+        # With the shared daemon the dashboard already runs there, showing every
+        # server's view; starting a second, per-server page would only show ours.
+        shared = getattr(manager, "dashboard_info", None)
+        if shared is not None:
+            info = shared()
+            if state == "off":
+                info["message"] = ("The shared daemon's dashboard stays up while the daemon runs; "
+                                   "stop the daemon with: python -m mcp_server.hub_daemon stop")
+                return [content_success(info)]
+            if arguments.get("open_browser"):
+                info["browser_opened"] = _open_browser(info["url"])
+            info["message"] = f"Hub dashboard (shared daemon) at {info['url']}"
+            return [content_success(info)]
+        if state == "off":
+            return [content_success(hub_dashboard.stop())]
+        info = hub_dashboard.start(
+            manager, sessions=_session_rows(ctx, manager),
+            port=int(arguments.get("port", DEFAULT_PORT)),
+            interval_sec=float(arguments.get("interval_sec", DEFAULT_INTERVAL_SEC)),
+        )
+    except (HubUnavailableError, HubBusyError, HubGuardError) as exc:
+        return _error(exc)
+    except OSError as exc:
+        return [content_error(f"could not open the dashboard port: {exc}", code="dashboard_port_unavailable",
+                              suggested_next_actions=["hub(action=dashboard, port=0)"])]
+    except (TypeError, ValueError) as exc:
+        return [content_error(str(exc), code="invalid_argument")]
+    if arguments.get("open_browser"):
+        info["browser_opened"] = _open_browser(info["url"])
+    info["message"] = f"Hub dashboard running at {info['url']}"
+    return [content_success(info, suggested_next_actions=["hub(action=dashboard, state=off)"])]
+
+
+def _open_browser(url: str) -> bool:
+    import webbrowser
+    try:
+        return bool(webbrowser.open(url))
+    except Exception:  # noqa: BLE001 - a headless host simply has no browser
+        return False

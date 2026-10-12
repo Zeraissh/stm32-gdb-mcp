@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any, Protocol
 
 # Below this, the port rail is considered collapsed and the board really did
@@ -142,6 +144,32 @@ class HubPowerGuard:
     def __init__(self, mode: str = DEFAULT_GUARD_MODE) -> None:
         self.mode = mode
         self.audit_log: list[dict] = []
+        self._local = threading.local()
+
+    @contextmanager
+    def acting_as(self, mode: str | None = None, client: str | None = None) -> Iterator[None]:
+        """Decide and audit on THIS thread as ``client`` under ``mode``.
+
+        Thread-local on purpose. The hub daemon runs writes for different
+        channels concurrently, each on behalf of a different MCP server with its
+        own guard mode; swapping the shared ``mode`` for the call, as it did when
+        every write was serialized, would hand one server's ``allow`` to another
+        server's concurrent cut.
+        """
+        if mode is not None and mode not in GUARD_MODES:
+            raise ValueError(f"guard_mode must be one of: {', '.join(GUARD_MODES)}")
+        previous = getattr(self._local, "ctx", None)
+        self._local.ctx = {"mode": mode, "client": client}
+        try:
+            yield
+        finally:
+            self._local.ctx = previous
+
+    def _context(self) -> dict:
+        return getattr(self._local, "ctx", None) or {}
+
+    def effective_mode(self) -> str:
+        return self._context().get("mode") or self.mode
 
     def set_policy(self, mode: str | None = None) -> dict:
         if mode is not None:
@@ -176,7 +204,8 @@ class HubPowerGuard:
           ``live_session``). On that path the caller has overridden the interlock
           knowingly; nothing downstream re-checks it.
         """
-        if self.mode == "dry_run":
+        mode = self.effective_mode()
+        if mode == "dry_run":
             return {"action": "simulated", "reason": "dry_run mode is active",
                     "channel": channel, "live_session": live_session}
 
@@ -189,7 +218,7 @@ class HubPowerGuard:
                 "live_session": live_session,
             }
 
-        if self.mode == "confirm" and not confirm:
+        if mode == "confirm" and not confirm:
             return {
                 "action": "blocked",
                 "reason": f"guard mode is 'confirm'; pass confirm=true to {action} channel {channel}",
@@ -197,7 +226,7 @@ class HubPowerGuard:
                 "live_session": live_session,
             }
 
-        return {"action": "apply", "reason": f"permitted by guard mode '{self.mode}'",
+        return {"action": "apply", "reason": f"permitted by guard mode '{mode}'",
                 "channel": channel, "live_session": live_session}
 
     def audit(self, action: str, channel: int, decision: dict, detail: dict | None = None) -> dict:
@@ -209,6 +238,9 @@ class HubPowerGuard:
         }
         if detail:
             entry.update(detail)
+        client = self._context().get("client")
+        if client:
+            entry.setdefault("client", client)
         self.audit_log.append(entry)
         return entry
 
@@ -253,6 +285,12 @@ class HubManager:
         self._idle_timer: threading.Timer | None = None
         self._touched_at: float = 0.0
         self.guard = HubPowerGuard()
+        # Optional channel -> "who has a live GDB server here" lookup, consulted
+        # when a caller did not name a live session itself. The hub daemon sets it
+        # from every connected server's registered sessions, which is what lets a
+        # cut on channel N see a DIFFERENT server mid-flash there. None in-process,
+        # where only the calling session's own liveness is known.
+        self.live_session_for: Any = None
 
     # ---------------------------------------------------------------- config
 
@@ -776,7 +814,10 @@ class HubManager:
         turned_off, failed = [], []
         for other in [ch for ch in self._channels if ch != channel]:
             try:
-                outcome = self._switch("data", other, "off", confirm, live_session)
+                # None, not the target's live_session: each neighbour is judged on
+                # who is live on IT (see live_session_for). Locally this changes
+                # nothing -- reaching here with a live target needed confirm already.
+                outcome = self._switch("data", other, "off", confirm, None)
             except (HubGuardError, HubUnavailableError) as exc:
                 # A neighbour that the guard refuses, or that the hub does not
                 # acknowledge, must not abort the whole call: the target channel is
@@ -916,7 +957,8 @@ class HubManager:
         samples = 0
         while True:
             elapsed = monotonic() - started
-            snapshot = self._measurements(hub, targets)
+            with self._lock:
+                snapshot = self._measurements(hub, targets)
             if snapshot is None:
                 raise HubUnavailableError(
                     "hub measurement unavailable: this model has no ADC, or the read timed out. "
@@ -954,7 +996,11 @@ class HubManager:
         hub = self._hub
         if hub is None:
             return None
-        sample = self._measurements(hub, (channel,))
+        # Under the lock like every other vendor round-trip: the control port is
+        # one serial line, and a sample interleaved with another thread's
+        # describe or switch would garble both.
+        with self._lock:
+            sample = self._measurements(hub, (channel,))
         if not sample or channel not in sample:
             return None
         value = sample[channel].get(field)
@@ -971,6 +1017,13 @@ class HubManager:
         with self._lock:
             if kind == "power":
                 self._refuse_interlock(action)
+            if live_session is None and state == "off" and self.live_session_for is not None:
+                # Only cuts consult the registry: switching a port back ON cannot
+                # interrupt a live server, and restores must never be blocked.
+                try:
+                    live_session = self.live_session_for(channel)
+                except Exception:  # noqa: BLE001 - a broken lookup must not hide the hub
+                    live_session = None
             decision = self.guard.evaluate(action, channel, confirm=confirm, live_session=live_session)
             if decision["action"] == "blocked":
                 self.guard.audit(action, channel, decision)
