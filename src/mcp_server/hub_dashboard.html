@@ -180,7 +180,7 @@ footer { color: var(--text-muted); font-size: 12px; margin-top: 14px; }
 
   <div class="lower">
     <section class="panel">
-      <h2>调试会话 Sessions</h2>
+      <h2 id="sessions-title">调试会话 Sessions</h2>
       <div class="scroll-x" id="sessions"></div>
     </section>
     <section class="panel">
@@ -378,8 +378,10 @@ footer { color: var(--text-muted); font-size: 12px; margin-top: 14px; }
     if (name) bits.push(String(name));
     if (dev.serial_no) bits.push(`SN ${dev.serial_no}`);
     if (dev.firmware_version || dev.fw_version) bits.push(`FW ${dev.firmware_version || dev.fw_version}`);
-    if (hub.guard && hub.guard.mode) bits.push(`guard: ${hub.guard.mode}`);
+    if (st.mode === "daemon") bits.push("guard: 按各客户端");
+    else if (hub.guard && hub.guard.mode) bits.push(`guard: ${hub.guard.mode}`);
     if (st.hub) bits.push(hub.adc ? "ADC ✓" : "无 ADC");
+    if (st.mode === "daemon" && st.daemon) bits.push(`共享守护进程 pid ${st.daemon.pid}`);
     if (st.last_ok) bits.push(`更新 ${fmtAgo(st.now - st.last_ok)}`);
     bits.push(`采样 ${st.interval_sec}s`);
     $("meta").replaceChildren(...bits.map((b) => el("span", { class: "num" }, b)));
@@ -466,7 +468,30 @@ footer { color: var(--text-muted); font-size: 12px; margin-top: 14px; }
     box.replaceChildren(...cards);
   }
 
+  function renderClients(st) {
+    $("sessions-title").textContent = "已连接的 MCP 服务器 Clients";
+    const rows = (st.clients || []).slice().sort((a, b) => (b.last_seen || 0) - (a.last_seen || 0));
+    if (!rows.length) {
+      $("sessions").replaceChildren(el("div", { class: "empty" }, "还没有 MCP 服务器连上来。"));
+      return;
+    }
+    const table = el("table", {},
+      el("thead", {}, el("tr", {}, ...["客户端", "PID", "最近调用", "调用数", "待恢复"].map((h) => el("th", {}, h)))),
+      el("tbody", {}, ...rows.map((c) => {
+        const owes = [...(c.owes_power || []).map((ch) => `CH ${ch} 电源`), ...(c.owes_data || []).map((ch) => `CH ${ch} 数据`)];
+        return el("tr", {},
+          el("td", {}, c.name || c.id),
+          el("td", { class: "num" }, c.pid != null ? c.pid : "—"),
+          el("td", { class: "num" }, c.last_seen ? fmtAgo(st.now - c.last_seen) : "—"),
+          el("td", { class: "num" }, c.calls != null ? c.calls : "—"),
+          el("td", {}, owes.length ? owes.join(", ") : "—"));
+      })));
+    $("sessions").replaceChildren(table,
+      el("div", { class: "why" }, "“待恢复”= 该服务器断开的电源/数据线；它退出（或进程消失）时守护进程会自动恢复。"));
+  }
+
   function renderSessions(st) {
+    if (st.mode === "daemon") return renderClients(st);
     const rows = st.sessions || [];
     if (!rows.length) {
       $("sessions").replaceChildren(el("div", { class: "empty" }, "没有调试会话。"));
@@ -501,7 +526,8 @@ footer { color: var(--text-muted); font-size: 12px; margin-top: 14px; }
         el("td", { class: "num" }, e.channel != null ? `CH ${e.channel}` : "—"),
         el("td", {}, el("span", { class: "kind" + (e.kind === "error" ? " error" : "") },
           (e.kind === "error" ? "✖ " : "") + (kindName[e.kind] || e.kind))),
-        el("td", {}, e.text, e.reason ? el("div", { class: "why" }, e.reason) : null)))));
+        el("td", {}, e.text, e.client ? el("div", { class: "why" }, `by ${e.client}`) : null,
+          e.reason ? el("div", { class: "why" }, e.reason) : null)))));
     $("events").replaceChildren(table);
   }
 

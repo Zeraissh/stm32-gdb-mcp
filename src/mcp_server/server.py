@@ -23,12 +23,14 @@ from .error_taxonomy import classify_error
 from .freertos_inspector import FreeRTOSInspector
 from .gdb_client import GdbClientManager
 from .gdb_manager import GdbServerManager
+from .hub_dashboard import hub_dashboard
 
 # hub_manager stays a module global for the same reason as the composites above:
 # _make_context reads it via globals() on every dispatch so tests that monkeypatch
-# mcp_server.server.hub_manager keep working (ctx.fns.hub_manager).
-from .hub import hub_manager  # noqa: F401
-from .hub_dashboard import hub_dashboard
+# mcp_server.server.hub_manager keep working (ctx.fns.hub_manager). It is the
+# selector, which routes to the shared hub daemon or the in-process manager
+# (STM32_GDB_MCP_HUB_MODE) on first hub use.
+from .hub_remote import hub_manager  # noqa: F401
 
 # file_issue stays a module global for the same reason as the composites above.
 from .issue_reporter import file_issue  # noqa: F401

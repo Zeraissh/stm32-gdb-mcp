@@ -423,9 +423,10 @@ def _session_rows(ctx: ToolContext, manager):
         "Starts (or stops) a local, read-only web dashboard for the hub: every port's power and "
         "data-line state, live voltage/current with a few minutes of history, which debug session "
         "sits on which channel (and whether its GDB server is live), and a timeline of hub actions. "
-        "Serves on 127.0.0.1 only and returns the URL. The dashboard samples the hub from inside "
-        "this server, so it never fights the agent for the control port -- but while it runs, no "
-        "OTHER process can open the hub; state=off hands the port back."
+        "Serves on 127.0.0.1 only and returns the URL. When the shared hub daemon owns the hub "
+        "(the default with several MCP servers on a rack) this returns the daemon's always-on "
+        "page, which also lists every connected server. In local mode the page runs inside this "
+        "server and, while it runs, no OTHER process can open the hub; state=off stops it."
     ),
     inputSchema={
         "type": "object",
@@ -443,25 +444,44 @@ def hub_dashboard_tool(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     state = arguments.get("state", "on")
     if state not in ("on", "off"):
         return [content_error("state must be 'on' or 'off'", code="invalid_argument")]
-    if state == "off":
-        return [content_success(hub_dashboard.stop())]
     try:
         manager = _manager(ctx)
+        # With the shared daemon the dashboard already runs there, showing every
+        # server's view; starting a second, per-server page would only show ours.
+        shared = getattr(manager, "dashboard_info", None)
+        if shared is not None:
+            info = shared()
+            if state == "off":
+                info["message"] = ("The shared daemon's dashboard stays up while the daemon runs; "
+                                   "stop the daemon with: python -m mcp_server.hub_daemon stop")
+                return [content_success(info)]
+            if arguments.get("open_browser"):
+                info["browser_opened"] = _open_browser(info["url"])
+            info["message"] = f"Hub dashboard (shared daemon) at {info['url']}"
+            return [content_success(info)]
+        if state == "off":
+            return [content_success(hub_dashboard.stop())]
         info = hub_dashboard.start(
             manager, sessions=_session_rows(ctx, manager),
             port=int(arguments.get("port", DEFAULT_PORT)),
             interval_sec=float(arguments.get("interval_sec", DEFAULT_INTERVAL_SEC)),
         )
+    except (HubUnavailableError, HubBusyError, HubGuardError) as exc:
+        return _error(exc)
     except OSError as exc:
         return [content_error(f"could not open the dashboard port: {exc}", code="dashboard_port_unavailable",
                               suggested_next_actions=["hub(action=dashboard, port=0)"])]
     except (TypeError, ValueError) as exc:
         return [content_error(str(exc), code="invalid_argument")]
     if arguments.get("open_browser"):
-        import webbrowser
-        try:
-            info["browser_opened"] = bool(webbrowser.open(info["url"]))
-        except Exception:  # noqa: BLE001 - a headless host simply has no browser
-            info["browser_opened"] = False
+        info["browser_opened"] = _open_browser(info["url"])
     info["message"] = f"Hub dashboard running at {info['url']}"
     return [content_success(info, suggested_next_actions=["hub(action=dashboard, state=off)"])]
+
+
+def _open_browser(url: str) -> bool:
+    import webbrowser
+    try:
+        return bool(webbrowser.open(url))
+    except Exception:  # noqa: BLE001 - a headless host simply has no browser
+        return False

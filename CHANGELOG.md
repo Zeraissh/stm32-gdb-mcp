@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Shared hub daemon for multi-server racks / 多 MCP 服务器共享的 Hub 守护进程
+
+- With several MCP servers on one rack (one IDE window per board), the first one to touch
+  the hub used to lock the others out. The first hub call now spawns a **hub daemon**
+  (`python -m mcp_server.hub_daemon`) that owns the hub; every server forwards to it
+  through `RemoteHubManager`, which keeps `HubManager`'s surface so every hub tool,
+  `reset_target(strategy="cold")` and the recovery ladder work unchanged. Reads are
+  shared; writes go through one daemon-wide lock; each write carries its caller's guard
+  mode; audit entries name the server; what a server switched off is restored when it
+  exits or its PID disappears; the dashboard moves into the daemon and lists the
+  connected servers. `STM32_GDB_MCP_HUB_MODE=auto|daemon|local` selects (default auto,
+  falling back to in-process when the extra is absent or the daemon cannot start).
+  Loopback only, token-authenticated writes. On Windows the job object now allows a
+  child that explicitly requests breakaway, so the daemon outlives the server that
+  spawned it. /
+  多个 MCP 服务器共用一个 Hub 时，第一次调用 hub 会拉起守护进程独占 Hub，各服务器通过
+  `RemoteHubManager` 转发调用（接口与 `HubManager` 一致，上层工具无需改动）。读共享、写串行、
+  guard 模式随调用方、审计记录调用方、服务器退出或进程消失时恢复其断开的通道，看板随守护进程
+  显示所有已连接的服务器。由 `STM32_GDB_MCP_HUB_MODE` 选择模式。
+
 ### Hub dashboard / Hub 数据看板
 
 - New `hub(action=dashboard)` serves a **read-only live web page** on `127.0.0.1`

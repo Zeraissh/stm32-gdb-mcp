@@ -48,6 +48,7 @@ MAX_EVENTS = 200
 # rack's state to the network, and the Host check below keeps a malicious web
 # page from reading it through DNS rebinding.
 _ALLOWED_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
+_MAX_RPC_BODY = 1 << 20
 
 
 def _load_page() -> bytes:
@@ -62,6 +63,8 @@ class HubDashboard:
         self._lock = threading.Lock()
         self._manager: Any = None
         self._sessions: Callable[[], list[dict]] = list
+        self._extra_state: Callable[[], dict] | None = None
+        self.last_viewed: float | None = None
         self._interval = DEFAULT_INTERVAL_SEC
         self._history_len = DEFAULT_HISTORY
         self._httpd: ThreadingHTTPServer | None = None
@@ -92,7 +95,9 @@ class HubDashboard:
     def start(self, manager: Any, sessions: Callable[[], list[dict]] | None = None,
               host: str = "127.0.0.1", port: int = DEFAULT_PORT,
               interval_sec: float = DEFAULT_INTERVAL_SEC,
-              history: int = DEFAULT_HISTORY) -> dict:
+              history: int = DEFAULT_HISTORY,
+              rpc: Callable[[bytes, Any], tuple[int, dict]] | None = None,
+              extra_state: Callable[[], dict] | None = None) -> dict:
         """Start serving, or re-point a running dashboard at new settings.
 
         A running dashboard keeps its URL (and the history it has gathered) when
@@ -105,6 +110,7 @@ class HubDashboard:
         with self._lock:
             self._manager = manager
             self._sessions = sessions or list
+            self._extra_state = extra_state
             self._interval = interval
             if self._httpd is not None and port in (0, self._requested_port, self._httpd.server_address[1]):
                 return self.status()
@@ -115,6 +121,9 @@ class HubDashboard:
             self._reset_state()
             self._httpd = self._bind(host, port)
             self._httpd.dashboard = self  # type: ignore[attr-defined]
+            # POST /rpc is mounted only by the hub daemon; a plain dashboard has
+            # no write path at all.
+            self._httpd.rpc = rpc  # type: ignore[attr-defined]
             self._requested_port = port
             self._started_at = self._clock()
             self._stop = threading.Event()
@@ -149,6 +158,7 @@ class HubDashboard:
             self._requested_port = None
         if httpd is not None:
             httpd.dashboard = None  # type: ignore[attr-defined]
+            httpd.rpc = None  # type: ignore[attr-defined]
             httpd.shutdown()
             httpd.server_close()
         # The sampler may be blocked inside describe() behind a power cycle that
@@ -232,7 +242,8 @@ class HubDashboard:
                 detail = f"{entry.get('action')} -> {entry.get('decision')}"
                 if entry.get("acknowledged") is False:
                     detail += " (NOT acknowledged)"
-                self._event(now, "audit", entry.get("channel"), detail, reason=entry.get("reason"))
+                self._event(now, "audit", entry.get("channel"), detail, reason=entry.get("reason"),
+                            client=entry.get("client"))
             self._audit_seen = len(audit)
         self._refresh_sessions()
 
@@ -250,8 +261,16 @@ class HubDashboard:
         self._events.append(entry)
 
     def state(self) -> dict:
+        extra: dict = {}
+        if self._extra_state is not None:
+            try:
+                extra = dict(self._extra_state())
+            except Exception:  # noqa: BLE001 - extra context must not break the page
+                extra = {}
         with self._lock:
+            self.last_viewed = self._clock()
             return {
+                **extra,
                 "now": round(self._clock(), 3),
                 "started_at": self._started_at,
                 "interval_sec": self._interval,
@@ -317,6 +336,24 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(200, body, "application/json")
         else:
             self._send(404, b"not found\n", "text/plain; charset=utf-8")
+
+    def do_POST(self) -> None:  # noqa: N802 - stdlib naming
+        if not self._host_ok():
+            self._send(403, b"forbidden host\n", "text/plain; charset=utf-8")
+            return
+        rpc = getattr(self.server, "rpc", None)
+        if self.path.split("?", 1)[0] != "/rpc" or rpc is None:
+            self._send(404, b"not found\n", "text/plain; charset=utf-8")
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = -1
+        if not 0 <= length <= _MAX_RPC_BODY:
+            self._send(413, b'{"ok": false}', "application/json")
+            return
+        status, payload = rpc(self.rfile.read(length), self.headers)
+        self._send(status, json.dumps(payload, default=str).encode("utf-8"), "application/json")
 
 
 hub_dashboard = HubDashboard()

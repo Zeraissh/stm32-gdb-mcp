@@ -102,6 +102,10 @@ def _install_windows_job() -> str:
             ]
 
         JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+        # Lets a child that EXPLICITLY asks (CREATE_BREAKAWAY_FROM_JOB) leave the
+        # job. Only the shared hub daemon does: it must outlive this server, since
+        # other servers on the rack are using it. Every other child still dies here.
+        JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x0800
         JobObjectExtendedLimitInformation = 9
 
         job = kernel32.CreateJobObjectW(None, None)
@@ -109,7 +113,7 @@ def _install_windows_job() -> str:
             return f"unavailable (CreateJobObject failed: {ctypes.get_last_error()})"
 
         info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
-        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK
         if not kernel32.SetInformationJobObject(
             job, JobObjectExtendedLimitInformation, ctypes.byref(info), ctypes.sizeof(info)
         ):

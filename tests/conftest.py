@@ -12,9 +12,18 @@ New tests should prefer these; scenario-specific fakes (odd MI payloads, error
 injection) stay local to their test by design.
 """
 
+import os
+import tempfile
+
 import pytest
 
-from mcp_server.debug_profile import deep_merge
+# The suite never talks to a real hub daemon: hub tests drive fakes in-process.
+# Tests of the daemon path opt back in explicitly.
+os.environ.setdefault("STM32_GDB_MCP_HUB_MODE", "local")
+# ...and if one is ever spawned by mistake, it lands here, not in the user's dir.
+os.environ.setdefault("STM32_GDB_MCP_HUB_DAEMON_DIR", tempfile.mkdtemp(prefix="hub-daemon-test-"))
+
+from mcp_server.debug_profile import deep_merge  # noqa: E402
 
 
 class FakeGdb:

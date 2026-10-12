@@ -203,22 +203,54 @@ When it works, the result carries `channel_source: "map_label"` — check that f
 than assuming the right port was chosen. /
 生效时结果会带 `channel_source: "map_label"`——请以该字段为准，不要想当然认为选对了端口。
 
+#### Several MCP servers on one rack / 多个 MCP 服务器共用一个 Hub
+
+The hub's control port opens in one process at a time, so by default the first hub call
+spawns a small **hub daemon** that owns it, and every MCP server talks to that instead.
+Nothing changes in how you call `hub(...)`. /
+Hub 控制口同一时间只能被一个进程打开。因此默认情况下，第一次调用 hub 会拉起一个**Hub 守护进程**
+独占它，所有 MCP 服务器都改为与守护进程通信；`hub(...)` 的用法完全不变。
+
+- Reads are shared; writes are serialized by one daemon-wide lock, so a power cycle never
+  interleaves with another server's switch. / 读取共享；写操作由守护进程内一把全局锁串行执行，
+  电源循环不会与其他服务器的开关交错。
+- Each server's **guard mode stays its own** (`guard: allow` on a CI server does not relax
+  anyone else), and the audit trail records which server did what. / 每个服务器的 **guard
+  模式各自独立**，审计日志记录是哪台服务器执行的操作。
+- What a server switched off is restored when it exits — or when the daemon finds its PID
+  gone. / 某服务器断开的电源/数据线，在它退出（或守护进程发现其进程已消失）时自动恢复。
+- The daemon exits after 10 idle minutes unless it still owes a channel. /
+  空闲 10 分钟且无待恢复通道时，守护进程自动退出。
+
+```bash
+python -m mcp_server.hub_daemon status     # URL, version, connected servers
+python -m mcp_server.hub_daemon stop       # restores what clients switched off
+python -m mcp_server.hub_daemon serve --config bench_hub.yaml   # run it yourself, foreground
+```
+
+`STM32_GDB_MCP_HUB_MODE=auto` (default) uses the daemon and falls back to in-process when
+the `[hub]` extra is absent or the daemon cannot start; `daemon` never falls back; `local`
+is the old single-process behaviour. Everything binds to `127.0.0.1`; writes need the token
+in the per-user state file. Not yet: cross-server live-session interlock (each server still
+only sees its own GDB sessions), per-channel write locks. /
+`STM32_GDB_MCP_HUB_MODE=auto`（默认）使用守护进程，未安装 `[hub]` extra 或守护进程无法启动时
+退回进程内模式；`daemon` 不回退；`local` 为原来的单进程行为。全部仅监听 `127.0.0.1`，写操作需
+要用户私有状态文件中的 token。尚未实现：跨服务器的活跃会话互锁（每个服务器仍只看到自己的 GDB
+会话）、按通道加锁。
+
 #### Live dashboard / 实时看板
 
 ```text
 hub(action=dashboard)                 # -> data.url, e.g. http://localhost:8765/
-hub(action=dashboard, state=off)      # stop and hand the hub port back
 ```
 
-A read-only page on `127.0.0.1`: per-port power/data state, live V/I/P with a
-1/5/15-minute history, which session is on which channel (and whether its GDB server
-is live), and a timeline of hub actions. It samples through the server's own hub
-connection, so it never competes with the agent; while it runs, no *other* process can
-open the hub. Without an MCP server: `python -m mcp_server.hub_dashboard --config bench_hub.yaml`. /
-只读页面，仅监听 `127.0.0.1`：各端口电源/数据线状态、电压电流功率及 1/5/15 分钟历史、
-会话与通道对应关系（及其 GDB 是否运行）、hub 操作时间线。采样复用服务器自身的 Hub 连接，
-不与智能体争抢；运行期间其他进程无法打开 Hub。没有 MCP 服务器时可独立运行：
-`python -m mcp_server.hub_dashboard --config bench_hub.yaml`。
+A read-only page: per-port power/data state, live V/I/P with a 1/5/15-minute history
+(power-off spans shaded), and a timeline of hub actions. With the daemon it is the
+daemon's page, showing every connected MCP server and what each still owes; in `local`
+mode it runs inside this server (`state=off` stops it) and lists its debug sessions. /
+只读页面：各端口电源/数据线状态、电压电流功率及 1/5/15 分钟历史（断电区间灰色）、hub 操作时间线。
+使用守护进程时就是守护进程的页面，显示所有已连接的 MCP 服务器及其待恢复通道；`local` 模式下
+在本服务器内运行（`state=off` 停止），并列出本服务器的调试会话。
 
 ## Response shape / 响应结构
 
