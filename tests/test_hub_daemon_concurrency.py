@@ -119,14 +119,16 @@ def test_holders_describe_what_is_running():
 def test_cycles_on_different_channels_overlap(daemon):
     a, b = _server(daemon, "A"), _server(daemon, "B")
     started = time.monotonic()
-    first = _in_thread(lambda: a.power_cycle(1, off_ms=400, settle_ms=0, confirm=True))
-    second = _in_thread(lambda: b.power_cycle(2, off_ms=400, settle_ms=0, confirm=True))
+    # 1 s windows: back to back is >= 2.0 s, overlapping ~1.0 s, so 1.6 s separates
+    # the two with room for a slow CI runner's per-request overhead.
+    first = _in_thread(lambda: a.power_cycle(1, off_ms=1000, settle_ms=0, confirm=True))
+    second = _in_thread(lambda: b.power_cycle(2, off_ms=1000, settle_ms=0, confirm=True))
     (r1, e1), (r2, e2) = first(), second()
     elapsed = time.monotonic() - started
 
     assert e1 is None and e2 is None
     assert r1["action"] == r2["action"] == "power_cycle"
-    assert elapsed < 0.75, f"cycles on channels 1 and 2 ran back to back ({elapsed:.2f}s)"
+    assert elapsed < 1.6, f"cycles on channels 1 and 2 ran back to back ({elapsed:.2f}s)"
     assert "queued_ms" not in r1 and "queued_ms" not in r2
 
 

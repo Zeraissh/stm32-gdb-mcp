@@ -235,9 +235,11 @@ def test_a_write_that_waits_too_long_is_refused_and_names_the_holder(daemon, fak
 
 
 def test_a_write_that_queued_reports_how_long(daemon):
+    client = _server(daemon, "ci", guard="allow")
+    client.channels()  # connect and push the spec first, so only the write itself can queue
     token = daemon.locks.acquire({1}, {"client": "bench-B", "method": "power_cycle"}, timeout=1)
     threading.Timer(0.3, daemon.locks.release, args=(token,)).start()
-    result = _server(daemon, "ci", guard="allow").power(1, "off")
+    result = client.power(1, "off")
     assert result["applied"] is True
     assert result["queued_ms"] >= 200
 

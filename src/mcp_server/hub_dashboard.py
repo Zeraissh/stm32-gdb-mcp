@@ -173,7 +173,10 @@ class HubDashboard:
         host, port = str(self._httpd.server_address[0]), self._httpd.server_address[1]
         return {
             "running": True,
-            "url": f"http://{'localhost' if host in ('127.0.0.1', '::1') else host}:{port}/",
+            # The literal address we bound, never "localhost": Windows resolves that
+            # to ::1 first and only falls back to 127.0.0.1 after the refused IPv6
+            # connect has retried for ~2 s -- on EVERY hub daemon RPC.
+            "url": f"http://{f'[{host}]' if ':' in host else host}:{port}/",
             "port": port,
             "interval_sec": self._interval,
             "history_samples": self._history_len,

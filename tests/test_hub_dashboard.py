@@ -113,7 +113,8 @@ def test_hub_failure_is_shown_not_raised_and_recovery_is_logged(dashboard, hub_m
 def test_http_serves_page_and_state(dashboard, hub_manager):
     info = dashboard.start(hub_manager, port=0, interval_sec=0.2)
     assert info["running"] is True
-    assert info["url"].startswith("http://localhost:")
+    # Not "localhost": on Windows that costs a ~2 s IPv6 retry per request.
+    assert info["url"].startswith("http://127.0.0.1:")
 
     status, ctype, body = _get(info["port"], "/")
     assert status == 200 and ctype.startswith("text/html")
@@ -159,7 +160,7 @@ def test_tool_starts_and_stops_the_dashboard(hub_session):
 
     assert payload["ok"] is True
     port = payload["data"]["port"]
-    assert payload["data"]["url"] == f"http://localhost:{port}/"
+    assert payload["data"]["url"] == f"http://127.0.0.1:{port}/"
 
     hub_dashboard.poll_once()
     rows = hub_dashboard.state()["sessions"]

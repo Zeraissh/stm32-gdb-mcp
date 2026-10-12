@@ -259,7 +259,7 @@ in the per-user state file. /
 #### Live dashboard / 实时看板
 
 ```text
-hub(action=dashboard)                 # -> data.url, e.g. http://localhost:8765/
+hub(action=dashboard)                 # -> data.url, e.g. http://127.0.0.1:8765/
 ```
 
 A read-only page: per-port power/data state, live V/I/P with a 1/5/15-minute history
