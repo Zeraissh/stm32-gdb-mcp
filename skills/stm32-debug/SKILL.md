@@ -1,6 +1,6 @@
 ---
 name: stm32-debug
-description: Debug STM32 firmware on real hardware through stm32-gdb-mcp. Use for flash, execution control, memory/register/RTOS inspection, HardFaults, hangs, and reproducible hardware bugs. / 通过 stm32-gdb-mcp 在真实硬件上调试 STM32，适用于烧录、执行控制、内存/寄存器/RTOS 检查、HardFault、卡死和可复现硬件故障。
+description: Debug STM32 firmware on real hardware through stm32-gdb-mcp. Use for flash, execution control, memory/register/RTOS inspection, HardFaults, hangs, reproducible hardware bugs, and programmable-USB-hub work (wedged probes, cold boot, rack channels, power measurement). / 通过 stm32-gdb-mcp 在真实硬件上调试 STM32，适用于烧录、执行控制、内存/寄存器/RTOS 检查、HardFault、卡死、可复现硬件故障，以及可编程 USB Hub 相关操作（探针卡死、冷启动、机架通道、功耗测量）。
 ---
 
 # STM32 hardware debugging / STM32 硬件调试
@@ -76,6 +76,94 @@ only for one detected probe. Only call `flash_and_run` after flashing is explici
 只有明确要烧录时才调用 `flash_and_run`。
 
 See / 参见：`scenarios/bringup.json`。
+
+## Programmable USB hub (optional) / 可编程 USB Hub（可选）
+
+Applies only with the `[hub]` extra and a hub configured in the profile. Start with the
+read-only `hub(action=describe)` (also reachable through `call_read`): it reports each port's
+power/data state, voltage/current on ADC models, the mapped labels, and recent hub actions.
+
+仅在安装 `[hub]` extra 且 profile 中配置了 Hub 时适用。先调用只读的 `hub(action=describe)`
+（也可经 `call_read` 调用）：返回各端口电源/数据线状态、带 ADC 型号的电压电流、映射标签和最近操作。
+
+**Which channel is this board? / 当前板卡在哪个通道？**
+
+- One board: `debug_profile(action=set, hub={"channel": N})`. A rack: one YAML with
+  `hub.map: {N: {label: <session name>}}`, loaded into **every** session with
+  `debug_config(action=load, path=..., session="<name>")`. A label matches the debug
+  session name exactly; the profile is per-session and in-memory. /
+  单板用 `hub.channel`；机架用 `hub.map`，label 必须与会话名完全一致，且要给**每个**会话分别加载
+  （profile 按会话隔离、只在内存中）。
+- `power`, `data`, `cycle`, and `measure` results carry `channel_source` (`argument`,
+  `profile`, `map_label`, `map_serial`). Check it instead of assuming the right port was
+  chosen. / 这几个操作的结果都带 `channel_source`，以它为准，不要想当然。
+- `hub(action=discover, apply=true)` maps probes to channels by toggling data lines. It is
+  slow (one `detect_probe` per channel) and refuses while a session is live: with the
+  shared hub daemon, any session on the rack; in `local` mode, this one. Under the daemon it
+  also holds the whole rack while it runs. /
+  `discover` 逐通道切数据线来映射探针：很慢，有活跃会话时拒绝运行（守护进程模式下指机架上任何会话，
+  `local` 模式下指当前会话）；守护进程模式下运行期间占用整个机架。
+
+**Wedged probe / 探针卡死**
+
+- Use `recover_session`. With a hub it escalates on its own: soft retries → toggle the
+  port's data lines → power-cycle the port (`deep=true` adds a long power cycle). It only
+  escalates for `probe_busy`, `probe_unavailable`, `target_unresponsive`,
+  `connection_lost`, and `target_unreachable`. Read the returned `steps`: they say what was
+  physically done to the board. Never hard-kill OpenOCD. /
+  使用 `recover_session`：有 Hub 时会自动逐级升级（软重试 → 切数据线 → 端口断电重启，`deep=true`
+  再加一次长时间断电），只对上述错误码升级。返回的 `steps` 写明了对硬件实际做了什么。不要强杀 OpenOCD。
+
+**Cold boot / 冷启动**
+
+- `reset_target(strategy="cold")` stops the session, cuts the port's power, restores it,
+  and resets. Check `browned_out` in the result. `false` means the rail never collapsed
+  (bulk capacitance, a coin cell, another supply), so the board did **not** cold-boot:
+  retry with a longer `off_ms` or find the second supply. `null` means no load was
+  measured before the cut (empty port, deep sleep, or a transient current-sense reading of
+  0 mA); re-read and compare with a loaded channel before concluding anything. /
+  `reset_target(strategy="cold")` 会先停会话再断电、上电、复位。检查 `browned_out`：`false` 表示电源轨
+  没掉下去、板子**并未**冷启动，应加长 `off_ms` 或排查其他供电；`null` 表示断电前测不到负载（空端口、
+  深度休眠或电流采样暂时读 0），先复测并与有负载的通道对比，再下结论。
+
+**Cutting power or data by hand / 手动断电或断数据线**
+
+- `hub(action=power|data|cycle)` needs `confirm=true` in the default `confirm` guard mode,
+  and in **every** mode while a live GDB server sits on that channel. With the shared hub
+  daemon that covers every session on every MCP server on the rack, and the refusal names
+  whose session it is. Do not add `confirm=true` reflexively to get past that refusal:
+  cutting power mid-flash can brick a board. Ask the user. /
+  默认 `confirm` 模式下必须传 `confirm=true`；该通道上有活跃 GDB 时任何模式都必须。共享守护进程会检查
+  机架上所有 MCP 服务器的会话，拒绝信息会写明是谁。不要为了绕过拒绝条件反射地加 `confirm=true`：
+  烧录中途断电可能把板子变砖，应询问用户。
+- `hub(action=data, exclusive=true)` leaves exactly one probe enumerated. If the result
+  is the `hub_isolation_incomplete` error, isolation did not take: do not start a session
+  on the strength of it. /
+  `exclusive=true` 只保留一个探针可见；若返回 `hub_isolation_incomplete`，说明隔离没成功，不能据此启动会话。
+- Flashing one board on a rack needs no isolation: `flash_and_run(file_path=...,
+  hub_channel=N)` pins the session to that channel's probe by USB position. /
+  在机架上烧录某一块板不需要隔离：`flash_and_run(file_path=..., hub_channel=N)` 按 USB 位置锁定该通道的探针。
+
+**Power evidence / 功耗证据**
+
+- `hub(action=measure, duration_sec=..., interval_sec=...)` samples the port's voltage and
+  current while the core runs, with no SWD traffic. Use it to verify low-power claims: an
+  MCU that entered Stop and one that only thinks it did look identical over SWD and differ
+  by orders of magnitude here. /
+  `hub(action=measure)` 在内核运行时采样端口电压电流，不产生 SWD 流量。用它验证低功耗：真正进入 Stop
+  和"以为进入了"在 SWD 上看起来一样，在这里电流相差几个数量级。
+
+**Several MCP servers on one rack / 多个 MCP 服务器共用一个 Hub**
+
+- With the `[hub]` extra installed, a shared hub daemon owns the hub; nothing changes in how
+  you call `hub(...)`. `hub_busy` means another server's write held that channel for the
+  whole `max_wait_sec`, so yours was **not** executed. Re-check `hub(action=describe)` and
+  retry only if the action is still wanted. /
+  装了 `[hub]` extra 时由共享守护进程独占 Hub，调用方式不变。`hub_busy` 表示另一服务器的写操作
+  占住了该通道直到超时，你的操作**没有**执行；先 `describe` 复查，仍需要时再重试。
+- `hub(action=dashboard)` returns the URL of a read-only live page (per-port V/I history,
+  every server's sessions, a timeline of hub actions) for the human to watch. /
+  `hub(action=dashboard)` 返回只读实时看板的地址（各端口电压电流历史、所有服务器的会话、操作时间线），供用户查看。
 
 ## HardFault or crash / HardFault 或崩溃
 
