@@ -1,5 +1,7 @@
 # STM32 GDB MCP Server / STM32 GDB MCP 服务器
 
+<!-- mcp-name: io.github.Zeraissh/stm32-gdb-mcp -->
+
 An MCP server that lets an AI agent **debug STM32 firmware on real hardware** — drive
 GDB + OpenOCD/ST-Link/J-Link to flash, breakpoint, inspect memory/registers/RTOS, triage
 HardFaults, and profile — and get back **decoded, structured** evidence instead of raw GDB text.
