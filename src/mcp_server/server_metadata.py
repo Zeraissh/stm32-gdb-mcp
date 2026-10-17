@@ -67,9 +67,9 @@ Key rules (the target must cooperate):
   in-band way to force a re-enumeration - and hub(action=data) un-enumerates a probe
   without rebooting its board. Called directly, both need confirm=true - always in the
   default confirm guard mode, and in ANY mode while THIS session's own GDB server is live
-  on that port. That check sees only the calling session, so on a rack it will not notice
-  another session mid-flash on the same channel; isolate first with
-  hub(action=data, exclusive=true).
+  on that port. With the shared hub daemon (the default when the [hub] extra is installed)
+  that check covers every registered session on every MCP server on the rack; in local mode
+  it sees only the calling session, so isolate first with hub(action=data, exclusive=true).
   reset_target(strategy="cold") and recover_session's hub ladder are the one deliberate
   exception: they cut power with no confirm argument, because naming them is the
   confirmation, and they stop the session before the cut. Every decision is audited

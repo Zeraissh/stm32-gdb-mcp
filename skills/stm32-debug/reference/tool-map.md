@@ -85,6 +85,26 @@ must be preserved or capture rate guaranteed.
 `run_for_duration(..., sample=...)` 是尽力而为的调试器轮询，并非高速追踪。需要保持严格时序或
 保证采样率时，请使用 SWO 或固件环形缓冲。
 
+## Programmable USB hub (optional `[hub]` extra) / 可编程 USB Hub（可选 `[hub]` extra）
+
+- `hub(action=describe|measure)`: read-only; also reachable through `call_read` /
+  只读，也可经 `call_read` 调用
+- `hub(action=power|data|cycle)`: cut or restore a port's power or USB2 data lines; needs
+  `confirm=true` in the default guard mode, and always while a live GDB server is on that
+  channel / 断开或恢复端口电源、USB2 数据线；默认模式需 `confirm=true`，该通道有活跃 GDB 时必须
+- `hub(action=discover, apply=true)`: map probes to channels / 映射探针与通道
+- `hub(action=dashboard)`: URL of a read-only live dashboard / 只读实时看板地址
+- `recover_session(escalate=true, deep=false)`: soft retry → data toggle → power cycle /
+  软重试 → 切数据线 → 断电重启
+- `reset_target(strategy="cold")`: power-cycle cold boot; check `browned_out` /
+  断电冷启动，检查 `browned_out`
+- `flash_and_run(file_path=..., hub_channel=N)`: flash one board on a rack without isolating
+  the others / 在机架上烧录单块板，无需隔离其他板
+- `debug_profile(action=set, hub={...})`, `debug_config(action=load, session=...)`: per-session
+  `hub.channel` / `hub.map` / 按会话配置通道或映射
+- Shell: `python -m mcp_server.hub_daemon status|stop` for the shared hub daemon /
+  命令行查看或停止共享守护进程
+
 ## Safety / 安全
 
 - `write_guard(action=policy|audit)`

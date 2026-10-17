@@ -1,5 +1,23 @@
 # Changelog / 更新日志
 
+## [Unreleased]
+
+### Hub guidance in the stm32-debug skill / stm32-debug skill 补充 Hub 用法
+
+- `skills/stm32-debug/SKILL.md` gains a "Programmable USB hub" section covering:
+  - channel selection (`hub.channel`, per-session `hub.map` labels, `channel_source`);
+  - wedged-probe recovery via `recover_session`'s escalation ladder;
+  - cold boot and reading `browned_out`;
+  - manual power/data cuts and the live-session interlock;
+  - flashing one board on a rack with `hub_channel`;
+  - power measurement for low-power claims;
+  - the shared hub daemon and the dashboard.
+
+  `reference/tool-map.md` gets a matching hub section, and the skill description now names hub work so the skill loads for it. /
+  `stm32-debug` skill 新增 Hub 一节，涵盖通道选择、探针卡死恢复、冷启动、手动断电与互锁、机架单板烧录、功耗测量、共享守护进程与看板；工具索引同步补充。
+- The server's always-on instructions no longer say the live-session interlock sees only the calling session; with the shared hub daemon it covers every server on the rack. /
+  服务器常驻说明修正：共享守护进程模式下，互锁会检查机架上所有服务器的会话。
+
 ## [0.15.0] - 2026-10-12
 
 ### Per-channel hub write locks and discovery leases / Hub 按通道加锁与 discover 租约
