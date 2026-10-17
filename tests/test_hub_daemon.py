@@ -322,11 +322,14 @@ def test_spawned_daemon_end_to_end(tmp_path, monkeypatch):
         assert "hub daemon pid" in status.stdout
     finally:
         rpc_call(url, token, "shutdown", timeout=5)
+        # The daemon removes its state file before its lock file, so wait for both.
+        lock = os.path.join(str(tmp_path), "daemon.lock")
         deadline = time.monotonic() + 15
-        while daemon_module.read_state() is not None and time.monotonic() < deadline:
+        while ((daemon_module.read_state() is not None or os.path.exists(lock))
+               and time.monotonic() < deadline):
             time.sleep(0.1)
     assert daemon_module.read_state() is None
-    assert not os.path.exists(os.path.join(str(tmp_path), "daemon.lock"))
+    assert not os.path.exists(lock)
 
 
 def test_rpc_never_builds_a_tls_context(daemon, monkeypatch):
