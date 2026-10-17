@@ -175,7 +175,9 @@ def load_symbols(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     description="Flashes a compiled firmware binary to the target. Accepts GCC .elf or Keil "
                 ".axf. By default it then resets and RUNS the firmware (Keil-style 'Load + "
                 "Run'). Pass reset_run=false to flash only (e.g. to set breakpoints before "
-                "the firmware starts).",
+                "the firmware starts). Refuses (elf_layout_unsupported) an image GDB would "
+                "flash incompletely, such as a Keil ARMCC5 AXF whose RW initializer lies "
+                "outside its segment; flash its fromelf BIN instead.",
     inputSchema={
         "type": "object",
         "properties": {

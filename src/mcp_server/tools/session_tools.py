@@ -2,6 +2,7 @@
 
 from mcp.types import TextContent, Tool
 
+from .. import gdb_manager as gdb_manager_module
 from ..debug_session import teardown_debug_session
 from ..error_taxonomy import classify_error, refine_target_unreachable
 from ..reliability import retry_call
@@ -232,8 +233,14 @@ def start_debug_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
         except Exception:
             pass
         ctx.gdb_manager.stop()
+    # Explicit server_args mean "start it this way": adopting a server already on
+    # the port would silently drop them (issue #47), so that is refused instead.
+    adopt = "server_args" not in arguments
     try:
-        port = retry_call(lambda: ctx.gdb_manager.start(server_type, args), attempts=3, backoff_base=0.8)
+        port = retry_call(
+            lambda: ctx.gdb_manager.start(server_type, args, adopt=adopt),
+            attempts=3, backoff_base=0.8,
+        )
         ctx.gdb_client.start_gdb()
         resp = ctx.gdb_client.connect("localhost", port)
     except Exception as exc:
@@ -250,6 +257,17 @@ def start_debug_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
         message = str(exc)[-1000:]
         if classification.get("hint"):
             message = f"{message} — {classification['hint']}"
+        # Confirm the teardown instead of assuming it: a server that outlives a
+        # failed start is what the next retry would otherwise run into (issue #47).
+        # start() tears down its own failed spawn, so the port comes from the
+        # manager's record of what it last stopped, never from an adopted server.
+        spawned_port = getattr(ctx.gdb_manager, "last_stopped_port", None)
+        server_still_listening = bool(spawned_port) and gdb_manager_module._port_accepts(spawned_port)
+        if server_still_listening:
+            message = (
+                f"{message} — The GDB server this attempt started is still listening on port "
+                f"{spawned_port} after teardown; a retry on this port will be refused until it exits."
+            )
         return [content_error(
             message,
             code=classification["code"],
@@ -261,6 +279,7 @@ def start_debug_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
                 },
                 "server_log": server_log[-4000:],
                 "retryable": classification["retryable"],
+                "server_still_listening": server_still_listening,
             },
             suggested_next_actions=classification["suggested_next_actions"],
         )]

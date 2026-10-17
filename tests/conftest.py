@@ -150,7 +150,7 @@ class FakeGdbManager:
     def is_alive(self):
         return self.alive
 
-    def start(self, server_type, args):
+    def start(self, server_type, args, adopt=True):
         self.started.append((server_type, list(args or [])))
         self.server_type = server_type
         self.alive = True

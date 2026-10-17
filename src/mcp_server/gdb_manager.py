@@ -22,6 +22,10 @@ def _port_accepts(port: int | None, timeout: float = 0.2) -> bool:
         return False
 
 
+class PortInUseError(RuntimeError):
+    """A server already listens on the port and the caller forbade adopting it."""
+
+
 class GdbServerManager:
     def __init__(self):
         self.process = None
@@ -32,6 +36,9 @@ class GdbServerManager:
         # True when the server on self.port was already running and we attached to
         # it instead of spawning our own. We do not own it, so we never stop it.
         self.adopted = False
+        # Port of the last server this manager spawned and stopped, so a caller can
+        # confirm the teardown really freed it (stop() clears self.port).
+        self.last_stopped_port: int | None = None
         # Cross-process probe lock held by THIS start() call.
         self._probe_lock: ProbeLock | None = None
 
@@ -44,7 +51,7 @@ class GdbServerManager:
                 if len(self.log_buffer) > 1000:
                     self.log_buffer.pop(0)
 
-    def start(self, server_type: str, args: list[str] | None = None):
+    def start(self, server_type: str, args: list[str] | None = None, adopt: bool = True):
         if self.process and self.process.poll() is None:
             raise RuntimeError("A GDB server is already running.")
 
@@ -82,6 +89,7 @@ class GdbServerManager:
 
         self.log_buffer = []
         self.adopted = False
+        self.last_stopped_port = None
 
         # A server already listening on our port is almost always a previous run
         # that outlived its client, or one the user started by hand. Spawning a
@@ -89,7 +97,21 @@ class GdbServerManager:
         # below can see the OLD server answer and call the start a success.
         # Adopt it instead; the probe is exclusive, so this is the only way to
         # reach the target short of killing a process we do not own.
+        #
+        # adopt=False is for a caller that passed explicit server_args: that means
+        # "start it THIS way", and adopting would silently discard exactly the args
+        # an error message just told it to retry with (issue #47).
         if _port_accepts(self.port):
+            if not adopt:
+                port = self.port
+                self.port = None
+                raise PortInUseError(
+                    f"A GDB server is already listening on port {port} and this session did "
+                    f"not start it; refusing to adopt it because explicit server_args were "
+                    f"passed and would not apply to a server someone else configured. Stop "
+                    f"that process (it may be left over from an earlier failed start), or "
+                    f"choose a different gdb_port."
+                )
             self.adopted = True
             self.process = None
             return self.port
@@ -232,6 +254,8 @@ class GdbServerManager:
         hard kill has been observed to wedge the ST-Link endpoint until the probe
         is physically unplugged.
         """
+        if self.process is not None:
+            self.last_stopped_port = self.port
         if self.process and self.process.poll() is None:
             if os.name == 'nt':
                 self.process.send_signal(signal.CTRL_BREAK_EVENT)
