@@ -186,3 +186,18 @@ def test_start_refuses_to_adopt_when_told_not_to(monkeypatch):
         assert manager.is_alive() is False
     finally:
         srv.close()
+
+
+def test_stop_records_the_port_of_the_server_it_spawned(monkeypatch):
+    from mcp_server.gdb_manager import GdbServerManager
+
+    class Proc:
+        def poll(self):
+            return 0
+
+    manager = GdbServerManager()
+    manager.process, manager.port = Proc(), 3353
+    manager.stop()
+
+    assert manager.port is None
+    assert manager.last_stopped_port == 3353

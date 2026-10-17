@@ -4220,8 +4220,7 @@ def test_failed_start_reports_a_server_that_outlives_teardown(monkeypatch):
     import mcp_server.server as server_module
 
     class FakeManager:
-        port = 3353
-        adopted = False
+        last_stopped_port = 3353
 
         def is_alive(self):
             return False
@@ -4230,7 +4229,7 @@ def test_failed_start_reports_a_server_that_outlives_teardown(monkeypatch):
             raise RuntimeError("Error: init mode failed (unable to connect to the target)")
 
         def stop(self):
-            pass  # the real stop() resets port; the probe below must not depend on it
+            pass
 
         def get_logs(self):
             return ""

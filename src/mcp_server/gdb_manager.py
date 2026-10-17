@@ -36,6 +36,9 @@ class GdbServerManager:
         # True when the server on self.port was already running and we attached to
         # it instead of spawning our own. We do not own it, so we never stop it.
         self.adopted = False
+        # Port of the last server this manager spawned and stopped, so a caller can
+        # confirm the teardown really freed it (stop() clears self.port).
+        self.last_stopped_port: int | None = None
         # Cross-process probe lock held by THIS start() call.
         self._probe_lock: ProbeLock | None = None
 
@@ -86,6 +89,7 @@ class GdbServerManager:
 
         self.log_buffer = []
         self.adopted = False
+        self.last_stopped_port = None
 
         # A server already listening on our port is almost always a previous run
         # that outlived its client, or one the user started by hand. Spawning a
@@ -250,6 +254,8 @@ class GdbServerManager:
         hard kill has been observed to wedge the ST-Link endpoint until the probe
         is physically unplugged.
         """
+        if self.process is not None:
+            self.last_stopped_port = self.port
         if self.process and self.process.poll() is None:
             if os.name == 'nt':
                 self.process.send_signal(signal.CTRL_BREAK_EVENT)

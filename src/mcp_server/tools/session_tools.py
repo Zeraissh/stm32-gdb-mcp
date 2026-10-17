@@ -249,10 +249,6 @@ def start_debug_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
         # The probe's measured VTREF is right there in the log — use it instead of
         # advising a power check the same payload disproves (issue #35).
         classification = refine_target_unreachable(classification, str(server_log))
-        spawned_port = (
-            None if getattr(ctx.gdb_manager, "adopted", False)
-            else getattr(ctx.gdb_manager, "port", None)
-        )
         for teardown in (ctx.gdb_client.stop_gdb, ctx.gdb_manager.stop):
             try:
                 teardown()
@@ -263,6 +259,9 @@ def start_debug_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
             message = f"{message} — {classification['hint']}"
         # Confirm the teardown instead of assuming it: a server that outlives a
         # failed start is what the next retry would otherwise run into (issue #47).
+        # start() tears down its own failed spawn, so the port comes from the
+        # manager's record of what it last stopped, never from an adopted server.
+        spawned_port = getattr(ctx.gdb_manager, "last_stopped_port", None)
         server_still_listening = bool(spawned_port) and gdb_manager_module._port_accepts(spawned_port)
         if server_still_listening:
             message = (
