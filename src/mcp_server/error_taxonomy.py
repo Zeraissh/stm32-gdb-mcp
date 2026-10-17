@@ -28,6 +28,17 @@ _ATTACH_FAILURE_MARKERS = (
 # ELF path too, and routing that to "install a missing host tool" sent agents
 # chasing their toolchain instead of their path (issue #21/#22).
 _RULES: list[tuple] = [
+    # Raised by elf_layout.check_flashable before any flash command runs (issue #64).
+    # First: the message names flash and load, which later rules key on.
+    (("unsupported load layout",), {
+        "code": "elf_layout_unsupported",
+        "retryable": False,
+        "suggested_next_actions": [
+            "convert with fromelf --bin and program the BIN at the flash base",
+            "load_symbols",
+        ],
+        "hint": None,
+    }),
     # Raised by GdbServerManager.start(adopt=False). First, because the message
     # quotes the caller's server_args, which can contain any other rule's needle.
     (("refusing to adopt",), {

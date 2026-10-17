@@ -7,6 +7,7 @@ from typing import Literal
 from pygdbmi.gdbcontroller import GdbController
 
 from . import dwt
+from .elf_layout import check_flashable
 from .fault_analysis import FAULT_REGISTER_ADDRESSES
 from .gdb_decode import (
     decode_backtrace,
@@ -482,6 +483,9 @@ class GdbClientManager:
         (or never reported terminal completion) raises instead of pretending
         success (issue #21).
         """
+        # Before anything touches the target: a layout GDB would flash incompletely
+        # is refused outright rather than reported as a good flash (issue #64).
+        check_flashable(filepath)
         responses = []
         responses.extend(self.load_symbols(filepath))
         # Registers as well as memory: after the last vFlashWrite GDB sets the PC to

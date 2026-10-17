@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Flashing / 烧录 (#64)
+
+- `flash_firmware` and `flash_and_run` refuse an ELF that GDB's `load` would flash
+  incompletely, before any command reaches the target, with the new code
+  `elf_layout_unsupported`. Keil ARMCC5 armlink puts the RW initializer bytes inside the
+  flash PT_LOAD while the section header names the SRAM run address. BFD then gives that
+  section LMA = VMA, so GDB wrote the 96 initializer bytes to SRAM, left that flash range
+  unprogrammed, and reported success. The error names the section and its intended flash
+  address, and points to `fromelf --bin` plus programming the BIN. GCC's `.data` layout
+  (its own PT_LOAD with vaddr in RAM, paddr in flash) is unaffected. /
+  `flash_firmware`、`flash_and_run` 在任何命令到达目标前，拒绝 GDB `load` 会烧不完整的
+  ELF（新错误码 `elf_layout_unsupported`）。Keil ARMCC5 的 RW 初始化数据会被 GDB 写进
+  SRAM 而非 flash，过去却报成功；现在报错并给出段名、应烧地址和 fromelf 转 BIN 的做法。
+  GCC 的 `.data` 布局不受影响。
+
 ### Session start / 会话启动 (#46, #47)
 
 - A healthy VTREF reading no longer becomes "the board IS powered". On many ST-Link V2
