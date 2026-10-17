@@ -1,6 +1,15 @@
 # Changelog / 更新日志
 
-## [Unreleased]
+## [0.15.1] - 2026-10-17
+
+### MCP Registry / MCP 注册表 (#68)
+
+- `server.json` describes the server for the official MCP Registry as
+  `io.github.Zeraissh/stm32-gdb-mcp` (PyPI package, stdio), and the README carries the
+  `mcp-name:` ownership marker the registry checks in the PyPI description. Publish steps
+  are in `docs/release.md`. / 新增 `server.json`，以 `io.github.Zeraissh/stm32-gdb-mcp`
+  登记到官方 MCP Registry；README 带上 Registry 校验所需的 `mcp-name:` 所有权标记；
+  发布步骤见 `docs/release.md`。
 
 ### Flashing / 烧录 (#64)
 
