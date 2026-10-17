@@ -178,13 +178,13 @@ def test_release_versions_are_consistent():
     registry = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert project["project"]["version"] == "0.15.0"
-    assert '__version__ = "0.15.0"' in package_init
+    assert project["project"]["version"] == "0.15.1"
+    assert '__version__ = "0.15.1"' in package_init
     # The plugin version moves with the server: marketplace.json ships the plugin
     # from source "./", so a server release users are meant to receive needs it.
-    assert plugin["version"] == "0.11.0"
+    assert plugin["version"] == "0.11.1"
     assert marketplace["plugins"][0]["version"] == plugin["version"]
-    assert "## [0.15.0] - 2026-10-12" in changelog
+    assert "## [0.15.1] - 2026-10-17" in changelog
     # server.json is the MCP Registry entry; it must point at the PyPI version being released,
     # and the README (the PyPI description) must carry the registry's ownership marker.
     assert registry["version"] == project["project"]["version"]
