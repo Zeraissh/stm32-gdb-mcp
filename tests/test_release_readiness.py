@@ -175,6 +175,8 @@ def test_release_versions_are_consistent():
     plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     marketplace = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    registry = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
     assert project["project"]["version"] == "0.15.0"
     assert '__version__ = "0.15.0"' in package_init
@@ -183,6 +185,12 @@ def test_release_versions_are_consistent():
     assert plugin["version"] == "0.11.0"
     assert marketplace["plugins"][0]["version"] == plugin["version"]
     assert "## [0.15.0] - 2026-10-12" in changelog
+    # server.json is the MCP Registry entry; it must point at the PyPI version being released,
+    # and the README (the PyPI description) must carry the registry's ownership marker.
+    assert registry["version"] == project["project"]["version"]
+    assert registry["packages"][0]["identifier"] == project["project"]["name"]
+    assert registry["packages"][0]["version"] == project["project"]["version"]
+    assert f"mcp-name: {registry['name']}" in readme
 
 
 def test_sdist_excludes_local_workspace_state():

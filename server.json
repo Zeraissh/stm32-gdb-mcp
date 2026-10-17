@@ -1,0 +1,32 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Zeraissh/stm32-gdb-mcp",
+  "title": "STM32 GDB Debugger",
+  "description": "Debug STM32 firmware on real hardware via GDB + OpenOCD/ST-Link/J-Link with decoded results.",
+  "repository": {
+    "url": "https://github.com/Zeraissh/stm32-gdb-mcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/Zeraissh/stm32-gdb-mcp",
+  "version": "0.15.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "stm32-gdb-mcp",
+      "version": "0.15.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "STM32_GDB_MCP_COMPACT",
+          "description": "Set to 1 to expose only the core tools; every other tool stays reachable through call(tool, args).",
+          "isRequired": false,
+          "default": "1"
+        }
+      ]
+    }
+  ]
+}

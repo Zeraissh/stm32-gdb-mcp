@@ -7,24 +7,25 @@ Use this checklist when cutting a versioned release.
 ## Before Tagging / 打标签前
 
 > **Bump every version FIRST, then run the gate.** The gate includes
-> `test_release_versions_are_consistent`, which pins all five version locations, so a
+> `test_release_versions_are_consistent`, which pins all six version locations, so a
 > gate run that happens before the bump proves nothing about what you are about to
 > ship. This is not hypothetical: during v0.7.0 the gate was run first, the bump then
 > missed `src/mcp_server/__init__.py`, and only CI caught it.
 > / **先改完所有版本号,再跑门禁。** 门禁包含 `test_release_versions_are_consistent`,
-> 它锁定全部五处版本位置;在改版本号之前跑门禁,对即将发布的内容没有任何证明力。
+> 它锁定全部六处版本位置;在改版本号之前跑门禁,对即将发布的内容没有任何证明力。
 > v0.7.0 就踩过:先跑门禁、后改版本,结果漏掉 `src/mcp_server/__init__.py`,靠 CI 才拦下。
 
 ### 1. Bump the versions / 先改版本号
 
-All five must agree, and `test_release_versions_are_consistent` enforces it —
-including its own hardcoded expectations. / 五处必须一致,且一致性测试自身的期望值也要改：
+All six must agree, and `test_release_versions_are_consistent` enforces it —
+including its own hardcoded expectations. / 六处必须一致,且一致性测试自身的期望值也要改：
 
 - `pyproject.toml` → `version`
 - `src/mcp_server/__init__.py` → `__version__` (easy to miss / 最容易漏)
 - `.claude-plugin/plugin.json` → `version`
 - `.claude-plugin/marketplace.json` → the plugin entry's `version`
 - `CHANGELOG.md` → a `## [X.Y.Z] - YYYY-MM-DD` heading
+- `server.json` → top-level `version` **and** `packages[0].version` (MCP Registry entry)
 - `tests/test_release_readiness.py` → the pinned expectations above
 
 The plugin version tracks plugin packaging, bundled skills, hooks and marketplace
@@ -139,6 +140,47 @@ re-push the tag (`git push origin :refs/tags/vX.Y.Z` then re-tag and push) or
 publish it once manually with `python -m build && python -m twine upload dist/*`.
 本工作流之前推送的标签（如 `v0.3.0`）不会自动触发；如需发布该版本，可删除并重推标签，或用
 `python -m build && python -m twine upload dist/*` 手动发布一次。
+
+## Publishing to the MCP Registry / 发布到 MCP Registry
+
+The server is listed in the official [MCP Registry](https://registry.modelcontextprotocol.io)
+from `server.json` at the repo root. The registry only stores metadata; it points at the
+PyPI package, so **a version must be on PyPI before it can be published to the registry**.
+/ 服务器通过仓库根目录的 `server.json` 登记到官方 MCP Registry。Registry 只存元数据、指向 PyPI
+包，因此**某个版本必须先发布到 PyPI，才能发布到 Registry**。
+
+**Ownership verification / 所有权验证**: the registry downloads the PyPI release named in
+`server.json` and looks for `mcp-name: io.github.Zeraissh/stm32-gdb-mcp` in its description
+(our README). The marker is the HTML comment near the top of `README.md` — keep it, and keep
+it identical to `name` in `server.json`. PyPI descriptions are frozen per release, so the
+**first** registry publish must use a release built after the marker landed (0.15.0 on PyPI
+does not carry it). / Registry 会下载 `server.json` 指定的 PyPI 版本，在其描述（即 README）中查找
+`mcp-name: io.github.Zeraissh/stm32-gdb-mcp`。标记是 `README.md` 顶部的 HTML 注释，务必保留，
+且与 `server.json` 的 `name` 完全一致。PyPI 描述按版本固化，所以**首次**发布到 Registry 必须使用
+加入标记之后构建的版本（PyPI 上的 0.15.0 不含该标记）。
+
+The `io.github.Zeraissh/*` namespace is granted by signing in as the GitHub user
+`Zeraissh`; the case must match the GitHub login. / `io.github.Zeraissh/*` 命名空间通过以
+GitHub 用户 `Zeraissh` 登录获得，大小写须与 GitHub 登录名一致。
+
+**Steps, after the tag's PyPI publish has succeeded / 在该标签的 PyPI 发布成功之后执行**:
+
+1. Confirm `server.json` `version` and `packages[0].version` equal the PyPI version just
+   released (the version-consistency test already enforces this). / 确认两个版本字段等于刚发布的
+   PyPI 版本（一致性测试已强制）。
+2. Install the publisher CLI / 安装发布工具 `mcp-publisher`
+   (<https://github.com/modelcontextprotocol/registry/releases>, or `brew install mcp-publisher`).
+3. Validate locally / 本地校验: `mcp-publisher validate` (run in the repo root).
+4. Sign in / 登录: `mcp-publisher login github` — complete the device-code flow in the
+   browser as `Zeraissh`. No token is stored in the repo. / 按提示在浏览器中以 `Zeraissh`
+   完成设备码授权，仓库中不保存任何 token。
+5. Publish / 发布: `mcp-publisher publish`.
+6. Verify / 验证:
+   `curl "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.Zeraissh/stm32-gdb-mcp"`.
+
+Each later release repeats steps 1, 4 and 5; a version already in the registry cannot be
+republished, so a metadata-only fix needs a new version. / 之后每次发版重复第 1、4、5 步；
+Registry 中已有的版本不能重复发布，仅改元数据也需要新版本号。
 
 ## Release Notes / 发布说明
 
