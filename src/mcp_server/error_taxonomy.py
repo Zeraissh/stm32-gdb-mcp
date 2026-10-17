@@ -28,6 +28,17 @@ _ATTACH_FAILURE_MARKERS = (
 # ELF path too, and routing that to "install a missing host tool" sent agents
 # chasing their toolchain instead of their path (issue #21/#22).
 _RULES: list[tuple] = [
+    # Raised by GdbServerManager.start(adopt=False). First, because the message
+    # quotes the caller's server_args, which can contain any other rule's needle.
+    (("refusing to adopt",), {
+        "code": "port_in_use",
+        "retryable": False,
+        "suggested_next_actions": [
+            "list_sessions",
+            "stop the process listening on that port, or pass a different gdb_port",
+        ],
+        "hint": None,
+    }),
     # Ahead of everything: the cross-process probe lock tells us EXACTLY which
     # PID holds the probe. This is not retryable — a retry just burns seconds
     # waiting for a process that won't disappear on its own.
@@ -198,13 +209,20 @@ def measured_target_voltage(server_log: str) -> float | None:
     return None
 
 
+_WIRING_ADVICE = "check SWD wiring (SWDIO/SWCLK/GND seated) and reset state"
+
+
 def refine_target_unreachable(classification: dict, server_log: str) -> dict:
-    """Drop the "check target power" advice when the log proves the board is powered.
+    """Demote — never drop — the power/wiring advice when VTREF reads healthy.
 
     Every failed attach in the reported session carried a measured 3.17 V and
-    still advised checking power — pointing the agent at the one hypothesis its
-    own payload excluded, twice telling the user their board might be dead
-    (issue #35). The voltage is already in hand; branch on it.
+    still advised checking power (issue #35), so a healthy reading drops the
+    bare supply framing. But VTREF only proves a voltage is on that pin: on many
+    ST-Link V2 clones it is the probe's own 3.3 V rail, present with no target
+    attached at all. Measured on such a clone with a loose SWD cable — 3.21 V on
+    every attempt, and wiring was the fix (issue #46). So the reading is reported,
+    not concluded from, and wiring stays on the list behind the causes a healthy
+    reading makes likelier.
     """
     if classification.get("code") != "target_unreachable":
         return classification
@@ -215,17 +233,21 @@ def refine_target_unreachable(classification: dict, server_log: str) -> dict:
 
     refined = dict(classification)
     refined["measured_target_voltage"] = volts
-    refined["suggested_next_actions"] = [
+    others = [
         action for action in classification.get("suggested_next_actions", [])
         if action != _POWER_ADVICE
     ] or ["suggest_server_args"]
+    refined["suggested_next_actions"] = [*others, _WIRING_ADVICE]
     refined["hint"] = (
-        f"Target voltage {volts:.2f} V measured — the board IS powered, so this is not a supply "
-        "problem. The probe opened but the MCU debug port did not answer. Likely causes, in "
-        "order: the core is in a low-power mode that gates SWD (STM32 Stop/Standby) — retry with "
+        f"The probe measured {volts:.2f} V on VTREF. That shows a voltage on the probe's "
+        "reference pin, not that the MCU is powered or attached: on many ST-Link V2 clones "
+        "VTREF is tied to the probe's own 3.3 V rail and reads the same with no target "
+        "connected. The probe opened but the MCU debug port did not answer. Likely causes: "
+        "the core is in a low-power mode that gates SWD (STM32 Stop/Standby) — retry with "
         "connect-under-reset, i.e. server_args containing "
         "-c 'reset_config srst_only srst_nogate connect_assert_srst'; another process still holds "
-        "the probe (a stale openocd, an IDE, a prior session); or the firmware repurposed the SWD "
-        "pins. Note a failed attach says NOTHING about whether the CPU is executing."
+        "the probe (a stale openocd, an IDE, a prior session); the firmware repurposed the SWD "
+        "pins; or a loose SWDIO/SWCLK/GND wire — if the same failure repeats across those, "
+        "reseat the cable. Note a failed attach says NOTHING about whether the CPU is executing."
     )
     return refined

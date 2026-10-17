@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Session start / 会话启动 (#46, #47)
+
+- A healthy VTREF reading no longer becomes "the board IS powered". On many ST-Link V2
+  clones VTREF is the probe's own 3.3 V rail, so it reads the same with the target
+  unplugged — measured at 3.21 V with a loose SWD cable, where wiring was the fix. The
+  `target_unreachable` hint now reports the measurement and that caveat, and SWD wiring
+  stays in `suggested_next_actions`, demoted behind the low-power and stale-process
+  causes instead of removed. (#46) /
+  VTREF 读数正常不再被说成"板子已上电"：许多 ST-Link V2 克隆探针的 VTREF 接的是探针自身
+  3.3 V，不接目标也照样有读数。提示改为如实报告测量值并附上该说明，SWD 接线建议降序保留而非删除。
+- `start_debug_session` with explicit `server_args` no longer adopts a GDB server that is
+  already listening on the port; it fails with `port_in_use` instead. Adopting silently
+  discarded exactly the args the previous error had recommended (connect-under-reset).
+  Without explicit `server_args` the adopt behaviour is unchanged. (#47) /
+  显式传入 `server_args` 时不再领养端口上已有的 GDB server，而是返回 `port_in_use`：
+  领养会悄悄丢弃上一条错误刚建议的参数。未显式传参时行为不变。
+- A failed start now checks that the server it spawned really released its port, and
+  says so (`server_still_listening`) instead of assuming the teardown worked. (#47) /
+  启动失败后会确认自己拉起的 server 已释放端口，未释放时明确报告。
+
 ### Hub guidance in the stm32-debug skill / stm32-debug skill 补充 Hub 用法
 
 - `skills/stm32-debug/SKILL.md` gains a "Programmable USB hub" section covering:

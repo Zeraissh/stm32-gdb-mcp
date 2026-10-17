@@ -177,12 +177,23 @@ def test_a_powered_board_is_not_told_to_check_its_power():
     assert refined["code"] == "target_unreachable"
     assert "check target power/SWD wiring/reset state" not in refined["suggested_next_actions"]
     assert refined["suggested_next_actions"]  # never left empty
-    assert "the board IS powered" in refined["hint"]
-    assert "3.17 V" in refined["hint"]
+    assert "3.17 V on VTREF" in refined["hint"]
     # The inference that cost the reporter two wrong statements to their user.
     assert "says NOTHING about whether the CPU is executing" in refined["hint"]
     assert "connect_assert_srst" in refined["hint"]
     assert refined["measured_target_voltage"] == pytest.approx(3.167938)
+
+
+def test_a_healthy_vtref_reports_the_reading_and_keeps_wiring_advice():
+    # Issue #46: an ST-Link clone ties VTREF to its own 3.3 V rail, so 3.21 V was
+    # read with a loose SWD cable — and wiring was the fix the old refinement deleted.
+    refined = refine_target_unreachable(classify_error(_ATTACH_LOG), _ATTACH_LOG)
+
+    assert "IS powered" not in refined["hint"]
+    assert "clone" in refined["hint"]
+    actions = refined["suggested_next_actions"]
+    assert any("wiring" in action for action in actions)
+    assert "wiring" in actions[-1]  # demoted behind the likelier causes, not removed
 
 
 def test_an_unpowered_board_keeps_the_power_advice():

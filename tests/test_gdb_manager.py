@@ -166,3 +166,23 @@ def test_adopted_server_reports_dead_once_its_port_closes(monkeypatch):
     srv.close()
 
     assert manager.is_alive() is False
+
+
+def test_start_refuses_to_adopt_when_told_not_to(monkeypatch):
+    # Issue #47: explicit server_args mean "start it this way"; adopting a server
+    # already on the port would silently discard them.
+    from mcp_server.gdb_manager import GdbServerManager, PortInUseError
+
+    srv, port = _listening_socket()
+    try:
+        manager = GdbServerManager()
+        monkeypatch.setattr("subprocess.Popen", lambda *a, **k: pytest.fail("must not spawn"))
+
+        with pytest.raises(PortInUseError, match=f"port {port}"):
+            manager.start("openocd", ["-c", f"gdb_port {port}"], adopt=False)
+
+        assert manager.adopted is False
+        assert manager.port is None
+        assert manager.is_alive() is False
+    finally:
+        srv.close()

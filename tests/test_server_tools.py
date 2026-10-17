@@ -1,7 +1,10 @@
 import asyncio
 import json
+import socket
 import threading
 import time
+
+import pytest
 
 from mcp_server import device_packs
 from mcp_server.server import handle_call_tool, handle_list_tools
@@ -236,7 +239,7 @@ def test_named_session_gets_distinct_port_and_serial(monkeypatch):
         def is_alive(self):
             return False
 
-        def start(self, server_type, args):
+        def start(self, server_type, args, adopt=True):
             started["args"] = args
             return 3343
 
@@ -1092,7 +1095,7 @@ def test_start_openocd_without_server_args_gives_clear_error(monkeypatch):
     started = []
 
     class FakeManager:
-        def start(self, server_type, args):
+        def start(self, server_type, args, adopt=True):
             started.append((server_type, args))
             return 3333
 
@@ -1122,7 +1125,7 @@ def test_start_openocd_without_server_args_uses_profile_defaults(monkeypatch):
         def is_alive(self):
             return False
 
-        def start(self, server_type, args):
+        def start(self, server_type, args, adopt=True):
             started["args"] = list(args)
             return 3333
 
@@ -1161,7 +1164,7 @@ def test_start_openocd_without_probe_uses_single_detected_probe(monkeypatch):
         def is_alive(self):
             return False
 
-        def start(self, server_type, args):
+        def start(self, server_type, args, adopt=True):
             started["args"] = list(args)
             return 3333
 
@@ -1238,7 +1241,7 @@ def test_start_debug_session_autoloads_symbols_from_profile(monkeypatch):
         def is_alive(self):
             return False
 
-        def start(self, server_type, args):
+        def start(self, server_type, args, adopt=True):
             return 3333
 
     class FakeClient:
@@ -1277,7 +1280,7 @@ def test_start_debug_session_uses_profile_backend_args_and_serial(monkeypatch):
         def is_alive(self):
             return False
 
-        def start(self, server_type, args):
+        def start(self, server_type, args, adopt=True):
             started.append((server_type, args))
             return 3333
 
@@ -1372,7 +1375,7 @@ def test_start_failure_cleans_up_and_returns_attempt_evidence(monkeypatch):
         def is_alive(self):
             return False
 
-        def start(self, server_type, args):
+        def start(self, server_type, args, adopt=True):
             calls["start"] += 1
             raise RuntimeError("init mode failed: unable to connect to target")
 
@@ -1415,7 +1418,7 @@ def test_start_debug_session_retries_a_transient_probe_busy(monkeypatch):
         def is_alive(self):
             return False
 
-        def start(self, server_type, args):
+        def start(self, server_type, args, adopt=True):
             calls["n"] += 1
             if calls["n"] == 1:
                 raise RuntimeError("GDB server failed to start. Logs: ... Error: open failed")
@@ -1465,7 +1468,7 @@ def test_recover_session_restarts_server_and_reconnects(monkeypatch):
         def stop(self):
             events.append("server_stop")
 
-        def start(self, server_type, args):
+        def start(self, server_type, args, adopt=True):
             events.append(("server_start", server_type, args))
             return 3333
 
@@ -4175,3 +4178,78 @@ def test_read_memory_payload_omits_the_word_for_a_non_word_length(monkeypatch):
 
     assert payload["data"]["bytes"] == "001122"
     assert "value_le" not in payload["data"], "a 3-byte read has no single scalar reading"
+
+
+def test_start_with_explicit_server_args_refuses_an_already_listening_server(monkeypatch):
+    # Issue #47: the retry carried the connect-under-reset args the previous error
+    # recommended; adopting the server left on the port silently dropped them.
+    import mcp_server.server as server_module
+    from mcp_server.gdb_manager import GdbServerManager
+
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(50)
+    port = srv.getsockname()[1]
+    try:
+        class FakeClient:
+            def start_gdb(self):
+                pytest.fail("GDB must not attach to the foreign server")
+
+            def stop_gdb(self):
+                pass
+
+        monkeypatch.setattr(server_module, "gdb_manager", GdbServerManager())
+        monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+        monkeypatch.setattr("subprocess.Popen", lambda *a, **k: pytest.fail("must not spawn"))
+        payload = _payload(asyncio.run(handle_call_tool("start_debug_session", {
+            "server_type": "openocd",
+            "server_args": ["-f", "interface/stlink.cfg", "-c", f"gdb_port {port}",
+                            "-c", "reset_config srst_only srst_nogate connect_assert_srst"],
+        })))
+    finally:
+        srv.close()
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "port_in_use"
+    assert f"port {port}" in payload["error"]["message"]
+
+
+def test_failed_start_reports_a_server_that_outlives_teardown(monkeypatch):
+    import mcp_server.gdb_manager as gdb_manager_module
+    import mcp_server.server as server_module
+
+    class FakeManager:
+        port = 3353
+        adopted = False
+
+        def is_alive(self):
+            return False
+
+        def start(self, server_type, args, adopt=True):
+            raise RuntimeError("Error: init mode failed (unable to connect to the target)")
+
+        def stop(self):
+            pass  # the real stop() resets port; the probe below must not depend on it
+
+        def get_logs(self):
+            return ""
+
+    class FakeClient:
+        def stop_gdb(self):
+            pass
+
+    probed = []
+    monkeypatch.setattr(gdb_manager_module, "_port_accepts",
+                        lambda port, timeout=0.2: probed.append(port) or True)
+    monkeypatch.setattr(server_module, "gdb_manager", FakeManager())
+    monkeypatch.setattr(server_module, "gdb_client", FakeClient())
+    payload = _payload(asyncio.run(handle_call_tool("start_debug_session", {
+        "server_type": "openocd", "server_args": ["-f", "interface/stlink.cfg"],
+    })))
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "target_unreachable"
+    assert probed == [3353]
+    assert payload["raw_response"]["server_still_listening"] is True
+    assert "still listening on port 3353" in payload["error"]["message"]
