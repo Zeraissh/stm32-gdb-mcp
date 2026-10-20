@@ -208,8 +208,9 @@ def test_plugin_manifest_and_session_start_hook_are_loadable():
 
     server = plugin["mcpServers"]["stm32-gdb-mcp"]
     assert server["command"] == "python"
-    assert server["args"] == ["-m", "mcp_server.server"]
+    assert server["args"] == ["${CLAUDE_PLUGIN_ROOT}/scripts/run_mcp_server.py"]
     assert server["env"]["STM32_GDB_MCP_COMPACT"] == "1"
+    assert (ROOT / "scripts" / "run_mcp_server.py").exists()
     assert Path("skills/stm32-debug/SKILL.md").exists()
     assert Path("skills/stm32-instrument/SKILL.md").exists()
 

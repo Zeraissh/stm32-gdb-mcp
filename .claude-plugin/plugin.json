@@ -11,7 +11,7 @@
   "mcpServers": {
     "stm32-gdb-mcp": {
       "command": "python",
-      "args": ["-m", "mcp_server.server"],
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/run_mcp_server.py"],
       "cwd": "${CLAUDE_PLUGIN_ROOT}",
       "env": {
         "PYTHONPATH": "${CLAUDE_PLUGIN_ROOT}/src",

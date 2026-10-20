@@ -59,6 +59,47 @@ when those installation fields drift. / `stm32-gdb-mcp-check-env --json` 还会�
 **Requirements / 环境要求**：`PATH` 中需要 `arm-none-eabi-gdb`，以及至少一种 GDB Server
 （`openocd` / `JLinkGDBServerCL` / `st-util`）。运行 `python setup_env.py` 检查。
 
+## What the plugin runs and connects to / 插件会运行和连接什么
+
+The Claude Code plugin (`stm32-debug-kit`) runs everything locally on your machine:
+
+- **MCP server**: `python scripts/run_mcp_server.py`, which runs the server from this
+  repository's `src/` over stdio. The Python it runs under needs the dependencies in
+  `pyproject.toml` (`pip install -e .` or `pip install stm32-gdb-mcp`).
+- **SessionStart hook**: `python hooks/session_start.py` prints a short banner into the
+  session context. It reads nothing and sends nothing.
+- **Processes it starts**: `arm-none-eabi-gdb`, a GDB server (`openocd`, `JLinkGDBServerCL`
+  or `st-util`), and, when you ask it to build, `cmake`/`make`. They talk to the debug probe
+  over USB and to each other over TCP on `localhost`.
+- **Local ports**: GDB server ports on `localhost`; the optional USB hub daemon and
+  dashboard serve on `127.0.0.1` only (default port 8765). Serial ports are opened only
+  when a tool reads a UART log.
+- **Files**: it reads your firmware project (ELF, SVD, build files). It writes only where a
+  tool is told to (a debug report, a saved debug config), plus small lock and state files
+  under the system temp folder (`stm32-gdb-mcp/`).
+- **Network**: nothing leaves your machine unless an agent calls `report_issue`, which
+  files a GitHub issue on `Zeraissh/stm32-gdb-mcp` through your own `gh` CLI login. That
+  issue contains the description the agent wrote, the MCP version and environment summary,
+  and the session's tool journal and metrics. There is no telemetry.
+
+Claude Code 插件（`stm32-debug-kit`）的所有内容都在本机运行：
+
+- **MCP 服务器**：`python scripts/run_mcp_server.py`，通过 stdio 运行本仓库 `src/` 中的服务器。
+  运行它的 Python 需要装好 `pyproject.toml` 中的依赖（`pip install -e .` 或
+  `pip install stm32-gdb-mcp`）。
+- **SessionStart hook**：`python hooks/session_start.py` 只向会话上下文输出一段简短说明，
+  不读取也不发送任何数据。
+- **启动的进程**：`arm-none-eabi-gdb`、GDB Server（`openocd`、`JLinkGDBServerCL` 或
+  `st-util`），以及按需构建时的 `cmake`/`make`。它们通过 USB 连接调试器，彼此之间通过
+  `localhost` 上的 TCP 通信。
+- **本地端口**：GDB Server 端口只在 `localhost`；可选的 USB Hub 守护进程和看板只监听
+  `127.0.0.1`（默认端口 8765）。只有在工具读取 UART 日志时才会打开串口。
+- **文件**：读取你的固件工程（ELF、SVD、构建文件）。只在工具指定的位置写文件（调试报告、
+  保存的调试配置），另外在系统临时目录的 `stm32-gdb-mcp/` 下写少量锁文件和状态文件。
+- **网络**：除非 agent 调用 `report_issue`，否则不会有数据离开本机。`report_issue` 会用你
+  本机 `gh` CLI 的登录身份，在 `Zeraissh/stm32-gdb-mcp` 上提交一个 GitHub issue，内容包括
+  agent 写的描述、MCP 版本和环境摘要，以及本次会话的工具调用记录和指标。没有任何遥测。
+
 ## 30-second quickstart / 快速上手
 
 ```text
