@@ -2,6 +2,13 @@
 
 <!-- mcp-name: io.github.Zeraissh/stm32-gdb-mcp -->
 
+[![PyPI](https://img.shields.io/pypi/v/stm32-gdb-mcp)](https://pypi.org/project/stm32-gdb-mcp/)
+[![Python](https://img.shields.io/pypi/pyversions/stm32-gdb-mcp)](https://pypi.org/project/stm32-gdb-mcp/)
+[![Downloads](https://static.pepy.tech/badge/stm32-gdb-mcp/month)](https://pepy.tech/projects/stm32-gdb-mcp)
+[![MCP Registry](https://img.shields.io/badge/MCP_Registry-io.github.Zeraissh%2Fstm32--gdb--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=io.github.Zeraissh/stm32-gdb-mcp)
+[![CI](https://github.com/Zeraissh/stm32-gdb-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Zeraissh/stm32-gdb-mcp/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/Zeraissh/stm32-gdb-mcp/blob/main/LICENSE)
+
 An MCP server that lets an AI agent **debug STM32 firmware on real hardware** — drive
 GDB + OpenOCD/ST-Link/J-Link to flash, breakpoint, inspect memory/registers/RTOS, triage
 HardFaults, and profile — and get back **decoded, structured** evidence instead of raw GDB text.
