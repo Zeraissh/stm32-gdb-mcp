@@ -6,6 +6,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/stm32-gdb-mcp)](https://pypi.org/project/stm32-gdb-mcp/)
 [![Downloads](https://static.pepy.tech/badge/stm32-gdb-mcp/month)](https://pepy.tech/projects/stm32-gdb-mcp)
 [![MCP Registry](https://img.shields.io/badge/MCP_Registry-io.github.Zeraissh%2Fstm32--gdb--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=io.github.Zeraissh/stm32-gdb-mcp)
+[![mcprush](https://img.shields.io/endpoint?url=https%3A%2F%2Fmcprush.com%2Fbadge%2Fstm32-gdb-debugger-mcp%2Fshields.json)](https://mcprush.com/to/stm32-gdb-debugger-mcp?ref=badge)
 [![CI](https://github.com/Zeraissh/stm32-gdb-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Zeraissh/stm32-gdb-mcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/Zeraissh/stm32-gdb-mcp/blob/main/LICENSE)
 
