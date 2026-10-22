@@ -1,5 +1,20 @@
 # Changelog / 更新日志
 
+## [Unreleased]
+
+### Setup / 安装
+
+- `stm32-gdb-mcp-check-env` (and `setup_env.py`) now prints a one-line install command for
+  each missing tool on the current OS: scoop on Windows, Homebrew on macOS, apt or pacman on
+  Linux. `--json` carries the same commands under `install_commands`, plus `platform`.
+  / 环境检查发现缺少工具时，会按当前系统给出一行安装命令（Windows 用 scoop、macOS 用
+  Homebrew、Linux 用 apt 或 pacman），`--json` 输出中也带有 `install_commands` 和 `platform`。
+- The server falls back to `gdb-multiarch` when `arm-none-eabi-gdb` is not on `PATH`
+  (Debian and Ubuntu no longer package the latter), and `STM32_GDB_MCP_GDB` names any other
+  GDB. A set but unresolvable override is reported as missing rather than silently replaced.
+  / 找不到 `arm-none-eabi-gdb` 时自动改用 `gdb-multiarch`（Debian/Ubuntu 已不再打包前者），
+  也可用 `STM32_GDB_MCP_GDB` 指定其他 GDB；指定了却找不到时如实报告缺失，不会悄悄换成别的 GDB。
+
 ## [0.15.1] - 2026-10-17
 
 ### MCP Registry / MCP 注册表 (#68)
