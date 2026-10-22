@@ -16,6 +16,36 @@ HardFaults, and profile — and get back **decoded, structured** evidence instea
 让 AI 智能体在**真实硬件上调试 STM32**:通过 GDB + OpenOCD/ST-Link/J-Link 烧录、打断点、查
 内存/寄存器/RTOS、定位 HardFault、做性能采样,返回**已解码的结构化**证据而非原始 GDB 文本。
 
+```bash
+uvx stm32-gdb-mcp          # any MCP client: command "uvx", args ["stm32-gdb-mcp"]
+```
+
+Needs `arm-none-eabi-gdb` (or `gdb-multiarch`) and a GDB server (OpenOCD / J-Link / st-util)
+on `PATH`; `stm32-gdb-mcp-check-env` prints the install command for your OS. See
+[Install](#install--安装) for one-command setup in Claude Code, Cursor, VSCode and others.
+/ 需要 `PATH` 中有 `arm-none-eabi-gdb`（或 `gdb-multiarch`）和一种 GDB Server；
+`stm32-gdb-mcp-check-env` 会给出本机系统的安装命令。各客户端的一键安装见下方 Install。
+
+## Why this server / 为什么选它
+
+| | Generic GDB MCP servers / 通用 GDB MCP | probe-rs-based servers / 基于 probe-rs | **stm32-gdb-mcp** |
+|---|---|---|---|
+| Output / 返回内容 | Raw GDB text / 原始文本 | Structured / 结构化 | Decoded + `suggested_next_actions` / 解码结果 + 下一步建议 |
+| HardFault → source line / 定位到源码 | — | ✓ | ✓ plus stack analysis / 附栈分析 |
+| FreeRTOS tasks, stacks, queues / RTOS 感知 | — | — | ✓ |
+| Peripheral registers decoded from SVD / SVD 外设解码 | — | — | ✓ |
+| Logs / 日志 | — | RTT | RTT, SWO, UART |
+| Symbolized PC sampling / 符号化采样 | — | — | ✓ |
+| One-call bring-up (`flash_and_run`, `debug_until`) / 组合工具 | — | partial / 部分 | ✓ |
+| Replay + debug report / 回放与报告 | — | — | ✓ |
+| Multi-board rack, programmable USB hub / 多板与 USB Hub | — | — | ✓ |
+| Probes / 调试器 | Any GDB remote | probe-rs probes | ST-Link, J-Link, CMSIS-DAP via OpenOCD / J-Link GDB Server / st-util |
+| Targets / 目标芯片 | Any | Cortex-M, RISC-V, ESP32 | STM32 (Cortex-M) |
+
+Pick a probe-rs-based server if you need RISC-V or ESP32; pick this one when you debug STM32
+and want the agent to get from symptom to root cause with fewer calls.
+/ 需要 RISC-V 或 ESP32 时选 probe-rs 系；调试 STM32、希望 agent 用更少调用从现象走到根因时选本项目。
+
 ## What you get / 能力一览
 
 | | |
