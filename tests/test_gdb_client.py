@@ -1122,3 +1122,23 @@ def test_list_source_returns_the_window_around_the_location_not_only_after_it():
     assert "next_window()" in text
 
 
+
+
+def test_start_gdb_runs_the_resolved_gdb(monkeypatch):
+    started = []
+    monkeypatch.setattr(gdb_client_module, "resolve_gdb", lambda: "/usr/bin/gdb-multiarch")
+    monkeypatch.setattr(gdb_client_module, "GdbController", lambda command: started.append(command) or FakeGdb())
+
+    GdbClientManager().start_gdb()
+
+    assert started[0][0] == "/usr/bin/gdb-multiarch"
+
+
+def test_start_gdb_keeps_the_canonical_name_when_no_gdb_is_found(monkeypatch):
+    started = []
+    monkeypatch.setattr(gdb_client_module, "resolve_gdb", lambda: None)
+    monkeypatch.setattr(gdb_client_module, "GdbController", lambda command: started.append(command) or FakeGdb())
+
+    GdbClientManager().start_gdb()
+
+    assert started[0][0] == "arm-none-eabi-gdb"

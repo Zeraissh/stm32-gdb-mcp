@@ -8,6 +8,7 @@ from pygdbmi.gdbcontroller import GdbController
 
 from . import dwt
 from .elf_layout import check_flashable
+from .env_check import resolve_gdb
 from .fault_analysis import FAULT_REGISTER_ADDRESSES
 from .gdb_decode import (
     decode_backtrace,
@@ -146,7 +147,10 @@ class GdbClientManager:
         self._write_window_depth = 0
         self._write_window_registers = 0
 
-    def start_gdb(self, gdb_path="arm-none-eabi-gdb"):
+    def start_gdb(self, gdb_path=None):
+        if gdb_path is None:
+            # Unresolved: keep the canonical name so the spawn fails as tool_missing.
+            gdb_path = resolve_gdb() or "arm-none-eabi-gdb"
         if self.gdb:
             self.stop_gdb()
         self._symbol_cache.clear()

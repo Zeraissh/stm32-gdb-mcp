@@ -63,8 +63,14 @@ when those installation fields drift. / `stm32-gdb-mcp-check-env --json` 还会�
 模块的版本/路径、已安装发行版本和四个 console script；这些安装字段发生漂移时，使用
 `stm32-gdb-mcp-deploy --upgrade` 修复。
 
-**Requirements / 环境要求**：`PATH` 中需要 `arm-none-eabi-gdb`，以及至少一种 GDB Server
-（`openocd` / `JLinkGDBServerCL` / `st-util`）。运行 `python setup_env.py` 检查。
+**Requirements / 环境要求**：`PATH` 中需要 `arm-none-eabi-gdb`（Debian/Ubuntu 上的
+`gdb-multiarch` 也可以，或用 `STM32_GDB_MCP_GDB` 指定任意支持 ARM 的 GDB），以及至少一种 GDB
+Server（`openocd` / `JLinkGDBServerCL` / `st-util`）。运行 `stm32-gdb-mcp-check-env`（或
+`python setup_env.py`）检查；缺什么，它会打印本机系统（Windows scoop / macOS brew /
+Linux apt、pacman）对应的一行安装命令。
+Needs `arm-none-eabi-gdb` (or `gdb-multiarch`, or any ARM-capable GDB named by
+`STM32_GDB_MCP_GDB`) plus one GDB server; `stm32-gdb-mcp-check-env` prints the install
+command for whatever is missing on your OS.
 
 ## What the plugin runs and connects to / 插件会运行和连接什么
 
@@ -75,7 +81,7 @@ The Claude Code plugin (`stm32-debug-kit`) runs everything locally on your machi
   `pyproject.toml` (`pip install -e .` or `pip install stm32-gdb-mcp`).
 - **SessionStart hook**: `python hooks/session_start.py` prints a short banner into the
   session context. It reads nothing and sends nothing.
-- **Processes it starts**: `arm-none-eabi-gdb`, a GDB server (`openocd`, `JLinkGDBServerCL`
+- **Processes it starts**: `arm-none-eabi-gdb` (or the GDB named above), a GDB server (`openocd`, `JLinkGDBServerCL`
   or `st-util`), and, when you ask it to build, `cmake`/`make`. They talk to the debug probe
   over USB and to each other over TCP on `localhost`.
 - **Local ports**: GDB server ports on `localhost`; the optional USB hub daemon and
@@ -96,7 +102,7 @@ Claude Code 插件（`stm32-debug-kit`）的所有内容都在本机运行：
   `pip install stm32-gdb-mcp`）。
 - **SessionStart hook**：`python hooks/session_start.py` 只向会话上下文输出一段简短说明，
   不读取也不发送任何数据。
-- **启动的进程**：`arm-none-eabi-gdb`、GDB Server（`openocd`、`JLinkGDBServerCL` 或
+- **启动的进程**：`arm-none-eabi-gdb`（或上文指定的 GDB）、GDB Server（`openocd`、`JLinkGDBServerCL` 或
   `st-util`），以及按需构建时的 `cmake`/`make`。它们通过 USB 连接调试器，彼此之间通过
   `localhost` 上的 TCP 通信。
 - **本地端口**：GDB Server 端口只在 `localhost`；可选的 USB Hub 守护进程和看板只监听

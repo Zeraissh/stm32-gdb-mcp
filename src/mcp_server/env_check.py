@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
+import sys
 from importlib import metadata
 from pathlib import Path
+from typing import Any
 
 from . import __version__ as MODULE_VERSION
 
@@ -16,16 +19,28 @@ CONSOLE_SCRIPTS = (
     f"{SERVER_NAME}-deploy",
 )
 
-GDB = {
+GDB_ENV_VAR = "STM32_GDB_MCP_GDB"
+# gdb-multiarch is what Debian/Ubuntu ship instead of arm-none-eabi-gdb; it debugs Cortex-M fine.
+GDB_FALLBACKS = ("gdb-multiarch",)
+
+GDB: dict[str, Any] = {
     "executable": "arm-none-eabi-gdb",
     "name": "ARM GNU Toolchain (GDB)",
     "install_guide": (
         "Download from https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads "
         "and add the 'bin' folder to PATH."
     ),
+    "install_commands": {
+        "windows": ["scoop bucket add extras", "scoop install gcc-arm-none-eabi"],
+        "macos": ["brew install --cask gcc-arm-embedded"],
+        "linux": [
+            "sudo apt install gdb-multiarch        # Debian/Ubuntu",
+            "sudo pacman -S arm-none-eabi-gdb      # Arch",
+        ],
+    },
 }
 
-BACKENDS = {
+BACKENDS: dict[str, dict[str, Any]] = {
     "openocd": {
         "executable": "openocd",
         "name": "OpenOCD",
@@ -33,6 +48,14 @@ BACKENDS = {
             "Download xPack OpenOCD from https://github.com/xpack-dev-tools/openocd-xpack/releases, "
             "extract it, and add the 'bin' folder to PATH."
         ),
+        "install_commands": {
+            "windows": ["scoop install openocd"],
+            "macos": ["brew install open-ocd"],
+            "linux": [
+                "sudo apt install openocd              # Debian/Ubuntu",
+                "sudo pacman -S openocd                # Arch",
+            ],
+        },
     },
     "jlink": {
         "executable": "JLinkGDBServerCL",
@@ -41,11 +64,22 @@ BACKENDS = {
             "Download the J-Link Software and Documentation Pack from "
             "https://www.segger.com/downloads/jlink/ and add the installation folder to PATH."
         ),
+        "install_commands": {
+            "macos": ["brew install --cask segger-jlink"],
+        },
     },
     "stlink": {
         "executable": "st-util",
         "name": "ST-LINK GDB Server (st-link tools)",
         "install_guide": "Download from https://github.com/stlink-org/stlink/releases, extract, and add the 'bin' folder to PATH.",
+        "install_commands": {
+            "windows": ["scoop install stlink"],
+            "macos": ["brew install stlink"],
+            "linux": [
+                "sudo apt install stlink-tools         # Debian/Ubuntu",
+                "sudo pacman -S stlink                 # Arch",
+            ],
+        },
     },
 }
 
@@ -54,6 +88,29 @@ def _which(exe: str) -> str | None:
     if exe == "JLinkGDBServerCL":
         return shutil.which("JLinkGDBServerCL") or shutil.which("JLinkGDBServer") or shutil.which("jlinkgdbserver")
     return shutil.which(exe)
+
+
+def host_platform() -> str:
+    if sys.platform.startswith("win"):
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    return "linux"
+
+
+def install_commands(info: dict, platform: str | None = None) -> list[str]:
+    return list(info.get("install_commands", {}).get(platform or host_platform(), []))
+
+
+def resolve_gdb() -> str | None:
+    """The GDB the server will run: $STM32_GDB_MCP_GDB, else arm-none-eabi-gdb, else gdb-multiarch."""
+    override = os.environ.get(GDB_ENV_VAR)
+    if override:
+        return _which(override)
+    for exe in (GDB["executable"], *GDB_FALLBACKS):
+        if path := _which(exe):
+            return path
+    return None
 
 
 def installation_report() -> dict:
@@ -90,7 +147,8 @@ def installation_report() -> dict:
 
 
 def environment_report() -> dict:
-    gdb_path = _which(GDB["executable"])
+    gdb_path = resolve_gdb()
+    platform = host_platform()
     backends = {}
     for key, info in BACKENDS.items():
         path = _which(info["executable"])
@@ -99,15 +157,18 @@ def environment_report() -> dict:
             "executable": info["executable"],
             "found": bool(path),
             "path": path,
+            "install_commands": install_commands(info, platform),
         }
     available = [key for key, value in backends.items() if value["found"]]
     return {
         "ready": bool(gdb_path and available),
+        "platform": platform,
         "gdb": {
             "name": GDB["name"],
             "executable": GDB["executable"],
             "found": bool(gdb_path),
             "path": gdb_path,
+            "install_commands": install_commands(GDB, platform),
         },
         "backends": backends,
         "available_backends": available,
@@ -151,13 +212,21 @@ def check_env(json_output: bool = False) -> bool:
 
     print("Environment is not ready.")
     if not gdb["found"]:
-        print(f"\n- {GDB['name']}:\n  {GDB['install_guide']}")
+        _print_install(GDB, gdb["install_commands"])
+        print(f"  Or point {GDB_ENV_VAR} at any GDB that supports ARM.")
     if not report["available_backends"]:
         print("\nInstall at least one GDB server backend:")
-        for backend in BACKENDS.values():
-            print(f"\n- {backend['name']}:\n  {backend['install_guide']}")
+        for key, backend in BACKENDS.items():
+            _print_install(backend, report["backends"][key]["install_commands"])
     print("\n[NOTE] After installing, please ensure you restart your terminal to apply the PATH changes.")
     return False
+
+
+def _print_install(info: dict, commands: list[str]) -> None:
+    print(f"\n- {info['name']}:")
+    for command in commands:
+        print(f"    {command}")
+    print(f"  {'Or: ' if commands else ''}{info['install_guide']}")
 
 
 def main(argv: list[str] | None = None) -> int:
