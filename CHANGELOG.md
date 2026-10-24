@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### self_check / 链路自检 (#78)
+
+- `self_check` reads DBGMCU IDCODE from the series base instead of always
+  `0xE0042000`. H7 uses `0x5C001000` (STM32H750VB: `0x20036450`, DEV_ID `0x450`),
+  F0/G0/L0/C0/U0 use `0x40015800`, L5/U5/U3/WBA use `0xE0044000`, H5 uses
+  `0x44024000`, and F1/F2/F3/F4/F7/L1/L4/G4/WB/WL stay on the legacy address.
+  The family (argument or profile MCU) wins; CPUID is the fallback. Cortex-M0/M0+
+  CPUID, whose architecture nibble is `0xC`, now passes the byte-order check.
+  / `self_check` 按系列选择 DBGMCU IDCODE 地址，不再固定读 `0xE0042000`。H7 为
+  `0x5C001000`，F0/G0/L0/C0/U0 为 `0x40015800`，L5/U5/U3/WBA 为 `0xE0044000`，
+  H5 为 `0x44024000`，F1/F2/F3/F4/F7/L1/L4/G4/WB/WL 仍用旧地址。系列名优先，
+  没有系列名时用 CPUID。Cortex-M0/M0+ 的架构半字节是 `0xC`，字节序检查现在会通过。
+
 ### Setup / 安装
 
 - `stm32-gdb-mcp-check-env` (and `setup_env.py`) now prints a one-line install command for
