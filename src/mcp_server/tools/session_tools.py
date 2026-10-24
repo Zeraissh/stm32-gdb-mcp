@@ -6,7 +6,7 @@ from .. import gdb_manager as gdb_manager_module
 from ..debug_session import teardown_debug_session
 from ..error_taxonomy import classify_error, refine_target_unreachable
 from ..reliability import retry_call
-from ..self_check import evaluate_self_check
+from ..self_check import evaluate_self_check, read_dbgmcu_idcode
 from ..server_metadata import server_info
 from ..tool_response import content_error, content_success
 from ._helpers import autoload_symbols, core_state, hub_binding, recover_current_session
@@ -348,10 +348,17 @@ def self_check(ctx: ToolContext, arguments: dict) -> list[TextContent]:
             halted = True
         except Exception:
             pass
-    cpuid = ctx.gdb_client.read_word(0xE000ED00)
-    dbgmcu_idcode = ctx.gdb_client.read_word(0xE0042000)
     expected = arguments.get("expected_family") or ctx.debug_profile.get().get("mcu")
-    result = evaluate_self_check(cpuid, dbgmcu_idcode, expected_family=expected)
+    cpuid = ctx.gdb_client.read_word(0xE000ED00)
+    # Family (argument, else profile MCU) picks the DBGMCU base. CPUID is the
+    # fallback when that string is missing or not a known STM32 series — H7 is
+    # not at the F4-era 0xE0042000, and neither are F0/G0/L0 or L5/U5.
+    dbgmcu_idcode, idcode_address = read_dbgmcu_idcode(
+        ctx.gdb_client.read_word, expected_family=expected, cpuid=cpuid,
+    )
+    result = evaluate_self_check(
+        cpuid, dbgmcu_idcode, expected_family=expected, idcode_address=idcode_address,
+    )
     result["halted_for_check"] = halted
     # self_check is the mandated first call after connecting, so this is the one
     # place the running build's identity reaches the transcript unprompted --
