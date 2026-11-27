@@ -147,8 +147,12 @@ schema with `tool_help(name="<tool>")`.
 
 ## ST-Link contention / ST-Link 占用冲突
 
-- Do not hard-kill OpenOCD; use `stop_debug_session` or `recover_session`. /
-  不要强杀 OpenOCD；使用 `stop_debug_session` 或 `recover_session`。
+- Do not hard-kill OpenOCD; use `stop_debug_session` or `recover_session`. An adopted
+  server (one this session attached to but did not spawn) stays up unless you pass
+  `stop_adopted=true`, which sends OpenOCD `shutdown` on its telnet/tcl port and checks
+  that the gdb port closed. / 不要强杀 OpenOCD；使用 `stop_debug_session` 或
+  `recover_session`。本会话领养而非拉起的 server 会继续运行，除非传入
+  `stop_adopted=true`：它会向 telnet/tcl 端口发送 `shutdown`，并确认 gdb 端口已关闭。
 - Do not launch a second OpenOCD from a serial verification script while SWD is active.
   Reset through `reset_target`. /
   SWD 活跃时，不要从串口验证脚本启动第二个 OpenOCD；使用 `reset_target` 复位。

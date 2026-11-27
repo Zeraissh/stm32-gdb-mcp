@@ -4252,3 +4252,361 @@ def test_failed_start_reports_a_server_that_outlives_teardown(monkeypatch):
     assert probed == [3353]
     assert payload["raw_response"]["server_still_listening"] is True
     assert "still listening on port 3353" in payload["error"]["message"]
+
+
+def _ephemeral_listener():
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(50)
+    return srv, srv.getsockname()[1]
+
+
+class _ExitedProcess:
+    stdout = None
+    pid = 1
+
+    def poll(self):
+        return 0
+
+    def terminate(self):
+        pass
+
+    def wait(self, timeout=None):
+        return 0
+
+    def kill(self):
+        pass
+
+    def send_signal(self, sig):
+        pass
+
+
+def _fail_first_openocd_attempt(monkeypatch, manager):
+    """Make the first real start() die with a retryable 'open failed' and leave the port up.
+
+    ``_port_accepts`` stays False until that attempt has decided it failed, so
+    attempt 1 spawns and attempt 2 sees the listener.
+    """
+    import mcp_server.gdb_manager as gm
+    import mcp_server.reliability as reliability
+
+    spawned = {"n": 0}
+    armed = {"started": False}
+    real_accepts = gm._port_accepts
+
+    def popen(*_args, **_kwargs):
+        spawned["n"] += 1
+        return _ExitedProcess()
+
+    def accepts(port, timeout=0.2):
+        if not armed["started"]:
+            return False
+        return real_accepts(port, timeout)
+
+    def wait(self, port, timeout=10.0, poll=0.05):
+        self.log_buffer.append("Error: open failed")
+        armed["started"] = True
+        return False
+
+    monkeypatch.setattr(gm.subprocess, "Popen", popen)
+    monkeypatch.setattr(gm, "_port_accepts", accepts)
+    monkeypatch.setattr(gm, "listener_argv", lambda _port: None)
+    monkeypatch.setattr(manager.__class__, "_wait_for_port", wait)
+    monkeypatch.setattr(reliability.time, "sleep", lambda *_a, **_k: None)
+    return spawned
+
+
+def test_start_retry_does_not_adopt_the_server_the_first_attempt_left_behind(monkeypatch):
+    # Issue #77. start_debug_session retries start() up to 3 times. Attempt 1
+    # used to clear the port it had just spawned, so attempt 2 either adopted
+    # that leftover or reported port_in_use as if a stranger owned it, and
+    # server_still_listening came back false.
+    import mcp_server.server as server_module
+    from mcp_server.gdb_manager import GdbServerManager
+
+    srv, port = _ephemeral_listener()
+    manager = GdbServerManager()
+    spawned = _fail_first_openocd_attempt(monkeypatch, manager)
+
+    class Client:
+        def start_gdb(self):
+            pytest.fail("must not attach to the leftover server")
+
+        def connect(self, host, port_):
+            pytest.fail("must not attach to the leftover server")
+
+        def stop_gdb(self):
+            pass
+
+    monkeypatch.setattr(server_module, "gdb_manager", manager)
+    monkeypatch.setattr(server_module, "gdb_client", Client())
+    try:
+        payload = _payload(asyncio.run(handle_call_tool("start_debug_session", {
+            "server_type": "openocd",
+            "server_args": ["-f", "interface/stlink.cfg", "-f", "target/stm32l4x.cfg",
+                            "-c", f"gdb_port {port}"],
+        })))
+    finally:
+        srv.close()
+
+    assert spawned["n"] == 1
+    assert manager.adopted is False
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "port_in_use"
+    assert "this session started" in payload["error"]["message"]
+    assert "did not start it" not in payload["error"]["message"]
+    assert payload["raw_response"]["server_still_listening"] is True
+    assert f"port {port}" in payload["error"]["message"]
+
+
+def test_profile_args_do_not_adopt_a_server_already_on_the_port(monkeypatch):
+    import mcp_server.server as server_module
+    from mcp_server.gdb_manager import GdbServerManager
+
+    srv, port = _ephemeral_listener()
+    manager = GdbServerManager()
+    monkeypatch.setattr("subprocess.Popen", lambda *a, **k: pytest.fail("must not spawn"))
+    monkeypatch.setattr("mcp_server.gdb_manager.listener_argv", lambda _port: [
+        "openocd", "-f", "interface/cmsis-dap.cfg", "-f", "target/stm32l1.cfg",
+    ])
+
+    class Client:
+        def start_gdb(self):
+            pytest.fail("must not attach")
+
+        def stop_gdb(self):
+            pass
+
+    class Profile:
+        def get(self):
+            return {
+                "server_type": "openocd",
+                "server_args": ["-f", "interface/stlink.cfg", "-f", "target/stm32l4x.cfg",
+                                "-c", f"gdb_port {port}"],
+            }
+
+    monkeypatch.setattr(server_module, "gdb_manager", manager)
+    monkeypatch.setattr(server_module, "gdb_client", Client())
+    monkeypatch.setattr(server_module, "debug_profile", Profile())
+    try:
+        payload = _payload(asyncio.run(handle_call_tool("start_debug_session", {})))
+    finally:
+        srv.close()
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "port_in_use"
+    assert "debug-profile server_args" in payload["error"]["message"]
+    assert "interface/cmsis-dap.cfg" in payload["error"]["message"]
+    assert "target/stm32l4x.cfg" in payload["error"]["message"]
+    assert manager.adopted is False
+
+
+def test_inferred_args_do_not_adopt_a_server_already_on_the_port(monkeypatch):
+    import mcp_server.server as server_module
+    from mcp_server.gdb_manager import GdbServerManager
+
+    srv, port = _ephemeral_listener()
+    manager = GdbServerManager()
+    monkeypatch.setattr("subprocess.Popen", lambda *a, **k: pytest.fail("must not spawn"))
+    monkeypatch.setattr("mcp_server.gdb_manager.listener_argv", lambda _port: None)
+
+    class Client:
+        def stop_gdb(self):
+            pass
+
+        def start_gdb(self):
+            pytest.fail("must not attach")
+
+    class Profile:
+        def get(self):
+            return {"mcu": "STM32L431", "probe": "stlink"}
+
+    def infer(mcu, probe, scripts_dir=None, speed_khz=4000):
+        return {"server_args": ["-f", "interface/stlink.cfg", "-f", "target/stm32l4x.cfg",
+                                "-c", f"gdb_port {port}"]}
+
+    monkeypatch.setattr(server_module, "gdb_manager", manager)
+    monkeypatch.setattr(server_module, "gdb_client", Client())
+    monkeypatch.setattr(server_module, "debug_profile", Profile())
+    monkeypatch.setattr(server_module, "suggest_server_args", infer)
+    try:
+        payload = _payload(asyncio.run(handle_call_tool("start_debug_session", {
+            "server_type": "openocd",
+        })))
+    finally:
+        srv.close()
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "port_in_use"
+    assert "inferred from the MCU and probe" in payload["error"]["message"]
+    assert manager.adopted is False
+
+
+def test_stop_debug_session_can_shut_down_an_adopted_server(monkeypatch):
+    import mcp_server.gdb_manager as gm
+    import mcp_server.server as server_module
+    from mcp_server.gdb_manager import GdbServerManager
+
+    srv, port = _ephemeral_listener()
+    sent = []
+
+    def shutdown(control_port, timeout=1.0):
+        sent.append(control_port)
+        srv.close()
+        return True
+
+    manager = GdbServerManager()
+    manager.adopted = True
+    manager.port = port
+    manager.server_type = "openocd"
+    manager.server_args = ["-c", f"gdb_port {port}", "-c", f"tcl_port {port + 1}"]
+    monkeypatch.setattr(gm, "_listening_pids", lambda _port: [1])
+    monkeypatch.setattr(gm, "_tcl_shutdown", shutdown)
+    monkeypatch.setattr(server_module, "gdb_manager", manager)
+
+    class Client:
+        def stop_gdb(self):
+            sent.append("gdb")
+
+    monkeypatch.setattr(server_module, "gdb_client", Client())
+    try:
+        payload = _payload(asyncio.run(handle_call_tool("stop_debug_session", {"stop_adopted": True})))
+    finally:
+        srv.close()
+
+    assert payload["ok"] is True
+    assert payload["data"]["adopted_server"] is True
+    assert payload["data"]["port_free"] is True
+    assert payload["data"]["shutdown_via"] == "tcl"
+    assert sent[0] == "gdb"
+    assert port + 1 in sent
+    assert manager.adopted is False
+
+
+def test_refused_restart_leaves_the_adopted_server_stoppable(monkeypatch):
+    import mcp_server.gdb_manager as gm
+    import mcp_server.server as server_module
+    from mcp_server.gdb_manager import GdbServerManager
+
+    srv, port = _ephemeral_listener()
+    control = port + 1
+    manager = GdbServerManager()
+    manager.adopted = True
+    manager.port = port
+    manager.server_type = "openocd"
+    manager.server_args = ["-c", f"gdb_port {port}", "-c", f"tcl_port {control}"]
+
+    class Client:
+        def stop_gdb(self):
+            pass
+
+        def start_gdb(self):
+            pytest.fail("must not attach")
+
+    monkeypatch.setattr(gm.subprocess, "Popen", lambda *a, **k: pytest.fail("must not spawn"))
+    monkeypatch.setattr(gm, "listener_argv", lambda _port: [
+        "openocd", "-f", "interface/cmsis-dap.cfg", "-f", "target/stm32l1.cfg",
+    ])
+    monkeypatch.setattr(server_module, "gdb_manager", manager)
+    monkeypatch.setattr(server_module, "gdb_client", Client())
+    try:
+        refused = _payload(asyncio.run(handle_call_tool("start_debug_session", {
+            "server_type": "openocd",
+            "server_args": ["-f", "interface/stlink.cfg", "-f", "target/stm32l4x.cfg",
+                            "-c", f"gdb_port {port}"],
+        })))
+        assert refused["ok"] is False
+        assert refused["error"]["code"] == "port_in_use"
+        assert manager.adopted is True
+        assert manager.port == port
+
+        def shutdown(control_port, timeout=1.0):
+            assert control_port == control
+            srv.close()
+            return True
+
+        monkeypatch.setattr(gm, "_listening_pids", lambda _port: [1])
+        monkeypatch.setattr(gm, "_tcl_shutdown", shutdown)
+        stopped = _payload(asyncio.run(handle_call_tool(
+            "stop_debug_session", {"stop_adopted": True})))
+    finally:
+        srv.close()
+
+    assert stopped["ok"] is True
+    assert stopped["data"]["port_free"] is True
+    assert stopped["data"]["shutdown_via"] == "tcl"
+    assert manager.adopted is False
+
+
+def test_stop_adopted_rejects_a_non_boolean_and_defaults_to_leaving_the_server():
+    payload = _payload(asyncio.run(handle_call_tool(
+        "stop_debug_session", {"stop_adopted": "false"})))
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "invalid_argument"
+    assert "bool(\"false\") is True" in payload["error"]["message"]
+
+
+def test_close_session_keeps_the_session_when_the_adopted_server_stays_up(monkeypatch):
+    import mcp_server.gdb_manager as gm
+    import mcp_server.server as server_module
+
+    srv, port = _ephemeral_listener()
+    try:
+        sess = server_module.session_manager.get("adoptedKeep")
+        sess.gdb_manager.adopted = True
+        sess.gdb_manager.port = port
+        sess.gdb_manager.server_type = "openocd"
+        sess.gdb_manager.server_args = ["-c", f"gdb_port {port}", "-c", "tcl_port 6666"]
+        monkeypatch.setattr(gm, "_listening_pids", lambda _port: [])
+
+        payload = _payload(asyncio.run(handle_call_tool("close_session", {
+            "session_id": "adoptedKeep", "stop_adopted": True,
+        })))
+
+        assert payload["ok"] is False
+        assert payload["error"]["code"] == "server_still_listening"
+        assert payload["data"]["closed"] is False
+        assert "adoptedKeep" in server_module.session_manager.sessions
+        assert sess.gdb_manager.adopted is True
+    finally:
+        srv.close()
+        server_module.session_manager.close("adoptedKeep")
+
+
+def test_session_health_and_list_report_a_dead_process_whose_port_is_still_open(monkeypatch):
+    import mcp_server.server as server_module
+    from mcp_server.gdb_manager import GdbServerManager
+
+    srv, port = _ephemeral_listener()
+    manager = GdbServerManager()
+    manager.process = _ExitedProcess()
+    manager.port = port
+    manager.server_type = "openocd"
+
+    class Client:
+        def is_alive(self):
+            return False
+
+        def read_word(self, address):
+            raise RuntimeError("no gdb")
+
+    class Profile:
+        def get(self):
+            return {}
+
+    monkeypatch.setattr(server_module, "gdb_manager", manager)
+    monkeypatch.setattr(server_module, "gdb_client", Client())
+    monkeypatch.setattr(server_module, "debug_profile", Profile())
+    try:
+        health = _payload(asyncio.run(handle_call_tool("check_session_health", {})))
+        listed = _payload(asyncio.run(handle_call_tool("list_sessions", {})))
+    finally:
+        srv.close()
+
+    assert health["data"]["server_alive"] is True
+    assert health["data"]["server_port_listening"] is True
+    assert health["data"]["server_liveness_mismatch"] == "process_gone_port_listening"
+    default = next(row for row in listed["data"]["sessions"] if row["session"] == "default")
+    assert default["server_alive"] is True
+    assert default["server_liveness_mismatch"] == "process_gone_port_listening"

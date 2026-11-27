@@ -128,7 +128,8 @@ observe -> orient (symbolize) -> hypothesize -> act safely -> verify.
 ## Project safety - review and edit for this board
 - If this runs on a sealed/wafer/production target, prefer a power-cycle over an SWD reset
   and ask before flashing. Delete this note if it is a dev board.
-- Never hard-kill OpenOCD; use `recover_session`. ST-Link SWD is exclusive.
+- Never hard-kill OpenOCD; use `recover_session`. An adopted server stays up until
+  `stop_debug_session(stop_adopted=true)`. ST-Link SWD is exclusive.
 
 ## Debug rules
 - A tool not listed? `call(tool="<name>", args={{...}})`; batch with `batch`.
@@ -157,7 +158,7 @@ Debug on hardware via the `stm32-gdb-mcp` MCP server. Full guide: [`AGENTS.md`](
 - A breakpoint TIMEOUT means the path was not reached. Halt, `capture_state`,
   `breakpoint(action=list)`, read the gating flag; do not just retry.
 - On a sealed/production target, prefer a power-cycle over an SWD reset and ask before flashing.
-- Never hard-kill OpenOCD; use `recover_session`.
+- Never hard-kill OpenOCD; use `recover_session`. Adopted servers need `stop_adopted=true`.
 """
 
 

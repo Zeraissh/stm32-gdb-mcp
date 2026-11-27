@@ -187,8 +187,10 @@ also ships always-on `instructions`, so any MCP client gets the debug loop witho
   命中次数、读取门控条件，再前移断点或驱动前置条件。
 - **Writes are guarded** (option bytes/IWDG/WWDG blocked) — `write_guard(action=policy)` to allow. /
   **写操作受保护。** option bytes、IWDG、WWDG 默认禁止，需用 `write_guard(action=policy)` 显式放行。
-- **Never hard-kill OpenOCD** (wedges the ST-Link USB) — use `recover_session`. SWD is exclusive. /
-  **不要强杀 OpenOCD。** 使用 `recover_session`；同一探针的 SWD 调试连接是独占的。
+- **Never hard-kill OpenOCD** (wedges the ST-Link USB) — use `recover_session`. A server this
+  session adopted stays up until `stop_debug_session(stop_adopted=true)`. SWD is exclusive. /
+  **不要强杀 OpenOCD。** 使用 `recover_session`；本会话领养的 server 要
+  `stop_debug_session(stop_adopted=true)` 才会退出。同一探针的 SWD 调试连接是独占的。
 - **A wedged probe needs a physical re-enumeration.** With the optional `[hub]` extra and a
   SmartUSBHub, `hub(action=power)` cuts VBUS and `hub(action=data)` drops the USB data lines,
   so that re-plug becomes a tool call. Without a hub it is still a human with a cable. /

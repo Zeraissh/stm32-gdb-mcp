@@ -102,12 +102,16 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Stops the GDB client/server, variable tracking, and all active RTT/SWO/UART readers.",
+   "description": "Stops the GDB client/server, variable tracking, and all active RTT/SWO/UART readers. An adopted server (one this session attached to but did not spawn) is left running unless stop_adopted=true, which asks OpenOCD to exit via its telnet/tcl port and checks that the gdb port closed. Never hard-kills the process.",
    "inputSchema": {
     "properties": {
      "session": {
       "description": "Optional debug-session name. Omit for the default target.",
       "type": "string"
+     },
+     "stop_adopted": {
+      "description": "Also shut down a GDB server this session adopted rather than spawned. Sends OpenOCD 'shutdown' on that server's TCL or telnet port, then checks the gdb port is free. Default false: the adopted server is left running.",
+      "type": "boolean"
      }
     },
     "type": "object"
@@ -1377,7 +1381,7 @@
     "openWorldHint": false,
     "readOnlyHint": false
    },
-   "description": "Closes a named debug session, tearing down its GDB client and server.",
+   "description": "Closes a named debug session, tearing down its GDB client and server. An adopted server is left running unless stop_adopted=true, which shuts it down over its telnet/tcl port. The session stays open if that shutdown does not free the port, so it can be retried.",
    "inputSchema": {
     "properties": {
      "session": {
@@ -1387,6 +1391,10 @@
      "session_id": {
       "description": "Name of the session to close, e.g. 'rackA'.",
       "type": "string"
+     },
+     "stop_adopted": {
+      "description": "Also shut down a GDB server this session adopted rather than spawned. Default false: the adopted server is left running.",
+      "type": "boolean"
      }
     },
     "required": [

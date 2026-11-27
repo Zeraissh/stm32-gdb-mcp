@@ -131,6 +131,7 @@ def start_debug_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
         server_args_source = "profile" if configured_args else "arguments"
     args = list(configured_args or [])
     detected_probe = None
+    inferred_args = False
     if server_type == "openocd" and not args:
         mcu = profile.get("mcu")
         probe, probe_source, detected_probe, detection = _probe_selection(ctx, arguments, profile)
@@ -150,6 +151,7 @@ def start_debug_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
                 )]
             args = list(inferred["server_args"])
             server_args_source = probe_source
+            inferred_args = True
         else:
             if detection and detection.get("count", 0) > 1:
                 # Naming only "select one" sent agents off to read the skill docs to
@@ -232,10 +234,21 @@ def start_debug_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
             ctx.gdb_client.stop_gdb()
         except Exception:
             pass
-        ctx.gdb_manager.stop()
-    # Explicit server_args mean "start it this way": adopting a server already on
-    # the port would silently drop them (issue #47), so that is refused instead.
-    adopt = "server_args" not in arguments
+        # An adopted server is not ours to tear down here. stop() without
+        # stop_adopted would forget it, and the start below may then refuse the
+        # port — leaving no handle for stop_adopted. A spawned server is stopped
+        # so the restart can bind.
+        if not getattr(ctx.gdb_manager, "adopted", False):
+            ctx.gdb_manager.stop()
+    # A concrete configuration must actually be started. Adopting a server that
+    # is already listening would drop it: explicit server_args (issue #47), and
+    # likewise args from the debug profile or inferred from the MCU and probe
+    # (issue #77). The wording is carried on the manager rather than as a
+    # start() argument so test doubles that only accept (server_type, args,
+    # adopt) keep working.
+    refuse_reason = _adopt_refuse_reason(arguments, server_args_source, inferred_args)
+    adopt = refuse_reason is None
+    _arm_start_attempts(ctx.gdb_manager, refuse_reason)
     try:
         port = retry_call(
             lambda: ctx.gdb_manager.start(server_type, args, adopt=adopt),
@@ -249,9 +262,16 @@ def start_debug_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
         # The probe's measured VTREF is right there in the log — use it instead of
         # advising a power check the same payload disproves (issue #35).
         classification = refine_target_unreachable(classification, str(server_log))
-        for teardown in (ctx.gdb_client.stop_gdb, ctx.gdb_manager.stop):
+        try:
+            ctx.gdb_client.stop_gdb()
+        except Exception:
+            pass
+        # Same as the pre-start stop: a failed attempt must not forget an
+        # adopted server it refused to replace. A server this attempt spawned
+        # was already stopped inside start(), and stop() here is idempotent.
+        if not getattr(ctx.gdb_manager, "adopted", False):
             try:
-                teardown()
+                ctx.gdb_manager.stop()
             except Exception:
                 pass
         message = str(exc)[-1000:]
@@ -283,6 +303,8 @@ def start_debug_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
             },
             suggested_next_actions=classification["suggested_next_actions"],
         )]
+    finally:
+        _disarm_start_attempts(ctx.gdb_manager)
     ctx.last_session["server_type"] = server_type
     ctx.last_session["server_args"] = args
     symbols = autoload_symbols(ctx.sess)
@@ -303,8 +325,9 @@ def start_debug_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
         # actually on the other end.
         data["message"] = (
             f"Attached to a GDB server already listening on port {port}; it was not started "
-            "by this session, so the requested server_args did not apply and it will not be "
-            "stopped by stop_debug_session. Run self_check to confirm which device it serves."
+            "by this session, so the requested server_args did not apply. stop_debug_session "
+            "leaves it running unless stop_adopted=true, which sends OpenOCD shutdown on its "
+            "telnet/tcl port. Run self_check to confirm which device it serves."
         )
     return [content_success(
         data,
@@ -315,12 +338,32 @@ def start_debug_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
 
 @register(Tool(
     name="stop_debug_session",
-    description="Stops the GDB client/server, variable tracking, and all active RTT/SWO/UART readers.",
-    inputSchema={"type": "object", "properties": {}}
+    description="Stops the GDB client/server, variable tracking, and all active RTT/SWO/UART readers. "
+                "An adopted server (one this session attached to but did not spawn) is left running "
+                "unless stop_adopted=true, which asks OpenOCD to exit via its telnet/tcl port and "
+                "checks that the gdb port closed. Never hard-kills the process.",
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "stop_adopted": {
+                "type": "boolean",
+                "description": "Also shut down a GDB server this session adopted rather than spawned. "
+                               "Sends OpenOCD 'shutdown' on that server's TCL or telnet port, then "
+                               "checks the gdb port is free. Default false: the adopted server is left running.",
+            },
+        },
+    }
 ))
 def stop_debug_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
-    teardown_debug_session(ctx.sess)
-    return [content_success({"message": "Debug session stopped"})]
+    stop_adopted = _optional_bool(arguments, "stop_adopted")
+    if stop_adopted is None:
+        return [_bad_bool("stop_adopted", arguments.get("stop_adopted"))]
+    teardown_debug_session(ctx.sess, stop_adopted=stop_adopted)
+    return [_stop_result_content(
+        getattr(ctx.gdb_manager, "last_stop_result", None),
+        stop_adopted,
+        {"message": "Debug session stopped"},
+    )]
 
 
 @register(Tool(
@@ -521,8 +564,9 @@ def recover_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     }
 ))
 def check_session_health(ctx: ToolContext, arguments: dict) -> list[TextContent]:
+    liveness = gdb_manager_module.server_liveness(ctx.gdb_manager)
     reconnected = False
-    if arguments.get("reconnect") and ctx.gdb_manager.is_alive():
+    if arguments.get("reconnect") and liveness["server_alive"] and ctx.gdb_manager.port:
         ctx.gdb_client.start_gdb()
         ctx.gdb_client.connect("localhost", ctx.gdb_manager.port)
         reconnected = True
@@ -530,7 +574,9 @@ def check_session_health(ctx: ToolContext, arguments: dict) -> list[TextContent]
     responsive, identity = _target_evidence(ctx.gdb_client, state)
     health = {
         "gdb_alive": ctx.gdb_client.is_alive(),
-        "server_alive": ctx.gdb_manager.is_alive(),
+        "server_alive": liveness["server_alive"],
+        "server_port_listening": liveness["server_port_listening"],
+        "server_liveness_mismatch": liveness["server_liveness_mismatch"],
         "target_responsive": responsive,
         "server_type": ctx.gdb_manager.server_type,
         "port": ctx.gdb_manager.port,
@@ -655,7 +701,7 @@ def list_sessions(ctx: ToolContext, arguments: dict) -> list[TextContent]:
     default = ctx.default_session()
     default_row = {
         "session": "default",
-        "server_alive": default.gdb_manager.is_alive(),
+        **gdb_manager_module.server_liveness(default.gdb_manager),
         "gdb_alive": default.gdb_client.is_alive(),
         "server_type": default.gdb_manager.server_type,
         "port": default.gdb_manager.port,
@@ -665,27 +711,169 @@ def list_sessions(ctx: ToolContext, arguments: dict) -> list[TextContent]:
 
 @register(Tool(
     name="close_session",
-    description="Closes a named debug session, tearing down its GDB client and server.",
+    description="Closes a named debug session, tearing down its GDB client and server. "
+                "An adopted server is left running unless stop_adopted=true, which shuts it "
+                "down over its telnet/tcl port. The session stays open if that shutdown "
+                "does not free the port, so it can be retried.",
     inputSchema={
         "type": "object",
         "properties": {
-            "session_id": {"type": "string", "description": "Name of the session to close, e.g. 'rackA'."}
+            "session_id": {"type": "string", "description": "Name of the session to close, e.g. 'rackA'."},
+            "stop_adopted": {
+                "type": "boolean",
+                "description": "Also shut down a GDB server this session adopted rather than spawned. "
+                               "Default false: the adopted server is left running.",
+            },
         },
         "required": ["session_id"]
     }
 ))
 def close_session(ctx: ToolContext, arguments: dict) -> list[TextContent]:
+    stop_adopted = _optional_bool(arguments, "stop_adopted")
+    if stop_adopted is None:
+        return [_bad_bool("stop_adopted", arguments.get("stop_adopted"))]
     sid = arguments["session_id"]
     if sid == "default":
         default = ctx.default_session()
-        for stop in (default.gdb_client.stop_gdb, default.gdb_manager.stop):
-            try:
-                stop()
-            except Exception:
-                pass
-        return [content_success({"message": "Default session stopped", "session_id": "default"})]
+        try:
+            default.gdb_client.stop_gdb()
+        except Exception:
+            pass
+        _stop_server(default.gdb_manager, stop_adopted)
+        return [_stop_result_content(
+            getattr(default.gdb_manager, "last_stop_result", None),
+            stop_adopted,
+            {"message": "Default session stopped", "session_id": "default"},
+        )]
+    session = ctx.session_manager.sessions.get(sid)
+    if session is None:
+        return [content_success({
+            "message": "No such session", "closed": False, "session_id": sid,
+        })]
+    # Captured before close(): teardown stops the manager again and would
+    # overwrite last_stop_result with the second, empty stop.
+    stop_result = None
+    if stop_adopted:
+        # Shut the server down before dropping the session. A failed shutdown
+        # leaves the session in place so the caller can retry; closing it first
+        # would forget the only handle we have on that server.
+        try:
+            session.gdb_client.stop_gdb()
+        except Exception:
+            pass
+        _stop_server(session.gdb_manager, True)
+        stop_result = getattr(session.gdb_manager, "last_stop_result", None) or {}
+        if stop_result.get("was_adopted") and stop_result.get("port_free") is False:
+            return [_stop_result_content(stop_result, True, {
+                "message": "Session not closed; the adopted server is still listening",
+                "closed": False,
+                "session_id": sid,
+            })]
     closed = ctx.session_manager.close(sid)
-    return [content_success({
+    data = {
         "message": "Session closed" if closed else "No such session",
-        "closed": closed, "session_id": sid,
-    })]
+        "closed": closed,
+        "session_id": sid,
+    }
+    if stop_adopted:
+        return [_stop_result_content(stop_result, True, data)]
+    return [content_success(data)]
+
+
+def _optional_bool(arguments: dict, name: str) -> bool | None:
+    """The flag, or None when the caller passed a non-boolean.
+
+    Missing means False. Strings are not coerced: bool(\"false\") is True, and
+    this flag shuts a server down.
+    """
+    if name not in arguments:
+        return False
+    value = arguments[name]
+    if isinstance(value, bool):
+        return value
+    return None
+
+
+def _bad_bool(name: str, value) -> TextContent:
+    return content_error(
+        f"{name} must be a boolean, got {type(value).__name__} {value!r}. It is not "
+        "coerced: bool(\"false\") is True, which would shut down a server the caller "
+        "asked to leave running.",
+        code="invalid_argument",
+    )
+
+
+def _adopt_refuse_reason(arguments: dict, server_args_source: str | None,
+                         inferred: bool = False) -> str | None:
+    """Why adopting must be refused, or None when there is nothing concrete to drop.
+
+    ``"explicit"`` keeps the historical port_in_use wording. Profile and inferred
+    args are the same kind of configuration and get their own wording (issue #77).
+    """
+    if "server_args" in arguments:
+        return "explicit"
+    if inferred:
+        return "server_args inferred from the MCU and probe"
+    if server_args_source == "profile":
+        return "debug-profile server_args"
+    return None
+
+
+def _arm_start_attempts(manager, refuse_reason: str | None) -> None:
+    """Remember, across this call's retries, the port the call itself spawned.
+
+    Test doubles are left alone: they pin ``last_stopped_port`` themselves and
+    do not implement the leftover check.
+    """
+    if not isinstance(manager, gdb_manager_module.GdbServerManager):
+        return
+    # Keep a port this session just failed to release; drop one that is already
+    # free so a later refusal is not blamed on a stale port.
+    remembered = manager.last_stopped_port
+    if not (remembered and gdb_manager_module._port_accepts(remembered)):
+        manager.last_stopped_port = None
+    manager.preserve_stopped_port = True
+    manager.refuse_own_leftover = True
+    manager.adopt_refuse_reason = refuse_reason
+
+
+def _disarm_start_attempts(manager) -> None:
+    if not isinstance(manager, gdb_manager_module.GdbServerManager):
+        return
+    manager.preserve_stopped_port = False
+    manager.refuse_own_leftover = False
+
+
+def _stop_server(manager, stop_adopted: bool) -> None:
+    try:
+        if stop_adopted:
+            manager.stop(stop_adopted=True)
+        else:
+            manager.stop()
+    except Exception:
+        pass
+
+
+def _stop_result_content(result: dict | None, stop_adopted: bool, data: dict) -> TextContent:
+    """Success, unless the caller asked to stop an adopted server and it is still up."""
+    if not stop_adopted:
+        return content_success(data)
+    result = result or {}
+    reported = {
+        "stop_adopted": True,
+        "adopted_server": bool(result.get("was_adopted")),
+        "shutdown_via": result.get("shutdown_via"),
+        "port": result.get("port"),
+        "port_free": result.get("port_free"),
+    }
+    if result.get("detail"):
+        reported["detail"] = result["detail"]
+    merged = {**data, **reported}
+    if result.get("was_adopted") and result.get("port_free") is False:
+        return content_error(
+            result.get("detail") or "The adopted GDB server is still listening.",
+            code="server_still_listening",
+            data=merged,
+            suggested_next_actions=["stop_debug_session(stop_adopted=true)"],
+        )
+    return content_success(merged)
