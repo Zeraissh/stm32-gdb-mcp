@@ -13,7 +13,7 @@ from typing import Any
 from .debug_profile import DebugProfileStore
 from .freertos_inspector import FreeRTOSInspector
 from .gdb_client import GdbClientManager
-from .gdb_manager import GdbServerManager
+from .gdb_manager import GdbServerManager, server_liveness
 from .log_reader import FileLogReader, ProcessLogReader, SerialLogReader
 from .memory_guard import MemoryWriteGuard
 from .svd_parser import SVDParser
@@ -36,7 +36,7 @@ def _port_is_free(port: int) -> bool:
         return False
 
 
-def teardown_debug_session(session):
+def teardown_debug_session(session, stop_adopted: bool = False):
     resources = (
         (session.gdb_client, "stop_gdb"),
         (session.gdb_manager, "stop"),
@@ -48,7 +48,12 @@ def teardown_debug_session(session):
     )
     for obj, method in resources:
         try:
-            getattr(obj, method)()
+            # Only the adopted-server opt-in takes an argument. Passing it to
+            # every stop() would break stand-ins whose stop() takes none.
+            if stop_adopted and method == "stop" and obj is session.gdb_manager:
+                obj.stop(stop_adopted=True)
+            else:
+                getattr(obj, method)()
         except Exception:
             pass
 
@@ -78,8 +83,8 @@ class DebugSession:
         self.design = {"current": None, "last_render": None}  # FrameworkPlan + last render (Pillar D)
         self.spec = {"current": None}  # translated product spec (spec_model, upstream of Pillar D)
 
-    def teardown(self):
-        teardown_debug_session(self)
+    def teardown(self, stop_adopted: bool = False):
+        teardown_debug_session(self, stop_adopted=stop_adopted)
 
 
 class SessionManager:
@@ -113,7 +118,7 @@ class SessionManager:
         for sid, s in self.sessions.items():
             out.append({
                 "session": sid,
-                "server_alive": s.gdb_manager.is_alive(),
+                **server_liveness(s.gdb_manager),
                 "gdb_alive": s.gdb_client.is_alive(),
                 "server_type": s.gdb_manager.server_type,
                 "port": s.gdb_manager.port,

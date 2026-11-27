@@ -110,9 +110,13 @@ power/data state, voltage/current on ADC models, the mapped labels, and recent h
   port's data lines → power-cycle the port (`deep=true` adds a long power cycle). It only
   escalates for `probe_busy`, `probe_unavailable`, `target_unresponsive`,
   `connection_lost`, and `target_unreachable`. Read the returned `steps`: they say what was
-  physically done to the board. Never hard-kill OpenOCD. /
+  physically done to the board. Never hard-kill OpenOCD. A server this session adopted
+  stays up until `stop_debug_session(stop_adopted=true)` (or `close_session` with the same
+  flag), which sends `shutdown` on that server's telnet/tcl port. /
   使用 `recover_session`：有 Hub 时会自动逐级升级（软重试 → 切数据线 → 端口断电重启，`deep=true`
   再加一次长时间断电），只对上述错误码升级。返回的 `steps` 写明了对硬件实际做了什么。不要强杀 OpenOCD。
+  本会话领养的 server 会留下，直到 `stop_debug_session(stop_adopted=true)`（或带同样参数的
+  `close_session`）向它的 telnet/tcl 端口发送 `shutdown`。
 
 **Cold boot / 冷启动**
 

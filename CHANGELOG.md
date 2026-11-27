@@ -2,6 +2,49 @@
 
 ## [Unreleased]
 
+### Adopted GDB servers / 领养的 GDB server (#77)
+
+- `stop_debug_session` and `close_session` take `stop_adopted` (default false).
+  Set it to ask an adopted OpenOCD to exit: `shutdown` is sent on a TCL or telnet
+  port that belongs to the same process as the session's gdb port, then the gdb
+  port is checked. The process is not signalled. If the port stays open the call
+  fails with `server_still_listening` and `close_session` leaves the session in
+  place so it can be retried. Without the flag an adopted server is still left
+  running. / `stop_debug_session` 和 `close_session` 新增 `stop_adopted`（默认
+  false）。打开后会向该进程自己的 TCL 或 telnet 端口发送 `shutdown`，再确认 gdb
+  端口已关闭；不会向进程发信号。端口仍被占用时返回 `server_still_listening`，
+  `close_session` 保留会话以便重试。不传该参数时，领养的 server 仍会留下继续运行。
+- `server_alive` now follows the gdb port when the spawned process handle has
+  exited. `check_session_health` and `list_sessions` report
+  `server_liveness_mismatch: process_gone_port_listening` instead of a bare
+  false. A live process handle is not probed, so the check does not open a
+  second client on a server that is still running. /
+  拉起的进程句柄已经退出时，`server_alive` 会再看 gdb 端口。端口仍在监听时，
+  `check_session_health` 和 `list_sessions` 报告
+  `server_liveness_mismatch: process_gone_port_listening`，而不再只给一个 false。
+  进程句柄仍存活时不会去连端口，避免给正在运行的 server 再挂一个客户端。
+- A `start_debug_session` retry no longer forgets the port the previous attempt
+  spawned. If that server is still listening, the next attempt refuses to adopt
+  it and does not describe it as a server this session did not start;
+  `server_still_listening` stays true. / `start_debug_session` 的重试不再忘掉
+  上一次拉起的端口。该 server 仍在监听时，下一次拒绝领养，也不会把它说成
+  “不是本会话启动的”；`server_still_listening` 仍为 true。
+- OpenOCD args taken from the debug profile, or inferred from the MCU and probe,
+  are no longer allowed to adopt a server already on the port. On a path that
+  still adopts (no concrete configuration, or `recover_session`), a listener
+  whose command line names a different interface or target is refused and the
+  error names both sides. A listener that cannot be identified is still adopted
+  there. A refused restart does not forget a server the session had already
+  adopted, so `stop_adopted=true` can still reach it. /
+  来自调试 profile、或由 MCU 与探针推断出的 OpenOCD 参数，不再领养端口上已有的
+  server。仍会领养的路径（没有具体配置，或 `recover_session`）上，命令行写明了
+  另一套 interface/target 的监听方会被拒绝，错误里写明两边的配置；无法识别时仍会
+  领养。启动被拒绝时，不会忘掉会话已经领养的 server，`stop_adopted=true` 仍能关掉它。
+- Two MCP processes choosing the same gdb port, and a J-Link's fixed port 2331,
+  are unchanged. That cross-session collision was not reproduced here. /
+  两个 MCP 进程选中同一 gdb 端口，以及 J-Link 固定的 2331，行为不变。
+  这种跨会话端口冲突在这里没有复现。
+
 ### self_check / 链路自检 (#78)
 
 - `self_check` reads DBGMCU IDCODE from the series base instead of always
